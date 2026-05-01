@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+logs/
+*.log
+*.csv
+dump*.txt
+bot_dump.txt
+optimizer_state.json
+trader_memory.json

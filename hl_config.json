@@ -1,0 +1,5 @@
+{
+  "private_key": "SET_VIA_ENV_HL_PRIVATE_KEY",
+  "account_address": "SET_VIA_ENV_HL_ACCOUNT_ADDRESS",
+  "network": "mainnet"
+}

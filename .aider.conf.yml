@@ -1,0 +1,35 @@
+# Aider Configuration — HYDRAQUEEN
+# Fichier : ~/trading-agents/.aider.conf.yml
+#
+# Mode Architect : DeepSeek planifie, Qwen3.5-9B (local) édite les fichiers
+
+# ─── Modèles ───────────────────────────────────────────────────────────────
+architect: true
+model: deepseek/deepseek-chat          # Architect = planification
+editor-model: openai/qwen3.5-9b        # Editor = écriture fichiers (local)
+weak-model: openai/qwen3.5-9b          # Weak = tâches légères (local aussi)
+
+# ─── Git ────────────────────────────────────────────────────────────────────
+auto-commits: true           # Commit automatique après chaque modification
+dirty-commits: true          # Commit même si le dépôt a des modifs non committées
+commit-prompt: "feat(hydraqueen): {}"  # Préfixe des messages de commit
+
+# ─── Repo Map ───────────────────────────────────────────────────────────────
+map-tokens: 4096             # Tokens alloués à la carte du projet
+map-refresh: auto            # Rafraîchit la carte selon les besoins
+
+# ─── Interface ──────────────────────────────────────────────────────────────
+dark-mode: true
+pretty: true
+multiline: true              # Ctrl+Shift+Enter pour valider (Entrée seul = nouvelle ligne)
+stream: true
+
+# ─── Contexte ───────────────────────────────────────────────────────────────
+# Fichiers à toujours inclure dans le contexte (lectures seules)
+# Ajoute les fichiers clés du projet pour que DeepSeek comprenne l'architecture
+read:
+  - README.md
+
+# ─── Langue ─────────────────────────────────────────────────────────────────
+# Force les réponses en français dans le chat
+chat-language: french

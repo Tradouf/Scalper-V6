@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+echo "[SDM] Vérification de LocalAI..."
+
+# Vérifie si LocalAI tourne déjà sur le port 8080
+if curl -s http://localhost:8080/v1/models >/dev/null 2>&1; then
+  echo "[SDM] LocalAI déjà en cours d'exécution"
+else
+  echo "[SDM] LocalAI non détecté, lancement..."
+  # ADAPTE CETTE LIGNE SI TON BINAIRE LOCALAI N'EST PAS DANS /usr/local/bin
+  /usr/local/bin/local-ai serve --config /home/francois/SalleDesMarches/localai.yaml >/tmp/localai.log 2>&1 &
+  sleep 5
+  if curl -s http://localhost:8080/v1/models >/dev/null 2>&1; then
+    echo "[SDM] LocalAI démarré"
+  else
+    echo "[SDM] ERREUR: LocalAI ne répond pas sur http://localhost:8080"
+  fi
+fi
+
+echo "[SDM] Activation du venv dans ~/SalleDesMarches"
+cd /home/francois/SalleDesMarches
+. .venv/bin/activate
+
+echo "[SDM] Lancement de SalleDesMarches V6 (main_v6.py)"
+python main_v6.py

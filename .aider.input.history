@@ -1,0 +1,372 @@
+
+# 2026-04-17 19:28:57.133260
++D
+
+# 2026-04-17 19:29:04.616621
++Y
+
+# 2026-04-17 19:29:09.813229
++D
+
+# 2026-04-17 19:30:20.152619
++Affiche le contenu actuel de ce fichier et explique ce qu'il fait.
+
+# 2026-04-17 19:45:41.603891
++n
+
+# 2026-04-17 20:01:03.334283
++y
+
+# 2026-04-17 20:09:07.163175
++/exit
++/exit
+
+# 2026-04-17 20:09:27.148769
++D
+
+# 2026-04-17 20:12:42.903628
++La méthode _sync_manual_closures() existe ligne 194 et appelle self._mark_trade_exit(symbol, "external_exit") mais cette méthode n'existe pas dans la classe SalleDesMarchesV5. Ajoute la méthode _mark_trade_exit(self, symbol, reason) qui doit : 1) enregistrer le symbole dans self._exit_cooldowns avec le timestamp actuel et la raison, 2) logger INFO "COOLDOWN START {symbol} | reason={reason}", 3) si self._exit_cooldowns n'existe pas encore dans __init__, l'initialiser comme dict vide. Vérifie aussi que __init__ initialise self._prev_open_positions = {} si ce n'est pas déjà le cas.
+
+# 2026-04-17 20:25:39.226238
++Y
+
+# 2026-04-17 21:23:19.684138
++/exit
+
+# 2026-04-17 21:35:42.016301
++D
+
+# 2026-04-17 21:35:57.647104
++Effectue ces 4 modifications dans main_v5.py :
++
++1. Après la ligne `COOLDOWN_SEC = int(getattr(SETTINGS, "COOLDOWN_SEC", 900))` (ligne 96), ajoute :
++EXIT_COOLDOWN_SEC = int(getattr(SETTINGS, "EXIT_COOLDOWN_SEC", 300))
++
++2. Dans __init__, après la ligne `self._prev_open_positions: Dict[str, Dict] = {}` (ligne 165), ajoute :
++        self._exit_cooldowns: Dict[str, float] = {}
++
++3. Juste avant la méthode `_sync_manual_closures` (ligne 189), insère cette nouvelle méthode dans la classe SalleDesMarchesV5 (indentation 4 espaces) :
++
++    def _mark_trade_exit(self, symbol: str, reason: str = "exit") -> None:
++        self._exit_cooldowns[symbol] = time.time()
++        logger.info("[COOLDOWN] %s exit marqué (%s), cooldown %ds", symbol, reason, EXIT_COOLDOWN_SEC)
++
++4. Dans la méthode `_skip_reason`, juste avant la ligne `return None` finale, ajoute :
++
++        exit_ts = self._exit_cooldowns.get(symbol)
++        if exit_ts is not None and (now - exit_ts) < EXIT_COOLDOWN_SEC:
++            return f"cooldown post-exit ({int(EXIT_COOLDOWN_SEC - (now - exit_ts))}s)"
++
++Ne modifie rien d'autre. Ne supprime aucune ligne existante.
+
+# 2026-04-18 08:26:35.880264
++Y
+
+# 2026-04-18 12:20:20.195850
++D
+
+# 2026-04-18 12:21:54.283954
++Objectif: intégrer proprement la pipeline V5.9 dans main_v5.py sans casser la logique live V5.8.3 déjà en place.
++
++Contexte existant:
++- SharedMemory expose advancedfeatures, symbolregimes, orderbooksnapshots et les méthodes associées.
++- FeatureEngine.compute(symbol, technical, orderbook=None, regime=None, previous=None) existe déjà.
++- RegimeEngine.assess(symbol, features, previousregime=None) existe déjà.
++- Il faut conserver cooldown, trailing, sizing, TPSL, flip, ordre live.
++
++À faire dans main_v5.py uniquement:
++1. Importer FeatureEngine et RegimeEngine.
++2. Les instancier dans __init__.
++3. Dans la boucle symbole, après technical.analyze(symbol):
++   - récupérer un snapshot orderbook tolérant à l’erreur,
++   - le stocker via memory.updateorderbooksnapshot si disponible,
++   - lire previous_features = memory.getadvancedfeatures(symbol),
++   - calculer features = self.featureengine.compute(symbol, technical=tech, orderbook=snapshot, regime=regime, previous=previous_features),
++   - stocker via memory.updateadvancedfeatures(symbol, features),
++   - lire previous_symbol_regime = memory.getregimeforsymbol(symbol),
++   - calculer symbol_regime = self.regimeengine.assess(symbol, features, previousregime=previous_symbol_regime),
++   - stocker via memory.updateregimeforsymbol(symbol, symbol_regime).
++4. Utiliser symbol_regime à la place du simple regime global pour bull/bear/scalper quand c’est compatible.
++5. Si le pipeline feature/regime échoue, fallback propre vers la logique actuelle.
++6. Ajouter des logs lisibles: FEATURE PIPELINE, REGIME PIPELINE.
++7. Ne pas faire de refonte globale, patch minimal et robuste.
++
++
+
+# 2026-04-18 12:29:15.916425
++/exit
+
+# 2026-04-18 12:37:52.835413
++D
+
+# 2026-04-18 12:39:03.745558
++Patch uniquement main_v5.py.
++
++Objectif:
++intégrer un pipeline local FeatureEngine + RegimeEngine dans la boucle symbole, avec fallback robuste vers le regime global actuel.
++
++Contraintes strictes:
++- Ne modifier aucun autre fichier.
++- Utiliser les noms exacts déjà présents dans ce repo.
++- Import mémoire actuel inchangé: from memory.sharedmemory import SharedMemory
++- Méthodes mémoire à utiliser:
++  - getadvancedfeatures(symbol)
++  - updateadvancedfeatures(symbol, features)
++  - getregimeforsymbol(symbol)
++  - updateregimeforsymbol(symbol, regime)
++  - updateorderbooksnapshot(symbol, snapshot)
++- Utiliser FeatureEngine.compute(...)
++- Utiliser RegimeEngine.assess(..., previousregime=...)
++- Ne pas introduire de nouvelles variantes snake_case si le repo utilise déjà les alias existants.
++- Logs à ajouter avec les clés réelles:
++  - slopealignmentscore
++  - volatilitystate
++  - microtrend
++  - orderbookimbalance
++  - scalpreadinessscore
++
++À faire:
++1. Ajouter les imports:
++   from agents.feature_engine import FeatureEngine
++   from agents.regime_engine import RegimeEngine
++
++2. Dans __init__, instancier:
++   self.featureengine = FeatureEngine(self.memory, self.exchange)
++   self.regimeengine = RegimeEngine(self.memory)
++
++3. Ajouter une petite méthode helper dans la classe:
++   def getorderbooksnapshot(self, symbol: str) -> Dict:
++       try:
++           snapshot = self.orderbook.analyze(symbol) or {}
++           if isinstance(snapshot, dict):
++               return snapshot
++       except Exception as e:
++           logger.warning("ORDERBOOK SNAPSHOT %s error %r", symbol, e)
++       return {}
++
++4. Dans runforever, juste après:
++   tech = self.technical.analyze(symbol) or {}
++insérer:
++   symbolregime = regime
++   try:
++       snapshot = self.getorderbooksnapshot(symbol)
++       if snapshot:
++           self.memory.updateorderbooksnapshot(symbol, snapshot)
++       previousfeatures = self.memory.getadvancedfeatures(symbol) or {}
++       features = self.featureengine.compute(
++           symbol,
++           technical=tech,
++           orderbook=snapshot,
++           regime=regime,
++           previous=previousfeatures,
++       )
++       self.memory.updateadvancedfeatures(symbol, features)
++       previoussymbolregime = self.memory.getregimeforsymbol(symbol) or {}
++       symbolregime = self.regimeengine.assess(
++           symbol,
++           features,
++           previousregime=previoussymbolregime,
++       )
++       self.memory.updateregimeforsymbol(symbol, symbolregime)
++       logger.info(
++           "FEATURE PIPELINE %s slope=%.3f vol=%s micro=%s ob=%.3f scalp=%.2f",
++           symbol,
++           float(features.get("slopealignmentscore", 0.0) or 0.0),
++           str(features.get("volatilitystate", "unknown")),
++           str(features.get("microtrend", "unknown")),
++           float(features.get("orderbookimbalance", 0.0) or 0.0),
++           float(features.get("scalpreadinessscore", 0.0) or 0.0),
++       )
++       logger.info(
++           "REGIME PIPELINE %s trend=%s vol=%s risk=%s",
++           symbol,
++           str(symbolregime.get("trend", "unknown")),
++           str(symbolregime.get("volatility", "medium")),
++           str(symbolregime.get("risk", "medium")),
++       )
++   except Exception as e:
++       logger.warning("PIPELINE V5.9 %s fallback regime global error %r", symbol, e)
++       symbolregime = regime
++
++5. Remplacer ensuite:
++   bull = self.bull.analyze(symbol, regime, tech)
++   bear = self.bear.analyze(symbol, regime, tech)
++par:
++   bull = self.bull.analyze(symbol, symbolregime, tech)
++   bear = self.bear.analyze(symbol, symbolregime, tech)
++
++6. Remplacer ensuite:
++   prices = self.scalper.decide(symbol, side, tech, regime, cons)
++par:
++   prices = self.scalper.decide(symbol, side, tech, symbolregime, cons)
++
++7. Ajouter un log de démarrage dans runforever:
++   logger.info("Pipeline V5.9 active: FeatureEngine + RegimeEngine")
++
++Important:
++- Patch minimal.
++- Pas de refonte.
++- Préserver cooldown, trailing, flip, TPSL, sizing.
++- Fais directement le patch sur main_v5.py, pas seulement une explication.
+
+# 2026-04-18 12:51:50.291872
++N
+
+# 2026-04-18 15:47:22.983811
++D
+
+# 2026-04-18 15:47:36.481777
++Objectif: créer un module de backtest offline orienté recherche-développement.
++
++Vision:
++- Le backtester n’a AUCUNE action directe sur la production.
++- Il récupère ses données via HyperliquidExchangeClient.
++- Il partage ses résultats dans SharedMemory.
++- Les agents live peuvent éventuellement consommer ces résultats plus tard, de manière optionnelle.
++- Il doit mettre en évidence, pour chaque instrument et contexte de marché, quelle famille de stratégie paraît la plus pertinente: scalping, swing, trend following, mean reversion, LLM-assisted.
++
++Contraintes:
++- Ne pas modifier la logique d’exécution live.
++- Ne pas ajouter de dépendance de production entre main_v5.py et le module de backtest.
++- Réutiliser backtest/backtester.py existant autant que possible.
++- Ajouter seulement des patchs minimaux à SharedMemory si une méthode d’écriture manque.
++- Le module est un outil R&D, jamais un composant d’exécution.
++
++À faire:
++1. Créer un module backtest/backtest_module.py.
++2. Ajouter une classe ResearchBacktester(exchange_client, memory).
++3. Implémenter:
++   - run_symbol(symbol, interval="1h", days=45, regime_key=None)
++   - run_many(symbols, interval="1h", days=45)
++   - publish_result(...)
++4. Le module doit:
++   - récupérer les OHLCV via exchange_client.get_ohlcv(...)
++   - comparer plusieurs stratégies entre elles, pas seulement plusieurs paramètres d’une même stratégie
++   - faire une validation walk-forward sur une fenêtre récente non vue
++   - sélectionner le meilleur résultat avec PF, max drawdown, nb_trades minimum, puis total_pnl
++5. Stratégies minimales à comparer dès maintenant:
++   - trend following / ema crossover swing
++   - trend following / ema crossover intraday
++   - mean reversion / rsi bollinger scalp
++   - mean reversion / rsi bollinger intraday
++6. Résultat publié dans SharedMemory:
++   - priorité: scalper_profiles[symbol][regime_key]
++   - et validation_logs
++   - si utile, ajouter aussi backtest_recommendations[symbol][regime_key] avec patch minimal et compatible
++7. Le contenu publié doit inclure:
++   - regime_key
++   - strategy_family retenue
++   - strategy_name
++   - horizon recommandé: scalp / intraday / swing
++   - paramètres retenus
++   - métriques train
++   - métriques walk-forward
++   - top 3 des stratégies testées
++   - verdict pass/fail
++   - timestamp
++8. Ne pas toucher à main_v5.py sauf nécessité absolue de compatibilité.
++9. Code simple, robuste, lisible, sans refonte globale.
++
++Important:
++- Aucune action live
++- Aucun ordre
++- Aucune modification du flux de production
++- Publication mémoire uniquement
+
+# 2026-04-18 15:48:30.677116
++N
+
+# 2026-04-18 19:20:35.964079
++Y
+
+# 2026-04-18 22:59:48.150041
++/exit
+
+# 2026-04-18 23:00:32.528041
++D
+
+# 2026-04-18 23:00:40.844510
++Objectif: créer un module de backtest offline R&D minimal, sans toucher à la production.
++
++Contraintes absolues:
++- modifier seulement memory/shared_memory.py
++- créer seulement backtest/backtest_module.py
++- ne pas modifier main_v5.py
++- ne pas modifier backtest/__init__.py
++- ne pas créer run_research.py
++- ne pas créer research_backtester.py
++- ne pas faire de refonte du package
++- aucune action live
++- aucun ordre
++- publication mémoire uniquement
++
++1) Dans memory/shared_memory.py
++Ajouter de façon minimale:
++- "backtest_recommendations": {} dans _default_data()
++- normalisation de cette clé dans _normalize_schema()
++
++Ajouter seulement ces méthodes:
++- update_backtest_recommendation(self, symbol: str, regime_key: str, recommendation: Dict) -> None
++- updatebacktestrecommendation(self, symbol: str, regimekey: str, recommendation: Dict) -> None
++- get_backtest_recommendation(self, symbol: str, regime_key: str) -> Dict
++- getbacktestrecommendation(self, symbol: str, regimekey: str) -> Dict
++- get_all_backtest_recommendations(self) -> Dict[str, Dict]
++- getallbacktestrecommendations(self) -> Dict[str, Dict]
++
++2) Créer backtest/backtest_module.py
++Ajouter une classe ResearchBacktester(exchange_client, memory)
++
++Méthodes publiques obligatoires:
++- run_symbol(symbol, interval="1h", days=45, regime_key=None)
++- run_many(symbols, interval="1h", days=45)
++- publish_result(...)
++
++Le module doit:
++- récupérer les OHLCV via exchange_client.get_ohlcv(...)
++- comparer au minimum 4 stratégies:
++  - trend following / ema crossover swing
++  - trend following / ema crossover intraday
++  - mean reversion / rsi bollinger scalp
++  - mean reversion / rsi bollinger intraday
++- faire une validation walk-forward simple
++- choisir le meilleur résultat avec PF, drawdown, nb_trades minimum, puis total_pnl
++- publier les résultats dans:
++  - scalper_profiles[symbol][regime_key]
++  - validation_logs
++  - backtest_recommendations[symbol][regime_key]
++
++Le contenu publié doit inclure:
++- regime_key
++- strategy_family
++- strategy_name
++- horizon
++- params
++- train_metrics
++- walk_forward_metrics
++- top_strategies
++- verdict
++- timestamp
++
++Important:
++- code compact, robuste, lisible
++- patch minimal
++- ne supprime ni ne modifie aucune méthode existante sans nécessité
++- à la fin, montre uniquement le diff des 2 fichiers
+
+# 2026-04-18 23:03:17.216911
++N
++N
++
++Ne pas ajouter backtest/__init__.py.
++Rester strictement sur:
++- memory/shared_memory.py
++- backtest/backtest_module.py
++
++Patch minimal uniquement sur ces 2 fichiers.
++
++
++
++
++
++
++

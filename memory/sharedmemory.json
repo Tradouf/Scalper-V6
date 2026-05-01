@@ -1,0 +1,332 @@
+{
+  "marketanalysis": {},
+  "debate": {},
+  "positions": {},
+  "riskstatus": {
+    "var": 0.0,
+    "drawdown": 0.0,
+    "dailypnl": 0.0,
+    "alerts": []
+  },
+  "agentsignals": [],
+  "tradehistory": [],
+  "regime": {
+    "trend": "unknown",
+    "volatility": "medium",
+    "risk": "medium",
+    "ts": "2026-04-16T20:04:53.923681"
+  },
+  "agentmessages": [],
+  "scalperprofiles": {},
+  "advancedfeatures": {},
+  "symbolregimes": {},
+  "orderbooksnapshots": {},
+  "validationlogs": [],
+  "news": {
+    "ts": 1776365643,
+    "symbols": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "AVAX",
+      "ARB",
+      "HYPE",
+      "LINK",
+      "ADA",
+      "BNB",
+      "POLYX",
+      "BERA",
+      "LINEA",
+      "BSV",
+      "ETC",
+      "CAKE",
+      "JTO",
+      "ZEC"
+    ],
+    "headlines": [
+      {
+        "title": "U.S. CFTC's Selig says AI has helped make up for staffing cuts at key crypto watchdog",
+        "link": "https://www.coindesk.com/policy/2026/04/16/u-s-cftc-s-selig-says-ai-has-helped-make-up-for-staffing-cuts-at-key-crypto-watchdog",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 16:50:44 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Cardano's Charles Hoskinson says Bitcoin's quantum fix is a hard fork that can't save Satoshi's coins",
+        "link": "https://www.coindesk.com/tech/2026/04/16/cardano-s-hoskinson-says-bitcoin-s-quantum-fix-is-a-hard-fork-that-can-t-save-satoshi-s-coins",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 16:19:29 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Crypto for Advisors: Tokenization’s evolution",
+        "link": "https://www.coindesk.com/coindesk-indices/2026/04/15/crypto-for-advisors-tokenization-s-evolution",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 15:00:00 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin slides back below $74,000 as breakout to higher levels fails again",
+        "link": "https://www.coindesk.com/markets/2026/04/16/bitcoin-slides-back-below-usd74-000-as-breakout-to-higher-levels-fails-again",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 14:46:48 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "The 24-hour trap: Why the UK’s new crypto rules could catch some firms off guard",
+        "link": "https://www.coindesk.com/policy/2026/04/16/uk-s-financial-watchdog-releases-sweeping-crypto-asset-framework-for-final-consultation",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 14:40:02 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "VerifiedX brings privacy layer to Bitcoin as institutional demand for confidentiality grows",
+        "link": "https://www.coindesk.com/tech/2026/04/16/verifiedx-brings-privacy-layer-to-bitcoin-as-institutional-demand-for-confidentiality-grows",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 14:00:00 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "CoinDesk 20 performance update: Ethereum (ETH) price drops 1.3% as index trades lower",
+        "link": "https://www.coindesk.com/coindesk-indices/2026/04/16/coindesk-20-performance-update-ethereum-eth-price-drops-1-3-as-index-trades-lower",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 13:20:14 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Wall Street trading-tech is coming to crypto as DoubleZero rolls out high-speed data for Solana",
+        "link": "https://www.coindesk.com/tech/2026/04/16/wall-street-trading-tech-is-coming-to-crypto-as-doublezero-rolls-out-high-speed-data-for-solana",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 13:00:00 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Drift gets $148 million funding from Tether and partners as it replaces Circle stablecoin with USDT after massive exploit",
+        "link": "https://www.coindesk.com/business/2026/04/16/drift-gets-usd148-million-funding-from-tether-and-partners-as-it-replaces-circle-stablecoin-with-usdt-after-massive-exploit",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 13:00:00 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Keep an eye on XRP, Plasma, DOGE as bitcoin drifts",
+        "link": "https://www.coindesk.com/daybook-us/2026/04/16/keep-an-eye-on-xrp-plasma-doge-as-bitcoin-drifts",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 11:22:36 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin funding rates hit most negative since 2023, history suggests bottom is in",
+        "link": "https://www.coindesk.com/markets/2026/04/16/bitcoin-funding-rates-hit-most-negative-since-2023-history-suggests-bottom-is-in",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 11:14:46 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin holds near $75,000 as short-term holders look for profit opportunities",
+        "link": "https://www.coindesk.com/markets/2026/04/16/bitcoin-holds-near-usd75-000-as-short-term-holders-look-for-profit-opportunities",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 10:49:59 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "South Korea to test blockchain deposit tokens for government spending in Q4",
+        "link": "https://www.coindesk.com/policy/2026/04/16/south-korea-to-test-blockchain-deposit-tokens-for-government-spending-in-q4",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 09:37:48 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "The cheapest bitcoin ETF yet: Morgan Stanley uses 0.14% fee to draw $100 million in first week",
+        "link": "https://www.coindesk.com/markets/2026/04/16/morgan-stanley-s-bitcoin-etf-reaches-usd100m-in-first-week-marking-the-bank-s-strongest-launch",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 09:37:33 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Crypto fund manager probed in the suspicious death of his fiancée in Zanzibar",
+        "link": "https://www.coindesk.com/business/2026/04/16/crypto-fund-manager-probed-in-the-suspicious-death-of-his-fiance-s-death-in-zanzibar",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 09:21:09 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Circle CEO says China could launch yuan stablecoin within 3 to 5 years as currency race heats up",
+        "link": "https://www.coindesk.com/policy/2026/04/16/circle-ceo-says-china-could-launch-yuan-stablecoin-within-3-to-5-years-as-currency-race-heats-up",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 09:12:40 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Buying coffee with bitcoin is easy, the resulting tax burden is not",
+        "link": "https://www.coindesk.com/policy/2026/04/16/buying-coffee-with-bitcoin-is-easy-the-resulting-tax-burden-is-not",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 08:48:30 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "The CLARITY Act breakthrough: Why JPMorgan says the U.S. crypto rulebook is ‘close to completion’",
+        "link": "https://www.coindesk.com/policy/2026/04/15/jpmorgan-says-clarity-close-to-deal-as-stablecoin-fight-enters-final-stage",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 08:32:33 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin is testing a level that capped its rally in January, CryptoQuant says",
+        "link": "https://www.coindesk.com/markets/2026/04/16/bitcoin-is-testing-a-level-that-capped-its-rally-in-january",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 07:07:55 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin's quantum debate splits as Adam Back pushes optional upgrades over forced freeze",
+        "link": "https://www.coindesk.com/tech/2026/04/16/bitcoin-s-quantum-debate-splits-as-adam-back-pushes-optional-upgrades-over-forced-freeze",
+        "summary": "",
+        "published": "Thu, 16 Apr 2026 05:51:15 +0000",
+        "source": "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "title": "Bitcoin analysts see ‘further upside,’ and identify next price levels to watch",
+        "link": "https://cointelegraph.com/news/bitcoin-analysts-see-further-upside-and-identify-next-price-levels-to-watch?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Bitcoin analysts see ‘further upside,’ and identify next price levels to watch\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk3MDMtZTE5Yi03NzMyLThhZDMtODZmODUxN2VmMTQ5LmpwZw==.jpg\" /></p><p>Traders say Bitcoin has room to rally higher, but the upside could be capped at BTC’s active supply cost basis near $78,000.</p>",
+        "published": "Thu, 16 Apr 2026 19:00:00 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "With no bipartisan leadership, CFTC won't ‘slow down‘ on rulemaking",
+        "link": "https://cointelegraph.com/news/cftc-chair-rulemaking-bipartisan-leadership?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"With no bipartisan leadership, CFTC won't ‘slow down‘ on rulemaking\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk3MDctZTY5MS03YWM0LWFjZmUtOTk5MTg5M2Y2YjlhLmpwZw==.jpg\" /></p><p>Democratic lawmakers called out Michael Selig for unilaterally advancing policies at the regulator that's normally led by a bipartisan group of five comm",
+        "published": "Thu, 16 Apr 2026 18:52:47 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Charles Schwab to roll out spot Bitcoin, Ether trading for retail clients",
+        "link": "https://cointelegraph.com/news/charles-schwab-to-roll-out-spot-bitcoin-ether-trading-for-retail-clients?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Charles Schwab to roll out spot Bitcoin, Ether trading for retail clients\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk3MGYtM2E4ZS03ZDE0LTg5MjEtOTMxYjcwYTI2MzM2LmpwZw==.jpg\" /></p><p>Schwab will introduce direct trading in the two biggest cryptos through a dedicated account, its first move into spot trading as it expands its dig",
+        "published": "Thu, 16 Apr 2026 18:18:01 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Bitcoin bull run ‘still too early’ to call as demand lags exiting capital: Analyst",
+        "link": "https://cointelegraph.com/news/bitcoin-bull-run-still-too-early-to-call-as-demand-lags-exiting-capital-analyst?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Bitcoin bull run ‘still too early’ to call as demand lags exiting capital: Analyst\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2YTctYTM0Yi03NjE5LWI3YzAtZDFmNjlkZTM2ZDZhLmpwZw==.jpg\" /></p><p>Bitcoin trades below the profitability threshold for active holders, with early signs of BTC demand offering limited price support for now",
+        "published": "Thu, 16 Apr 2026 17:55:36 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Bitcoin rebounds near $74.5K as US stocks chase after new all-time highs",
+        "link": "https://cointelegraph.com/news/bitcoin-rebounds-near-dollar74-5k-as-us-stocks-chase-after-new-all-time-highs?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Bitcoin rebounds near $74.5K as US stocks chase after new all-time highs\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2ZDQtMGQxYi03OTZhLTllNmQtYjJhMzYyNWFkNGMzLmpwZw==.jpg\" /></p><p>Bitcoin attempted to recover the $75,000 level as US stocks chase after a second day of fresh all-time highs. Is the bull market back on?</p>",
+        "published": "Thu, 16 Apr 2026 17:17:04 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Zonda exchange says 4.5K BTC wallet inaccessible amid withdrawal crisis",
+        "link": "https://cointelegraph.com/news/zonda-crypto-4500-btc-wallet-inaccessible-withdrawal-crisis?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Zonda exchange says 4.5K BTC wallet inaccessible amid withdrawal crisis\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2YTMtYjAzZS03MDlhLWIwNDktYjhhNzI4YjgzZThlLmpwZw==.jpg\" /></p><p>The CEO of the troubled Zonda exchange has disclosed a Bitcoin wallet holding around 4,500 BTC, but said the private keys were never transferred duri",
+        "published": "Thu, 16 Apr 2026 16:48:12 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Tether announces $150M recovery program for Drift Protocol",
+        "link": "https://cointelegraph.com/news/tether-150m-recovery-drift-protocol?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Tether announces $150M recovery program for Drift Protocol\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2YzQtYWYyZC03MTgzLWJhYWEtYjljZTdmZGE0YTYzLmpwZw==.jpg\" /></p><p>The Drift Protocol will use the $150 million to relaunch and restore user funds following a $280 million exploit earlier in April.</p>",
+        "published": "Thu, 16 Apr 2026 16:20:03 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "UAE investors buy AI dip, keep crypto exposure despite conflict",
+        "link": "https://cointelegraph.com/news/uae-investors-double-down-on-ai-digital-assets?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"UAE investors buy AI dip, keep crypto exposure despite conflict\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2NGItYjI2MS03MTNhLWI3MzAtMzBmY2E1NjdkNWJjLmpwZw==.jpg\" /></p><p>UAE investors are buying the AI and tech dip, keeping exposure to software, chips and crypto as the Iran conflict stress-tests the Gulf’s bid to be a global ",
+        "published": "Thu, 16 Apr 2026 14:59:12 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Here’s what happened in crypto today",
+        "link": "https://cointelegraph.com/news/what-happened-in-crypto-today?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Here’s what happened in crypto today\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDIvMDE5YzY2NjktN2UxNi03ZmI0LTlmNjItOTIxNWU3YTcwZmIwLmpwZw==.jpg\" /></p><p>Need to know what happened in crypto today? Here is the latest news on daily trends and events impacting Bitcoin price, blockchain, DeFi, NFTs, Web3 and crypto regulation.</p>",
+        "published": "Thu, 16 Apr 2026 14:38:46 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "OneCoin’s fallout lingers as US victims get a shot at recovery",
+        "link": "https://cointelegraph.com/news/onecoin-fallout-lingers-us-victims-recovery?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"OneCoin’s fallout lingers as US victims get a shot at recovery\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2NzgtNjI4MC03NjRiLWEzY2EtN2E2ODY4ZjFiOThkLmpwZw==.jpg\" /></p><p>Investors in the cryptocurrency Ponzi scheme OneCoin may finally get some relief through a Department of Justice program, some 12 years after the project laun",
+        "published": "Thu, 16 Apr 2026 14:28:01 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Why Australia’s $17B crypto opportunity depends on regulation",
+        "link": "https://cointelegraph.com/news/australia-tokenized-finance-regulatory-framework?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Why Australia’s $17B crypto opportunity depends on regulation\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2NmMtYzZhMS03Yjk5LTgyNzItMjExNzc0MmJjY2M1LmpwZw==.jpg\" /></p><p>Australia’s A$24B digital asset opportunity hinges on regulation. Clear rules could drive tokenized markets, faster payments and institutional investment.</p>",
+        "published": "Thu, 16 Apr 2026 14:26:21 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Naver-Dunamu filing sets IPO committee, listing timeline for fintech group",
+        "link": "https://cointelegraph.com/news/naver-dunamu-filing-ipo-committee-listing-window?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Naver-Dunamu filing sets IPO committee, listing timeline for fintech group\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjUtMTIvMDE5YjAyM2ItYjg2OC03YjZlLWJmZWMtMjNlNmVlNzE0ZmJm.jpg\" /></p><p>The corrected filing details timeline, caveats and conditions tied to a potential Naver Financial IPO after the Dunamu share swap deal.</p>",
+        "published": "Thu, 16 Apr 2026 14:25:40 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Ukraine arrests FBI-wanted cybercrime suspect, seizes $11M in assets",
+        "link": "https://cointelegraph.com/news/ukraine-arrests-suspect-100m-cybercrime-ring-11m-seized-crypto?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Ukraine arrests FBI-wanted cybercrime suspect, seizes $11M in assets\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2MzYtYzJmZi03Mjc0LWFlOWMtNDJlODE2MTY2Mjg1LmpwZw==.jpg\" /></p><p>Ukrainian authorities detained a suspect linked to a $100 million cybercrime network targeting the US and Europe, seizing $11 million in assets, of whic",
+        "published": "Thu, 16 Apr 2026 14:00:51 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "AllUnity takes MiCA-regulated euro stablecoin EURAU further into DeFi",
+        "link": "https://cointelegraph.com/news/allunity-mica-regulated-euro-stablecoin-eurau-defi?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"AllUnity takes MiCA-regulated euro stablecoin EURAU further into DeFi\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1Y2ItMjU1Zi03MDc4LTk4NzMtNDcxOWU5NjQ3Yjc1LmpwZw==.jpg\" /></p><p>AllUnity says it is expanding EURAU stablecoin liquidity pools across major DEXs such as Uniswap and Raydium, with trading pairs against USDT and USDT0",
+        "published": "Thu, 16 Apr 2026 13:47:29 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Adam Back says Bitcoin’s post-quantum shift may reveal true Satoshi stash",
+        "link": "https://cointelegraph.com/news/bitcoin-post-quantum-migration-reveal-satoshi-coins-adam-back?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Adam Back says Bitcoin’s post-quantum shift may reveal true Satoshi stash\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk2MGQtZTFmNi03M2Y1LWIwYWUtYzk4NTgwZWY3YmE5LmpwZw==.jpg\" /></p><p>Back said at Paris Blockchain Week that Bitcoin’s post-quantum shift may reveal the true size of the stash held by Satoshi Nakamoto, estimated at b",
+        "published": "Thu, 16 Apr 2026 13:23:08 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Europe’s Bitcoin treasury playbook won’t be a copy of Strategy: PBW 2026",
+        "link": "https://cointelegraph.com/news/europe-bitcoin-treasury-model-not-copy-strategy-pbw?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Europe’s Bitcoin treasury playbook won’t be a copy of Strategy: PBW 2026\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1ZWUtNGQ0My03OTYzLTk3ODUtY2M0ZThmMjUxM2QwLmpwZw==.jpg\" /></p><p>Executives at Paris Blockchain Week said European firms interested in Bitcoin treasury strategies are working around shallower capital markets and t",
+        "published": "Thu, 16 Apr 2026 12:55:00 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Circle CEO sees ‘tremendous opportunity’ for yuan stablecoin despite China curbs",
+        "link": "https://cointelegraph.com/news/circle-allaire-sees-tremendous-opportunity-yuan-stablecoin?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Circle CEO sees ‘tremendous opportunity’ for yuan stablecoin despite China curbs\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1ZTctMzkwOS03MDIwLTlmOWItMWJkN2ZmODJhZmRjLmpwZw==.jpg\" /></p><p>Circle’s Jeremy Allaire sees “tremendous” room for a yuan stablecoin, despite China banning most private yuan tokens and pushing its CBDC to",
+        "published": "Thu, 16 Apr 2026 12:22:05 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "French minister says new measures are coming after crypto kidnappings",
+        "link": "https://cointelegraph.com/news/french-minister-measures-crypto-wrench-attacks-kidnappings?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"French minister says new measures are coming after crypto kidnappings\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1ZDUtNTg4Ny03OTNjLWFlYzQtODU4NzYyOWE3ZjA0LmpwZw==.jpg\" /></p><p>Jean-Didier Berger said at Paris Blockchain Week that France is preparing new steps to protect crypto holders as wrench attacks and kidnappings keep mo",
+        "published": "Thu, 16 Apr 2026 11:53:04 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "Study finds almost no crypto protocols disclose market-maker terms",
+        "link": "https://cointelegraph.com/news/crypto-market-maker-disclosure-study-novora-report?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"Study finds almost no crypto protocols disclose market-maker terms\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1YTctMDJlZS03ZjliLWE1MDctYjY2YzNiZjI1MTkyLmpwZw==.jpg\" /></p><p>A review of over 150 crypto protocols finds fewer than 1% disclose market-making arrangements, revealing a major transparency gap in token trading structu",
+        "published": "Thu, 16 Apr 2026 10:58:54 +0100",
+        "source": "https://cointelegraph.com/rss"
+      },
+      {
+        "title": "South Korea to pilot tokenized deposits for government spending",
+        "link": "https://cointelegraph.com/news/south-korea-pilot-tokenized-deposits-government-spending?utm_source=rss_feed&utm_medium=rss&utm_campaign=rss_partner_inbound",
+        "summary": "<p style=\"float: right; margin: 0 0 10px 15px; width: 240px;\"><img alt=\"South Korea to pilot tokenized deposits for government spending\" class=\"type:primaryImage\" src=\"https://images.cointelegraph.com/images/528_aHR0cHM6Ly9zMy5jb2ludGVsZWdyYXBoLmNvbS91cGxvYWRzLzIwMjYtMDQvMDE5ZDk1NGQtMDU3ZC03MzM3LTkyOGYtYzY5ZTk0N2ZkZWI3LmpwZw==.jpg\" /></p><p>The sandbox will test preset spending limits, timing controls and category restrictions for public sector expense payments.</p>",
+        "published": "Thu, 16 Apr 2026 09:50:58 +0100",
+        "source": "https://cointelegraph.com/rss"
+      }
+    ],
+    "sentiment": "bullish",
+    "bull_count": 18,
+    "bear_count": 5
+  }
+}

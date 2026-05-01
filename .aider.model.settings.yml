@@ -1,0 +1,16 @@
+- name: deepseek/deepseek-chat
+  edit_format: whole
+  use_repo_map: true
+  reminder: sys
+  examples_as_sys_msg: true
+  extra_params:
+    max_tokens: 8192
+
+- name: openai/qwen3.5-9b
+  edit_format: whole
+  use_repo_map: true
+  extra_params:
+    api_base: http://localhost:8080/v1
+    api_key: "local"
+    max_tokens: 4096
+    num_ctx: 8192
