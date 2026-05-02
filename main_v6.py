@@ -1390,6 +1390,9 @@ class SalleDesMarchesV6:
         if qty <= 0:
             logger.warning("LIVE %s: taille calculée nulle (entry=%.4f sl=%.4f)", symbol, entry, sl)
             return None
+        if qty * entry < 10.5:
+            logger.info("SKIP %s — notional trop faible (%.2f USDT < $10.5 min)", symbol, qty * entry)
+            return None
 
         side = side.lower()
         if side not in {"buy", "sell"}:
