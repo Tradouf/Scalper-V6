@@ -304,17 +304,21 @@ class HyperliquidExchangeClient(ExchangeClient):
         side_close: str,
         qty: float,
         trigger_price: float,
-    ) -> bool:
+    ) -> int | None:
+        """
+        Retourne le nouvel OID si le modify a réussi, None sinon.
+        HL cancel+recreate les ordres trigger : l'OID retourné est le nouveau.
+        """
         try:
             oid_int = int(order_id)
         except Exception:
             logger.warning("modify_stop_trigger_order: oid invalide %r", order_id)
-            return False
+            return None
 
         is_buy = str(side_close).lower() == "buy"
 
         try:
-            ok = self._client.modify_order(
+            new_oid = self._client.modify_order(
                 coin=symbol,
                 oid=oid_int,
                 is_buy=is_buy,
@@ -323,12 +327,13 @@ class HyperliquidExchangeClient(ExchangeClient):
                 order_type="sl",
                 reduce_only=True,
             )
-            if ok:
+            if new_oid is not None:
                 logger.info(
-                    "modify_stop_trigger_order OK %s %s oid=%s qty=%.6f trigger=%.8f",
+                    "modify_stop_trigger_order OK %s %s oid=%s→%s qty=%.6f trigger=%.8f",
                     symbol,
                     side_close,
                     order_id,
+                    new_oid,
                     float(qty),
                     float(trigger_price),
                 )
@@ -341,7 +346,7 @@ class HyperliquidExchangeClient(ExchangeClient):
                     float(qty),
                     float(trigger_price),
                 )
-            return bool(ok)
+            return new_oid
         except Exception as e:
             logger.warning(
                 "modify_stop_trigger_order failed %s %s oid=%s trigger=%.8f: %r",
@@ -351,7 +356,7 @@ class HyperliquidExchangeClient(ExchangeClient):
                 float(trigger_price),
                 e,
             )
-            return False
+            return None
 
     def get_candles(self, symbol: str, interval: str = "1h", limit: int = 50) -> list:
         try:

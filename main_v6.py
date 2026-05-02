@@ -26,6 +26,7 @@ import math
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from memory.shared_memory import SharedMemory
@@ -102,12 +103,16 @@ RESET_SIM_POSITIONS = bool(getattr(SETTINGS, "RESET_SIM_POSITIONS", False))
 DEBUG_SKIPS = bool(getattr(SETTINGS, "DEBUG_SKIPS", True))
 COOLDOWN_SEC = int(getattr(SETTINGS, "COOLDOWN_SEC", 900))
 EXIT_COOLDOWN_SEC = int(getattr(SETTINGS, "EXIT_COOLDOWN_SEC", 300))
+FLIP_COOLDOWN_SEC = int(getattr(SETTINGS, "FLIP_COOLDOWN_SEC", 300))
 NEWS_REFRESH_SEC = int(getattr(SETTINGS, "NEWS_REFRESH_SEC", 1800))
 WHALES_REFRESH_SEC = int(getattr(SETTINGS, "WHALES_REFRESH_SEC", 1800))
 MIN_VOLRATIO = float(getattr(SETTINGS, "MIN_VOLRATIO", 0.005))
 RISK_PER_TRADE_PCT = float(getattr(SETTINGS, "RISK_PER_TRADE_PCT", 0.01))
 MAX_LEVERAGE = float(getattr(SETTINGS, "MAX_LEVERAGE", 3.0))
 MAX_NOTIONAL_PCT = float(getattr(SETTINGS, "MAX_NOTIONAL_PCT", 0.10))
+SIZING_CONF_FLOOR = float(getattr(SETTINGS, "SIZING_CONF_FLOOR", 0.40))
+FLIP_MIN_CONFIDENCE = float(getattr(SETTINGS, "FLIP_MIN_CONFIDENCE", 0.80))
+BLOCKED_HOURS_UTC = set(getattr(SETTINGS, "BLOCKED_HOURS_UTC", set()))
 SYMBOLS_PER_CYCLE = int(getattr(SETTINGS, "SYMBOLS_PER_CYCLE", 2))
 BULL_BEAR_REFRESH_SEC = int(getattr(SETTINGS, "BULL_BEAR_REFRESH_SEC", 300))
 HL_SYNC_SEC = float(getattr(SETTINGS, "HL_SYNC_SEC", 2.0))
@@ -215,6 +220,7 @@ class SalleDesMarchesV6:
         self._tick_decimals: Dict[str, int] = {}
         self._prev_open_positions: Dict[str, Dict] = {}
         self._exit_cooldowns: Dict[str, float] = {}
+        self._flip_cooldowns: Dict[str, float] = {}
         self._freeze_until: Dict[str, float] = {}
         self._entry_regime_ctx: Dict[str, Dict] = {}
 
@@ -251,6 +257,7 @@ class SalleDesMarchesV6:
             )
             self._trail_thread.start()
             logger.info("Trail monitor thread démarré (intervalle=%ds)", TRAIL_CHECK_SEC)
+            self._recover_trail_guards()
 
         if self.simulation and RESET_SIM_POSITIONS:
             self._reset_sim_positions()
@@ -314,6 +321,9 @@ class SalleDesMarchesV6:
         prices: Dict[str, float] = {}
         account_value: float = 0.0
         open_orders: list = []
+        positions_ok = False
+        prices_ok = False
+        orders_ok = False
 
         try:
             user_state = self.exchange._client.get_user_state()
@@ -339,6 +349,7 @@ class SalleDesMarchesV6:
                     "leverage": leverage_val,
                     "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
                 }
+            positions_ok = True
         except Exception as e:
             logger.warning("HL sync positions error: %r", e)
 
@@ -346,20 +357,30 @@ class SalleDesMarchesV6:
             all_mids = self.exchange._client.get_all_mids()
             for coin, px in all_mids.items():
                 prices[str(coin).upper()] = float(px)
+            prices_ok = True
         except Exception as e:
             logger.warning("HL sync prices error: %r", e)
 
         try:
             open_orders = self.exchange._client.get_open_orders(coin=None) or []
+            orders_ok = True
         except Exception as e:
             logger.warning("HL sync orders error: %r", e)
 
         with self._hl_cache_lock:
-            self._hl_cache["positions"] = positions
-            self._hl_cache["prices"] = prices
-            self._hl_cache["account_value_usdt"] = account_value
-            self._hl_cache["open_orders"] = open_orders
-            self._hl_cache_ts = time.time()
+            # Ne pas écraser le cache avec des données vides si l'appel API a échoué.
+            # Un fetch raté ne doit pas supprimer les positions/ordres connus.
+            if positions_ok:
+                self._hl_cache["positions"] = positions
+                self._hl_cache["account_value_usdt"] = account_value
+            if prices_ok:
+                self._hl_cache["prices"] = prices
+            if orders_ok:
+                self._hl_cache["open_orders"] = open_orders
+            # On met à jour le timestamp seulement si au moins les positions ont été lues,
+            # sinon _assert_hl_cache_fresh continuera à forcer des retries.
+            if positions_ok:
+                self._hl_cache_ts = time.time()
 
     def _assert_hl_cache_fresh(self) -> None:
         """Vérifie que le cache n'est pas périmé. Si oui, force un sync."""
@@ -383,10 +404,15 @@ class SalleDesMarchesV6:
             coin = str(order.get("coin", "")).upper()
             if coin != sym:
                 continue
-            # Filtrer les ordres trigger (stop loss / take profit)
-            order_type = order.get("orderType", "")
             oid = order.get("oid")
-            is_trigger = isinstance(order_type, str) and order_type.lower() in ("stop", "sl", "tp", "trigger")
+            order_type_str = str(order.get("orderType", "")).lower()
+            # Inclure les ordres trigger identifiés par isTrigger (frontend_open_orders),
+            # par le contenu de orderType, ou par reduceOnly
+            is_trigger = (
+                bool(order.get("isTrigger", False))
+                or any(kw in order_type_str for kw in ("stop", "trigger", "take profit", " tp", " sl"))
+                or str(order.get("tpsl", "")).lower() in ("sl", "tp")
+            )
             is_reduce = bool(order.get("reduceOnly", False))
             if (is_trigger or is_reduce) and oid is not None:
                 result[str(oid)] = order
@@ -526,7 +552,7 @@ class SalleDesMarchesV6:
                 logger.warning("TRAIL NATIVE SL %s: side invalide %r", symbol, side)
                 return
 
-            if entry <= 0 or prot <= 0.0 or current_price <= 0.0:
+            if entry <= 0 or prot < 0.0 or current_price <= 0.0:
                 return
 
             if lev <= 0:
@@ -584,20 +610,29 @@ class SalleDesMarchesV6:
                     logger.info("TRAIL NATIVE SL %s %s: sl_oid récupéré depuis cache: %s", symbol, side, sl_oid)
                 elif len(stop_orders) > 1:
                     # Plusieurs stop orders, on essaie de matcher par prix
-                    logger.info("TRAIL NATIVE SL %s %s: %d stop orders, tentative de matching par prix", symbol, side, len(stop_orders))
-                    # Récupérer le prix de SL initial depuis le guard ou recalculer
-                    # On utilise le SL le plus proche du SL initial attendu pour le côté
-                    # Pour un BUY: SL est en dessous de l'entry
-                    # Pour un SELL: SL est au-dessus de l'entry
+                    logger.info("TRAIL NATIVE SL %s %s: %d stop orders, tentative de matching", symbol, side, len(stop_orders))
+                    # Prix de référence pour le matching: native_sl_price si connu, sinon entry
+                    known_sl_price = float(guard.get("native_sl_price", 0) or 0)
                     best_oid = None
                     best_diff = float("inf")
                     for oid_key, order_data in stop_orders.items():
                         try:
-                            order_trig = float(order_data.get("triggerPx", 0) or order_data.get("trigger_px", 0) or 0)
+                            order_trig = float(
+                                order_data.get("triggerPx", 0)
+                                or order_data.get("trigger_px", 0)
+                                or order_data.get("limit_px", 0)
+                                or 0
+                            )
                             tpsl = str(order_data.get("tpsl", "")).lower()
-                            # Privilégier les orders marqués "sl"
+                            if not tpsl:
+                                # Fallback: déduire depuis orderType string (après switch frontend_open_orders)
+                                ot_str = str(order_data.get("orderType", "")).lower()
+                                if "stop" in ot_str:
+                                    tpsl = "sl"
+                                elif "take profit" in ot_str or " tp" in ot_str:
+                                    tpsl = "tp"
+                            # Matching prioritaire par tpsl explicite
                             if tpsl == "sl":
-                                # Vérifier le côté (SL d'un BUY = sell)
                                 ord_side = str(order_data.get("side", "")).lower()
                                 if ord_side in ("a", "sell") and side == "buy":
                                     sl_oid = int(oid_key)
@@ -605,18 +640,20 @@ class SalleDesMarchesV6:
                                 if ord_side in ("b", "buy") and side == "sell":
                                     sl_oid = int(oid_key)
                                     break
-                            # Sinon matching par position relative au prix
-                            if order_trig > 0:
-                                if side == "buy" and order_trig < entry:
-                                    diff = abs(entry - order_trig)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_oid = int(oid_key)
-                                elif side == "sell" and order_trig > entry:
+                            # Fallback: matching par prix (le plus proche du SL attendu)
+                            # Pour BUY: SL initial sous entry; pour SELL: SL initial au-dessus de entry
+                            # mais le SL trailing peut être de n'importe quel côté → on use known_sl_price
+                            if order_trig > 0 and not sl_oid:
+                                if known_sl_price > 0:
+                                    diff = abs(order_trig - known_sl_price)
+                                elif side == "buy":
+                                    diff = abs(order_trig - entry) if order_trig < entry else float("inf")
+                                else:
+                                    # SELL: SL initial au-dessus de entry; trailing SL peut être sous entry
                                     diff = abs(order_trig - entry)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_oid = int(oid_key)
+                                if diff < best_diff:
+                                    best_diff = diff
+                                    best_oid = int(oid_key)
                         except (ValueError, TypeError):
                             continue
                     
@@ -631,12 +668,16 @@ class SalleDesMarchesV6:
                     # Étape 2: appeler le résolveur complet (avec retries) si dispo
                     try:
                         if hasattr(self.exchange, '_client') and hasattr(self.exchange._client, '_resolve_trigger_oids'):
-                            # Calculer le SL initial attendu pour le matching
-                            sl_pct = float(getattr(self, "_scalp_sl_pct", 0.015))
-                            if side == "buy":
-                                expected_sl = entry * (1.0 - sl_pct / leverage)
+                            # Utiliser native_sl_price si connu (SL déjà déplacé), sinon SL initial estimé
+                            known_sl = float(guard.get("native_sl_price", 0) or 0)
+                            if known_sl > 0:
+                                expected_sl = known_sl
                             else:
-                                expected_sl = entry * (1.0 + sl_pct / leverage)
+                                sl_pct = float(getattr(self, "_scalp_sl_pct", 0.015))
+                                if side == "buy":
+                                    expected_sl = entry * (1.0 - sl_pct / leverage)
+                                else:
+                                    expected_sl = entry * (1.0 + sl_pct / leverage)
                             
                             logger.info("TRAIL NATIVE SL %s %s: tentative résolution OID via fallback (expected_sl=%.6f)", 
                                         symbol, side, expected_sl)
@@ -659,84 +700,37 @@ class SalleDesMarchesV6:
                     logger.warning("TRAIL NATIVE SL %s %s: sl_oid absent et non résolvable", symbol, side)
                     return
 
-            modified = bool(
-                self.exchange.modify_stop_trigger_order(
-                    order_id=str(sl_oid),
-                    symbol=symbol,
-                    side_close=side_close,
-                    qty=qty,
-                    trigger_price=target_sl_px,
-                )
+            new_sl_oid = self.exchange.modify_stop_trigger_order(
+                order_id=str(sl_oid),
+                symbol=symbol,
+                side_close=side_close,
+                qty=qty,
+                trigger_price=target_sl_px,
             )
 
-            if not modified:
+            if new_sl_oid is None:
                 logger.warning("TRAIL NATIVE SL MODIFY FAILED %s %s oid=%s qty=%.6f target=%.4f", side.upper(), symbol, sl_oid, qty, target_sl_px)
                 return
 
-            # VÉRIFICATION POST-MODIFY: relire l'ordre depuis Hyperliquid pour confirmer
-            # que le trigger price a vraiment été appliqué.
-            # IMPORTANT: ne pas utiliser le cache (qui peut être en retard de 2s).
-            # On lit directement via l'API.
-            try:
-                time.sleep(0.5)  # laisser Hyperliquid propager la modif
-                fresh_orders = self.exchange._client.get_open_orders(coin=symbol) or []
-                actual_trigger = None
-                for order in fresh_orders:
-                    try:
-                        if int(order.get("oid", -1)) == int(sl_oid):
-                            actual_trigger = float(
-                                order.get("triggerPx", 0) 
-                                or order.get("trigger_px", 0) 
-                                or order.get("limitPx", 0) 
-                                or 0
-                            )
-                            break
-                    except (ValueError, TypeError):
-                        continue
-                
-                if actual_trigger is None:
-                    # L'OID n'existe plus côté Hyperliquid (peut-être déjà déclenché ou cancelled)
-                    logger.warning(
-                        "🚨 TRAIL VERIFY %s %s: oid=%s INTROUVABLE après modify côté Hyperliquid (déclenché ? annulé ? OID périmé ?)",
-                        side.upper(), symbol, sl_oid
-                    )
-                    # Marquer le guard pour résolution: l'OID est mort, le trail ne pourra plus rien faire
-                    guard["sl_oid"] = None
-                    return
-                else:
-                    # Tolérance: 0.1% du prix cible
-                    tolerance = abs(target_sl_px) * 0.001
-                    diff = abs(actual_trigger - target_sl_px)
-                    if diff > tolerance:
-                        logger.error(
-                            "🚨 TRAIL VERIFY MISMATCH %s %s oid=%s | attendu=%.6f réel=%.6f diff=%.6f (tolérance=%.6f) — Le modify a été IGNORÉ par Hyperliquid !",
-                            side.upper(), symbol, sl_oid, target_sl_px, actual_trigger, diff, tolerance
-                        )
-                        # Ne pas mettre à jour les guards puisque la modif n'a pas pris
-                        return
-                    else:
-                        logger.debug(
-                            "TRAIL VERIFY OK %s %s oid=%s trigger=%.6f (cible=%.6f)",
-                            side.upper(), symbol, sl_oid, actual_trigger, target_sl_px
-                        )
-            except Exception as ve:
-                logger.warning("TRAIL VERIFY error %s %s oid=%s: %r", side.upper(), symbol, sl_oid, ve)
+            # HL cancel+recreate : le nouvel OID est retourné directement par modify_order.
+            # On met à jour le guard immédiatement sans re-résolution ni VERIFY.
+            guard["sl_oid"] = int(new_sl_oid)
+            guard["native_sl_price"] = float(target_sl_px)
+            guard["last_protected_roe"] = float(prot)
 
             logger.info(
-                "TRAIL NATIVE SL MODIFY %s %s qty=%.6f protected=%.3f%% -> SL=%.4f (oid=%s | entry=%.4f cur=%.4f lev=%.2f)",
+                "TRAIL NATIVE SL MODIFY %s %s qty=%.6f protected=%.3f%% -> SL=%.4f (oid=%s→%s | entry=%.4f cur=%.4f lev=%.2f)",
                 side.upper(),
                 symbol,
                 qty,
                 prot * 100.0,
                 target_sl_px,
                 sl_oid,
+                new_sl_oid,
                 entry,
                 current_price,
                 lev,
             )
-
-            guard["native_sl_price"] = float(target_sl_px)
-            guard["last_protected_roe"] = float(prot)
 
         except Exception as e:
             logger.warning(
@@ -807,7 +801,7 @@ class SalleDesMarchesV6:
                     protected_roe = best
 
             # Mise à jour du SL natif à effet cliquet
-            if guard["trail_armed"] and protected_roe > 0.0:
+            if guard["trail_armed"] and protected_roe >= 0.0:
                 last_protected = guard.get("last_protected_roe")
                 last_modify_ts = guard.get("last_modify_ts", 0.0)
                 now = time.time()
@@ -909,7 +903,122 @@ class SalleDesMarchesV6:
             sl_oid or "?",
             tp_oid or "?",
         )
-        
+
+    def _recover_trail_guards(self) -> None:
+        """
+        Recrée les trail guards pour les positions déjà ouvertes au démarrage du bot.
+
+        - tp_arm calculé avec la formule fix #5 (SCALP_TP_PNL_PCT comme raw_tp par défaut)
+        - sl_oid/tp_oid résolus via _resolve_trigger_oids (avec retries)
+        - Si résolution OID échoue : guard créé quand même avec sl_oid=None
+          (le mécanisme de recovery a posteriori dans _update_native_trailing_sl prendra le relais)
+        - best_pnl_pct initialisé au ROE actuel si la position est déjà en gain
+        - trail_armed reste toujours False au démarrage (s'armera quand best >= tp_arm)
+        - Dust positions (notional < $10) : skippées
+        """
+        open_pos = self._get_open_positions()
+        if not open_pos:
+            logger.info("[RECOVERY] Aucune position ouverte à récupérer.")
+            return
+
+        logger.info("[RECOVERY] %d position(s) détectée(s) — recréation des trail guards.", len(open_pos))
+
+        scalp_tp_pnl_pct = float(getattr(SETTINGS, "SCALP_TP_PNL_PCT", 0.03))
+        scalp_sl_pnl_pct = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
+
+        for symbol, pos in open_pos.items():
+            # Ne pas écraser un guard déjà présent en mémoire
+            if symbol in self._trail_guards:
+                logger.info("[RECOVERY] %s: trail guard déjà présent, ignoré.", symbol)
+                continue
+
+            try:
+                side = str(pos.get("side", "")).lower()
+                entry = float(pos.get("entry", 0) or 0)
+                leverage = float(pos.get("leverage", MAX_LEVERAGE) or MAX_LEVERAGE)
+
+                if side not in {"buy", "sell"} or entry <= 0:
+                    logger.warning("[RECOVERY] %s: données invalides (side=%s entry=%.4f), ignoré.", symbol, side, entry)
+                    continue
+
+                # Dust check : Hyperliquid refuse les ordres < $10
+                qty = float(pos.get("qty", 0) or 0)
+                mark_price = self._get_mark_price(symbol)
+                if mark_price > 0 and qty > 0 and qty * mark_price < 10.0:
+                    logger.warning(
+                        "[RECOVERY] %s: dust position (qty=%.6f notional=$%.2f < $10), ignoré.",
+                        symbol, qty, qty * mark_price,
+                    )
+                    continue
+
+                # Calcul tp_arm avec la formule fix #5
+                # SCALP_TP_PNL_PCT est en décimal (0.03 = 3%) → convertir en % pour la formule
+                raw_tp_pct = scalp_tp_pnl_pct * 100.0
+                full_tp_roe = raw_tp_pct / 100.0 / max(1.0, leverage)
+                tp_arm = max(TP_ARM_PCT, full_tp_roe * 0.40)
+
+                # Résolution sl_oid / tp_oid via _resolve_trigger_oids
+                sl_oid: Optional[str] = None
+                tp_oid: Optional[str] = None
+                try:
+                    is_long = (side == "buy")
+                    # Prix estimés pour le matching (tolérance 0.5% dans _resolve_trigger_oids)
+                    if is_long:
+                        est_sl = entry * (1.0 - scalp_sl_pnl_pct / max(1.0, leverage))
+                        est_tp = entry * (1.0 + scalp_tp_pnl_pct / max(1.0, leverage))
+                    else:
+                        est_sl = entry * (1.0 + scalp_sl_pnl_pct / max(1.0, leverage))
+                        est_tp = entry * (1.0 - scalp_tp_pnl_pct / max(1.0, leverage))
+
+                    resolved = self.exchange._client._resolve_trigger_oids(
+                        coin=symbol,
+                        is_long=is_long,
+                        tp_price=est_tp,
+                        sl_price=est_sl,
+                        max_retries=5,
+                        retry_delay=0.3,
+                    )
+                    if resolved.get("sl_oid") is not None:
+                        sl_oid = str(resolved["sl_oid"])
+                    if resolved.get("tp_oid") is not None:
+                        tp_oid = str(resolved["tp_oid"])
+                except Exception as e:
+                    logger.warning(
+                        "[RECOVERY] %s: résolution OID échouée: %r — guard créé sans sl_oid (recovery a posteriori actif)",
+                        symbol, e,
+                    )
+
+                # Créer le trail guard (trail_armed toujours False au démarrage)
+                self._register_trail_guard(
+                    symbol=symbol,
+                    side=side,
+                    entry=entry,
+                    leverage=leverage,
+                    scalper_prices={"pnl_tp": raw_tp_pct},
+                    sl_oid=sl_oid,
+                    tp_oid=tp_oid,
+                )
+
+                # Initialiser best_pnl_pct au ROE actuel si la position est déjà en gain
+                # trail_armed reste False — il s'armera quand best dépassera tp_arm
+                price = self._get_current_price(symbol, entry)
+                if price > 0 and entry > 0:
+                    pnl_brut = (price - entry) / entry if side == "buy" else (entry - price) / entry
+                    pnl_pct = pnl_brut * leverage
+                    guard = self._trail_guards.get(symbol)
+                    if guard and pnl_pct > 0:
+                        guard["best_pnl_pct"] = pnl_pct
+
+                cur_roe = self._trail_guards.get(symbol, {}).get("best_pnl_pct", 0.0)
+                logger.info(
+                    "TRAIL RECOVERY: trail guard recréé pour %s | entry=%.4f lev=%.1fx tp_arm=%.2f%% ROE cur_roe=%.3f%% | sl_oid=%s tp_oid=%s",
+                    symbol, entry, leverage, tp_arm * 100, cur_roe * 100,
+                    sl_oid or "None", tp_oid or "None",
+                )
+
+            except Exception as e:
+                logger.warning("[RECOVERY] %s: erreur inattendue: %r", symbol, e)
+
     def _recent_symbol_trades(self, symbol: str, lookback: int = FREEZE_LOOKBACK_TRADES) -> List[Dict]:
         try:
             trades = self.memory.get_recent_trades(max(lookback * 3, 20)) or []
@@ -1143,7 +1252,7 @@ class SalleDesMarchesV6:
     def _round_px(self, symbol: str, px: float) -> float:
         return round(float(px), self._get_tick_decimals(symbol))
 
-    def _compute_position_size(self, symbol: str, entry: float, sl: float) -> float:
+    def _compute_position_size(self, symbol: str, entry: float, sl: float, confidence: Optional[float] = None) -> float:
         equity = self._get_account_value_usdt()
         if equity <= 0 or entry <= 0 or sl <= 0 or entry == sl:
             return 0.0
@@ -1159,12 +1268,22 @@ class SalleDesMarchesV6:
             qty_raw = max_notional / entry
 
         qty = max(0.0, round(qty_raw, 6))
+
+        if confidence is not None and MIN_CONFIDENCE < 1.0:
+            c = max(MIN_CONFIDENCE, min(1.0, float(confidence)))
+            conf_factor = SIZING_CONF_FLOOR + (1.0 - SIZING_CONF_FLOOR) * (c - MIN_CONFIDENCE) / (1.0 - MIN_CONFIDENCE)
+            qty = round(qty * conf_factor, 6)
+        else:
+            conf_factor = 1.0
+
         margin = qty * entry / MAX_LEVERAGE
         equity_est = equity
         logger.info(
-            "SIZING %s | equity=%.2f risk=%.2f diff=%.5f => qty=%.6f notional=%.2f margin=%.2f (%.1f%%)",
+            "SIZING %s | equity=%.2f conf=%.2f factor=%.2f risk=%.2f diff=%.5f => qty=%.6f notional=%.2f margin=%.2f (%.1f%%)",
             symbol,
             equity,
+            confidence if confidence is not None else 1.0,
+            conf_factor,
             risk_usdt,
             diff,
             qty,
@@ -1260,13 +1379,14 @@ class SalleDesMarchesV6:
         tp: float,
         leverage: float = 3.0,
         scalper_prices: Optional[Dict] = None,
+        confidence: Optional[float] = None,
     ) -> Optional[Dict]:
         if not math.isfinite(entry) or entry <= 0:
             logger.warning("LIVE %s: entry invalide %s", symbol, entry)
             return None
 
         leverage = min(float(leverage), MAX_LEVERAGE)
-        qty = self._compute_position_size(symbol, entry, sl)
+        qty = self._compute_position_size(symbol, entry, sl, confidence=confidence)
         if qty <= 0:
             logger.warning("LIVE %s: taille calculée nulle (entry=%.4f sl=%.4f)", symbol, entry, sl)
             return None
@@ -1413,6 +1533,7 @@ class SalleDesMarchesV6:
         tp: float,
         reason: str,
         scalper_prices: Optional[Dict] = None,
+        confidence: Optional[float] = None,
     ) -> bool:
         old_side = existing.get("side", "?")
         old_entry = float(existing.get("entry", entry) or entry)
@@ -1487,6 +1608,7 @@ class SalleDesMarchesV6:
                 tp,
                 leverage=MAX_LEVERAGE,
                 scalper_prices=scalper_prices,
+                confidence=confidence,
             )
             if live is None:
                 logger.warning("[FLIP] Ouverture nouvelle position %s échouée.", symbol)
@@ -1688,6 +1810,27 @@ class SalleDesMarchesV6:
                         logger.info("SKIP %s — conf trop faible (%.2f < %.2f) ou côté=wait", symbol, conf, MIN_CONFIDENCE)
                         continue
 
+                    # Bloquer les signaux contradictoires bull/side
+                    bconf = float(bull.get("confidence", 0) or 0)
+                    if side == "sell" and bconf > 0.80:
+                        stats["skipped"] += 1
+                        logger.info("SKIP %s — signal contradictoire (SELL mais bull=%.2f)", symbol, bconf)
+                        continue
+                    if side == "buy" and bconf < 0.30:
+                        stats["skipped"] += 1
+                        logger.info("SKIP %s — signal contradictoire (BUY mais bull=%.2f)", symbol, bconf)
+                        continue
+
+                    # Filtre horaire : pas d'entrée fraîche ni de flip durant
+                    # les fenêtres UTC à EV historique négative (#2 diagnostic).
+                    # Le management des positions ouvertes (trail) reste actif.
+                    if BLOCKED_HOURS_UTC:
+                        hour_utc = datetime.now(timezone.utc).hour
+                        if hour_utc in BLOCKED_HOURS_UTC:
+                            stats["skipped"] += 1
+                            logger.info("SKIP %s — heure bloquée (%02dh UTC)", symbol, hour_utc)
+                            continue
+
                     existing = open_positions.get(symbol)
                     skip_reason = self._skip_reason(symbol, tech, open_positions, new_side=side)
                     if skip_reason:
@@ -1702,8 +1845,22 @@ class SalleDesMarchesV6:
                     tp = self._round_px(symbol, float(prices.get("tp", 0)))
 
                     if existing and existing.get("side") != side:
-                        ok = self._handle_flip(symbol, existing, side, entry, sl, tp, reason, scalper_prices=prices)
+                        # Filtre conf pour les flips (#1 diagnostic) : les flips à
+                        # conf < 0.80 ont une EV de -0.34% sur l'échantillon, vs
+                        # +0.19% pour les flips à conf >= 0.80. Refus pur et simple.
+                        if conf < FLIP_MIN_CONFIDENCE:
+                            stats["skipped"] += 1
+                            logger.info("SKIP %s — flip refusé (conf %.2f < %.2f)", symbol, conf, FLIP_MIN_CONFIDENCE)
+                            continue
+                        flip_ts = self._flip_cooldowns.get(symbol, 0.0)
+                        flip_wait = FLIP_COOLDOWN_SEC - (time.time() - flip_ts)
+                        if flip_wait > 0:
+                            stats["skipped"] += 1
+                            logger.info("SKIP %s — cooldown anti-flip (%ds)", symbol, int(flip_wait))
+                            continue
+                        ok = self._handle_flip(symbol, existing, side, entry, sl, tp, reason, scalper_prices=prices, confidence=conf)
                         if ok:
+                            self._flip_cooldowns[symbol] = time.time()
                             stats["flipped"] += 1
                         continue
 
@@ -1739,6 +1896,7 @@ class SalleDesMarchesV6:
                         tp,
                         leverage=MAX_LEVERAGE,
                         scalper_prices=prices,
+                        confidence=conf,
                     )
                     if live is None:
                         continue

@@ -36,14 +36,14 @@ HL_SYNC_SEC = 2.0
 # main_v6.py attend TP_ARM_PCT par défaut à 0.0060 (0.60% brut),
 # puis un trailing par crans de ROE.
 TRAIL_CHECK_SEC = 2
-TP_ARM_PCT = 0.0030
+TP_ARM_PCT = 0.0045
 TRAIL_DROP_PCT = 0.0025
-TRAIL_STEP_ROE = 0.0020
-TRAIL_BREAKEVEN_ROE = 0.0000
+TRAIL_STEP_ROE = 0.0010
+TRAIL_BREAKEVEN_ROE = 0.00200
 
 # ── Watchlist scalping ───────────────────────────────────────────────────────
 SCALP_WATCHLIST = [
-    "BTC", "ETH", "SOL",
+    "BTC", "ETH", "SOL", "BNB", "LINK", "HYPE", "ZEC", "APE", "DOGE", "XRP", "TAO", "AAVE",
 ]
 
 SYMBOLS = SCALP_WATCHLIST
@@ -72,7 +72,7 @@ SCALP_BE_BUFFER_PCT = 0.008
 SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
 SCALP_MAX_DURATION_MIN = 30
-SCALP_TP_PNL_PCT = 0.03
+SCALP_TP_PNL_PCT = 0.015
 SCALP_SL_PNL_PCT = 0.015
 
 # ── Filtres pré-LLM ──────────────────────────────────────────────────────────
@@ -81,26 +81,42 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.7
+MIN_CONFIDENCE = 0.70
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
+
+# ── Filtre flip (#1 du diagnostic analyze_trades_v2) ─────────────────────────
+# Les flips à conf < 0.80 sont structurellement perdants (-19% sur l'échantillon
+# 29/04→02/05). On exige une conf élevée pour autoriser un changement de
+# direction sur un symbole déjà en position.
+FLIP_MIN_CONFIDENCE = 0.80
+
+# ── Filtre horaire (#2 du diagnostic) ────────────────────────────────────────
+# Heures UTC où l'EV historique est négative. Pas d'entrée fraîche ni de flip
+# durant ces fenêtres. Le management des positions ouvertes reste actif.
+BLOCKED_HOURS_UTC = {13, 14, 18, 19, 20, 21, 22}
 
 # ── Risk management ──────────────────────────────────────────────────────────
 MAX_OPEN_POSITIONS = 6
 MAX_CONCURRENT_TRADES = 4
 CONSECUTIVE_STOPS = 2
-SYMBOL_COOLDOWN_MIN = 35
+SYMBOL_COOLDOWN_MIN = 15
 DAILY_LOSS_LIMIT_PCT = 0.03
 COOLDOWN_SEC = 360
-EXIT_COOLDOWN_SEC = 300
+EXIT_COOLDOWN_SEC = 600
+FLIP_COOLDOWN_SEC = 300
 
 # ── Sizing ───────────────────────────────────────────────────────────────────
-MAX_POSITION_PCT = 0.008
+MAX_POSITION_PCT = 0.01
 RISK_PER_TRADE_PCT = MAX_POSITION_PCT
-MAX_LEVERAGE = 5.0
+MAX_LEVERAGE = 6.0
 MAX_NOTIONAL_PCT = 0.08
 DEFAULT_LEVERAGE = 3
+
+# Sizing pondéré confiance : qty *= floor + (1 - floor) * (conf - MIN_CONF) / (1 - MIN_CONF)
+# À conf=MIN_CONFIDENCE → factor=SIZING_CONF_FLOOR. À conf=1.0 → factor=1.0.
+SIZING_CONF_FLOOR = 0.40
 
 # ── Compatibilité V4 ─────────────────────────────────────────────────────────
 MAX_RISK_PER_TRADE = 0.008

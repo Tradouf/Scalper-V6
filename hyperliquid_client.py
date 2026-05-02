@@ -1,6 +1,6 @@
 """
-HYDRAQUEEN Grid Bot — Client Hyperliquid
-Wrapper autour du SDK hyperliquid-python-sdk pour le grid bot.
+SalleDesMarches — Client Hyperliquid
+Wrapper autour du SDK hyperliquid-python-sdk.
 
 Les méthodes publiques (Info) fonctionnent sans wallet.
 Les méthodes privées (Exchange) nécessitent un wallet configuré.
@@ -21,7 +21,7 @@ HL_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 HL_WALLET_CONFIG = "hl_config.json"
 USE_TESTNET = False
 
-logger = logging.getLogger("hydraqueen.hl_client")
+logger = logging.getLogger("sdm.hl_client")
 
 
 class HyperliquidClientError(Exception):
@@ -359,9 +359,11 @@ class HyperliquidClient:
         return positions
 
     def get_open_orders(self, coin: str | None = None) -> list[dict]:
+        # frontend_open_orders fournit isTrigger, triggerPx, orderType (string) — indispensable
+        # pour distinguer SL/TP. open_orders (de base) ne retourne que coin/oid/side/sz/limitPx.
         self._require_exchange()
         try:
-            orders = self.info.open_orders(self._wallet_address)
+            orders = self.info.frontend_open_orders(self._wallet_address)
         except Exception as e:
             raise HyperliquidClientError(f"Erreur get_open_orders: {e}") from e
 
@@ -374,18 +376,20 @@ class HyperliquidClient:
             side_raw = o.get("side", "")
             side = "buy" if side_raw == "B" else "sell"
 
-            order_type = o.get("orderType", o.get("order_type", {}))
-            trigger_px_raw = (
-                o.get("triggerPx")
-                or o.get("trigger_px")
-                or o.get("triggerPrice")
-            )
+            # frontend_open_orders expose isTrigger et triggerPx directement au top-level
+            is_trigger = bool(o.get("isTrigger", False)) or bool(o.get("isPositionTpsl", False))
+            trigger_px_raw = o.get("triggerPx") or o.get("limitPx")
 
-            reduce_only_raw = (
-                o.get("reduceOnly")
-                if "reduceOnly" in o
-                else o.get("reduce_only", o.get("reduceonly", False))
-            )
+            # tpsl: essayer le champ direct, sinon déduire depuis orderType (string)
+            tpsl = str(o.get("tpsl", "")).lower()
+            if not tpsl:
+                order_type_str = str(o.get("orderType", "")).lower()
+                if "stop" in order_type_str:
+                    tpsl = "sl"
+                elif "take profit" in order_type_str or " tp" in order_type_str:
+                    tpsl = "tp"
+
+            reduce_only_raw = o.get("reduceOnly", o.get("reduce_only", False))
 
             try:
                 trigger_px = float(trigger_px_raw) if trigger_px_raw is not None else None
@@ -400,9 +404,11 @@ class HyperliquidClient:
                     "sz": float(o.get("sz", 0) or 0),
                     "limit_px": float(o.get("limitPx", 0) or 0),
                     "timestamp": o.get("timestamp", 0),
-                    "orderType": order_type,
-                    "order_type": order_type,
+                    "orderType": o.get("orderType", ""),
+                    "order_type": o.get("orderType", ""),
                     "triggerPx": trigger_px,
+                    "tpsl": tpsl,
+                    "isTrigger": is_trigger,
                     "reduceOnly": bool(reduce_only_raw),
                     "reduce_only": bool(reduce_only_raw),
                     "raw": o,
@@ -604,47 +610,35 @@ class HyperliquidClient:
     def cancel(self, coin: str, oid: int) -> bool:
         return self.cancel_order(coin, oid)
 
-    def _parse_modify_response(self, response, oid: int, coin: str) -> bool:
+    def _parse_modify_response(self, response, oid: int, coin: str) -> tuple[bool, int | None]:
         """
-        Parse la réponse de modify_order pour vérifier si l'opération a réellement réussi.
-        
-        Hyperliquid renvoie typiquement:
-        - Succès: {"status": "ok", "response": {"type": "default"}} ou similaire
-        - Échec: {"status": "err", "response": "Order not found / Cannot modify / ..."}
-          ou: {"status": "ok", "response": {"data": {"statuses": [{"error": "..."}]}}}
-        
-        Args:
-            response: La réponse brute de l'API
-            oid: L'OID modifié (pour logging)
-            coin: Le symbole (pour logging)
-            
+        Parse la réponse batchModify de Hyperliquid.
+
+        HL implémente modify sur les ordres trigger (positionTpsl) via cancel+recreate.
+        Le nouvel OID est dans statuses[0]["resting"]["oid"] ou ["filled"]["oid"].
+
         Returns:
-            True si la modification a réellement été appliquée, False sinon
+            (ok: bool, new_oid: int | None)
         """
-        # Cas 1: réponse None ou vide
         if response is None:
             logger.warning("modify_order: réponse None pour oid=%d coin=%s", oid, coin)
-            return False
-        
-        # Cas 2: réponse non-dict (ex: True/False, string, etc.)
+            return False, None
+
         if not isinstance(response, dict):
-            # Si c'est un booléen direct, l'utiliser
             if isinstance(response, bool):
-                return response
-            # Sinon, tenter une interprétation libérale
+                return response, None
             logger.debug("modify_order: réponse non-dict pour oid=%d: %r", oid, response)
-            return True  # par défaut on considère succès si pas d'erreur explicite
-        
-        # Cas 3: status au top level
+            return True, None
+
         status = str(response.get("status", "")).lower()
-        if status == "err" or status == "error":
+        if status in ("err", "error"):
             logger.warning(
                 "modify_order: status=err pour oid=%d coin=%s: %r",
                 oid, coin, response.get("response", "no detail")
             )
-            return False
-        
-        # Cas 4: vérifier les statuses imbriqués (format Hyperliquid)
+            return False, None
+
+        new_oid: int | None = None
         resp_inner = response.get("response", {})
         if isinstance(resp_inner, dict):
             data = resp_inner.get("data", {})
@@ -652,19 +646,26 @@ class HyperliquidClient:
                 statuses = data.get("statuses", [])
                 if isinstance(statuses, list) and statuses:
                     for s in statuses:
-                        if isinstance(s, dict) and "error" in s:
+                        if not isinstance(s, dict):
+                            continue
+                        if "error" in s:
                             logger.warning(
                                 "modify_order: erreur dans statuses pour oid=%d coin=%s: %s",
                                 oid, coin, s["error"]
                             )
-                            return False
-        
-        # Cas 5: status=ok par défaut → succès
-        if status == "ok":
-            return True
-        
-        # Cas 6: pas de status explicite mais pas d'erreur → succès par défaut
-        return True
+                            return False, None
+                        # HL cancel+recreate → le nouvel OID est ici
+                        for key in ("resting", "filled"):
+                            if key in s and isinstance(s[key], dict):
+                                raw = s[key].get("oid")
+                                if raw is not None:
+                                    try:
+                                        new_oid = int(raw)
+                                    except (ValueError, TypeError):
+                                        pass
+                                break
+
+        return True, new_oid
 
     def modify_order(
         self,
@@ -676,14 +677,21 @@ class HyperliquidClient:
         *,
         order_type: str = "sl",
         reduce_only: bool = True,
-    ) -> bool:
+    ) -> int | None:
+        """
+        Retourne le nouvel OID si le modify a réussi, None sinon.
+
+        HL implémente batchModify sur les ordres trigger via cancel+recreate
+        (l'ancien OID est supprimé, un nouveau OID est créé). Le nouvel OID
+        est extrait directement de la réponse pour éviter toute re-résolution.
+        """
         self._require_exchange()
 
         try:
             sz_decimals = self.get_sz_decimals(coin)
             sz = math.floor(float(sz) * 10**sz_decimals) / 10**sz_decimals
             if sz <= 0:
-                return False
+                return None
 
             trigger_px = self.format_price(float(trigger_px), sz_decimals)
 
@@ -695,6 +703,7 @@ class HyperliquidClient:
                 }
             }
 
+            response = None
             if hasattr(self.exchange, "modify_order"):
                 response = self.exchange.modify_order(
                     oid=int(oid),
@@ -705,16 +714,7 @@ class HyperliquidClient:
                     order_type=trigger_order_type,
                     reduce_only=bool(reduce_only),
                 )
-                # Vérifier la réponse de l'API au lieu de retourner True aveuglément
-                ok = self._parse_modify_response(response, oid, coin)
-                if not ok:
-                    logger.warning(
-                        "modify_order rejeté par Hyperliquid: coin=%s oid=%d trigger=%s response=%r",
-                        coin, oid, trigger_px, response
-                    )
-                return ok
-
-            if hasattr(self.exchange, "modify"):
+            elif hasattr(self.exchange, "modify"):
                 order = {
                     "coin": coin,
                     "is_buy": bool(is_buy),
@@ -724,17 +724,20 @@ class HyperliquidClient:
                     "reduce_only": bool(reduce_only),
                 }
                 response = self.exchange.modify(int(oid), order)
-                ok = self._parse_modify_response(response, oid, coin)
-                if not ok:
-                    logger.warning(
-                        "modify rejeté par Hyperliquid: coin=%s oid=%d trigger=%s response=%r",
-                        coin, oid, trigger_px, response
-                    )
-                return ok
+            else:
+                raise HyperliquidClientError(
+                    "Aucune méthode modify/modify_order disponible sur exchange"
+                )
 
-            raise HyperliquidClientError(
-                "Aucune méthode modify/modify_order disponible sur exchange"
-            )
+            ok, new_oid = self._parse_modify_response(response, oid, coin)
+            if not ok:
+                logger.warning(
+                    "modify_order rejeté par Hyperliquid: coin=%s oid=%d trigger=%s response=%r",
+                    coin, oid, trigger_px, response
+                )
+                return None
+            # new_oid peut être None si HL ne l'inclut pas dans la réponse
+            return new_oid if new_oid is not None else oid
 
         except Exception as e:
             logger.warning(
@@ -744,7 +747,7 @@ class HyperliquidClient:
                 trigger_px,
                 e,
             )
-            return False
+            return None
     
     def cancel_all_orders(self, coin: str | None = None) -> int:
         self._require_exchange()
