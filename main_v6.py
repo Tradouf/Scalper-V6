@@ -1852,14 +1852,21 @@ class SalleDesMarchesV6:
                         if forced and not self.grid_manager.is_active(symbol):
                             atr_val = float(tech.get("atr", 0) or 0)
                             mid = self._get_current_price(symbol, 0.0)
-                            if atr_val > 0 and mid > 0:
-                                logger.info("GRID %s activation forcée (GRID_FORCE_SYMBOLS)", symbol)
+                            if mid <= 0:
+                                logger.warning("GRID %s force: prix=0, skip", symbol)
+                            elif atr_val <= 0:
+                                atr_val = mid * 0.005  # fallback 0.5% si ATR absent
+                                logger.info("GRID %s force: ATR absent, fallback=%.4f", symbol, atr_val)
+                                self.grid_manager.activate(symbol, mid, atr_val)
+                            else:
+                                logger.info("GRID %s activation forcée mid=%.4f atr=%.4f", symbol, mid, atr_val)
                                 self.grid_manager.activate(symbol, mid, atr_val)
                         elif regime_trend == "range" and not existing_pos:
                             n_grids = len(self.grid_manager.active_symbols())
                             if not self.grid_manager.is_active(symbol) and n_grids < GRID_MAX_SYMBOLS:
                                 atr_val = float(tech.get("atr", 0) or 0)
                                 mid = self._get_current_price(symbol, 0.0)
+                                logger.debug("GRID %s candidat mid=%.4f atr=%.4f", symbol, mid, atr_val)
                                 if atr_val > 0 and mid > 0:
                                     self.grid_manager.activate(symbol, mid, atr_val)
                         elif regime_trend in ("bull", "bear", "trend") and not forced:
