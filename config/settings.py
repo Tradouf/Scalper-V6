@@ -36,7 +36,7 @@ HL_SYNC_SEC = 2.0
 # main_v6.py attend TP_ARM_PCT par défaut à 0.0060 (0.60% brut),
 # puis un trailing par crans de ROE.
 TRAIL_CHECK_SEC = 2
-TP_ARM_PCT = 0.0045
+TP_ARM_PCT = 0.006
 TRAIL_DROP_PCT = 0.0025
 TRAIL_STEP_ROE = 0.0010
 TRAIL_BREAKEVEN_ROE = 0.00200
@@ -150,6 +150,7 @@ GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×s
 GRID_NOTIONAL = 20.0         # USDT par unité de grille
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 2         # max symboles en mode grille simultanément
+GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
 
 # ── Mode simulation ──────────────────────────────────────────────────────────
 SIMULATION_MODE = False

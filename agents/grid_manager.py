@@ -38,6 +38,7 @@ class GridManager:
     def __init__(self, exchange):
         self._exchange = exchange
         self._grids: Dict[str, GridState] = {}
+        self._deactivation_ts: Dict[str, float] = {}  # cooldown post-désactivation
 
     # ─── API publique ─────────────────────────────────────────────────────────
 
@@ -47,9 +48,21 @@ class GridManager:
     def active_symbols(self) -> list:
         return list(self._grids.keys())
 
+    def can_activate(self, symbol: str) -> bool:
+        """Retourne False si le symbole est en cooldown post-désactivation."""
+        from config.settings import GRID_COOLDOWN_SEC
+        last = self._deactivation_ts.get(symbol, 0.0)
+        remaining = GRID_COOLDOWN_SEC - (time.time() - last)
+        if remaining > 0:
+            logger.debug("GRID %s cooldown actif (%.0fs restantes)", symbol, remaining)
+            return False
+        return True
+
     def activate(self, symbol: str, center: float, atr: float) -> bool:
         """Démarre une grille sur ce symbole. Retourne True si succès."""
         if self.is_active(symbol):
+            return False
+        if not self.can_activate(symbol):
             return False
 
         from config.settings import GRID_ATR_FACTOR, GRID_NOTIONAL, GRID_LEVERAGE
@@ -151,6 +164,7 @@ class GridManager:
                         self._exchange.cancel_order(str(oid))
                     except Exception as e:
                         logger.warning("GRID %s cancel oid=%d: %r", symbol, oid, e)
+        self._deactivation_ts[symbol] = time.time()
         logger.info(
             "GRID %s désactivé phase=%s trades=%d pnl_cumul=%.3f%%",
             symbol, g.phase, g.trade_count, g.total_pnl_pct * 100,
