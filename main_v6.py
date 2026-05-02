@@ -163,6 +163,7 @@ DEFENSIVE_CUT_FLAT_PNL_MAX = float(getattr(SETTINGS, "DEFENSIVE_CUT_FLAT_PNL_MAX
 
 GRID_ENABLED = bool(getattr(SETTINGS, "GRID_ENABLED", False))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
+GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
 
 def _consensus(bull: Dict, bear: Dict, technical: Dict) -> Dict:
@@ -1846,19 +1847,27 @@ class SalleDesMarchesV6:
                     if GRID_ENABLED:
                         regime_trend = str(symbol_regime.get("trend", "unknown"))
                         existing_pos = open_positions.get(symbol)
-                        if regime_trend == "range" and not existing_pos:
+                        forced = symbol in GRID_FORCE_SYMBOLS
+
+                        if forced and not self.grid_manager.is_active(symbol):
+                            atr_val = float(tech.get("atr", 0) or 0)
+                            mid = self._get_current_price(symbol, 0.0)
+                            if atr_val > 0 and mid > 0:
+                                logger.info("GRID %s activation forcée (GRID_FORCE_SYMBOLS)", symbol)
+                                self.grid_manager.activate(symbol, mid, atr_val)
+                        elif regime_trend == "range" and not existing_pos:
                             n_grids = len(self.grid_manager.active_symbols())
                             if not self.grid_manager.is_active(symbol) and n_grids < GRID_MAX_SYMBOLS:
                                 atr_val = float(tech.get("atr", 0) or 0)
                                 mid = self._get_current_price(symbol, 0.0)
                                 if atr_val > 0 and mid > 0:
                                     self.grid_manager.activate(symbol, mid, atr_val)
-                        elif regime_trend in ("bull", "bear", "trend"):
+                        elif regime_trend in ("bull", "bear", "trend") and not forced:
                             if self.grid_manager.is_active(symbol):
                                 logger.info("GRID %s désactivé (régime→%s)", symbol, regime_trend)
                                 self.grid_manager.deactivate(symbol, cancel=True)
 
-                    # Symbole en mode grille : pas d'entrée scalp (mais exits gérés normalement)
+                    # Symbole en mode grille sans position ouverte : skip pipeline scalp
                     if GRID_ENABLED and self.grid_manager.is_active(symbol) and not open_positions.get(symbol):
                         continue
 
