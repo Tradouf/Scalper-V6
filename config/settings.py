@@ -81,7 +81,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.72
+MIN_CONFIDENCE = 0.73
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -90,7 +90,7 @@ MIN_VOLRATIO = 0.003
 # Les flips à conf < 0.80 sont structurellement perdants (-19% sur l'échantillon
 # 29/04→02/05). On exige une conf élevée pour autoriser un changement de
 # direction sur un symbole déjà en position.
-FLIP_MIN_CONFIDENCE = 0.80
+FLIP_MIN_CONFIDENCE = 0.81
 
 # ── Filtre horaire (#2 du diagnostic) ────────────────────────────────────────
 # Heures UTC où l'EV historique est négative. Pas d'entrée fraîche ni de flip
@@ -151,7 +151,8 @@ GRID_NOTIONAL = 20.0         # USDT par unité de grille
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 2         # max symboles en mode grille simultanément
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
-GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore régime + position)
+GRID_GRACE_SEC = 8.0         # délai avant 1er tick (laisse le cache HL confirmer l'ordre)
+GRID_FORCE_SYMBOLS: list = ["ETH"]  # debug: force la grille sur ces symboles (ignore régime + position)
 
 # ── Mode simulation ──────────────────────────────────────────────────────────
 SIMULATION_MODE = False

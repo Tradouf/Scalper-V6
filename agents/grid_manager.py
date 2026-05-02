@@ -102,7 +102,12 @@ class GridManager:
         if g is None:
             return
 
-        from config.settings import GRID_LEVELS, GRID_LEVERAGE
+        from config.settings import GRID_LEVELS, GRID_LEVERAGE, GRID_GRACE_SEC
+
+        # Période de grâce : le cache HL peut ne pas encore connaître l'ordre
+        # fraîchement placé — évite de croire qu'il est rempli dès le 1er tick.
+        if time.time() - g.created_at < GRID_GRACE_SEC:
+            return
 
         g.last_update = time.time()
 
