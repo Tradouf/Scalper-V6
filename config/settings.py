@@ -141,6 +141,16 @@ SHARED_MEMORY_FILE = "memory/shared_memory.json"
 TRADE_HISTORY_FILE = "memory/trade_history.json"
 METRICS_FILE = "memory/metrics_v5.json"
 
+# ── Grid bot (range markets) ─────────────────────────────────────────────────
+# Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
+# marché → quand rempli, sell limit (TP) au-dessus. Cycle auto-renouvelant.
+GRID_ENABLED = True
+GRID_ATR_FACTOR = 0.50       # spacing = ATR × factor (0.5 = demi-ATR par côté)
+GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
+GRID_NOTIONAL = 20.0         # USDT par unité de grille
+GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
+GRID_MAX_SYMBOLS = 2         # max symboles en mode grille simultanément
+
 # ── Mode simulation ──────────────────────────────────────────────────────────
 SIMULATION_MODE = False
 RESET_SIM_POSITIONS = False

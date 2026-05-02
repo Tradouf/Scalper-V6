@@ -45,6 +45,7 @@ from agents.agent_symbol_selector import AgentSymbolSelector
 from agents.agent_trader import AgentTrader
 from agents.feature_engine import FeatureEngine
 from agents.regime_engine import RegimeEngine
+from agents.grid_manager import GridManager
 
 
 def _setup_logging() -> None:
@@ -160,6 +161,9 @@ DEFENSIVE_REGIME_CUT_ON_RISK_HIGH = bool(getattr(SETTINGS, "DEFENSIVE_REGIME_CUT
 DEFENSIVE_CUT_MIN_AGE_SEC = int(getattr(SETTINGS, "DEFENSIVE_CUT_MIN_AGE_SEC", 45))
 DEFENSIVE_CUT_FLAT_PNL_MAX = float(getattr(SETTINGS, "DEFENSIVE_CUT_FLAT_PNL_MAX", 0.0015))
 
+GRID_ENABLED = bool(getattr(SETTINGS, "GRID_ENABLED", False))
+GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
+
 
 def _consensus(bull: Dict, bear: Dict, technical: Dict) -> Dict:
     bconf = float(bull.get("confidence", 0) or 0)
@@ -217,6 +221,7 @@ class SalleDesMarchesV6:
 
         self._trail_guards: Dict[str, Dict] = {}
         self._trail_lock = threading.Lock()  # Protège l'accès concurrent aux trail_guards
+        self.grid_manager = GridManager(self.exchange)
         self._tick_decimals: Dict[str, int] = {}
         self._prev_open_positions: Dict[str, Dict] = {}
         self._exit_cooldowns: Dict[str, float] = {}
@@ -258,6 +263,15 @@ class SalleDesMarchesV6:
             self._trail_thread.start()
             logger.info("Trail monitor thread démarré (intervalle=%ds)", TRAIL_CHECK_SEC)
             self._recover_trail_guards()
+
+            if GRID_ENABLED:
+                self._grid_thread = threading.Thread(
+                    target=self._grid_loop,
+                    daemon=True,
+                    name="grid-monitor",
+                )
+                self._grid_thread.start()
+                logger.info("Grid monitor thread démarré")
 
         if self.simulation and RESET_SIM_POSITIONS:
             self._reset_sim_positions()
@@ -314,6 +328,35 @@ class SalleDesMarchesV6:
             except Exception as e:
                 logger.warning("trail loop error: %r", e)
             time.sleep(TRAIL_CHECK_SEC)
+
+    def _grid_loop(self) -> None:
+        """Thread démon : gère les grilles actives (range markets)."""
+        time.sleep(max(3.0, HL_SYNC_SEC * 2))
+        while True:
+            try:
+                if self.grid_manager.active_symbols():
+                    self._grid_tick()
+            except Exception as e:
+                logger.warning("grid loop error: %r", e)
+            time.sleep(TRAIL_CHECK_SEC)
+
+    def _grid_tick(self) -> None:
+        """Un tick du grid manager : vérifie chaque grille active via le cache HL."""
+        with self._hl_cache_lock:
+            open_orders = list(self._hl_cache.get("open_orders", []))
+            prices = dict(self._hl_cache.get("prices", {}))
+
+        open_oids: set = set()
+        for o in open_orders:
+            try:
+                open_oids.add(int(o.get("oid", 0)))
+            except (ValueError, TypeError):
+                pass
+
+        for symbol in self.grid_manager.active_symbols():
+            price = float(prices.get(symbol, 0) or 0)
+            if price > 0:
+                self.grid_manager.on_tick(symbol, open_oids, price)
 
     def _hl_sync_once(self) -> None:
         """Lit positions, prix, equity et ordres ouverts depuis l'API HL."""
@@ -1798,6 +1841,27 @@ class SalleDesMarchesV6:
                             e,
                         )
                         symbol_regime = regime
+
+                    # ── Grid bot : activation/désactivation selon régime ──────
+                    if GRID_ENABLED:
+                        regime_trend = str(symbol_regime.get("trend", "unknown"))
+                        existing_pos = open_positions.get(symbol)
+                        if regime_trend == "range" and not existing_pos:
+                            n_grids = len(self.grid_manager.active_symbols())
+                            if not self.grid_manager.is_active(symbol) and n_grids < GRID_MAX_SYMBOLS:
+                                atr_val = float(tech.get("atr", 0) or 0)
+                                mid = self._get_current_price(symbol, 0.0)
+                                if atr_val > 0 and mid > 0:
+                                    self.grid_manager.activate(symbol, mid, atr_val)
+                        elif regime_trend in ("bull", "bear", "trend"):
+                            if self.grid_manager.is_active(symbol):
+                                logger.info("GRID %s désactivé (régime→%s)", symbol, regime_trend)
+                                self.grid_manager.deactivate(symbol, cancel=True)
+
+                    # Symbole en mode grille : pas d'entrée scalp (mais exits gérés normalement)
+                    if GRID_ENABLED and self.grid_manager.is_active(symbol) and not open_positions.get(symbol):
+                        continue
+
                     bull = self.bull.analyze(symbol, symbol_regime, tech)
                     bear = self.bear.analyze(symbol, symbol_regime, tech)
                     cons = _consensus(bull, bear, tech)
@@ -1960,7 +2024,12 @@ class SalleDesMarchesV6:
 def main() -> None:
     symbols = getattr(SETTINGS, "SYMBOLS", ["BTC", "ETH", "ATOM", "DYDX", "SOL"])
     bot = SalleDesMarchesV6(symbols=symbols, simulation=SIMULATION_MODE)
-    bot.run_forever()
+    try:
+        bot.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Arrêt — désactivation grilles actives")
+        if GRID_ENABLED:
+            bot.grid_manager.deactivate_all()
 
 
 if __name__ == "__main__":
