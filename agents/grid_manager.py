@@ -1,10 +1,13 @@
 """
-GridManager — stratégie grid pour marchés en range (Hyperliquid perpetuals).
+GridManager — grille symétrique neutre pour marchés en range (Hyperliquid perpetuals).
 
-Logique : 1 unité par symbole (buy limit + sell TP).
-  - Activation : regime.trend == "range" et aucune position scalp ouverte
-  - Désactivation : régime passe à trend OU breakout hors de la grille
-  - Cycle : buy@(center - spacing/2) → fill → sell@(center + spacing/2) → repeat
+Logique :
+  Activation : place buy@(center - spacing/2) ET sell@(center + spacing/2) simultanément.
+  - Si buy se remplit en premier → long ouvert → cancel le sell pending → TP sell reduce_only
+  - Si sell se remplit en premier → short ouvert → cancel le buy pending → TP buy reduce_only
+  - Quand TP rempli → profit = spacing - fees → nouveau cycle symétrique sur le prix courant
+
+  Désactivation : régime passe à trend OU breakout hors de la fenêtre ±(LEVELS+1)×spacing.
 """
 import logging
 import time
@@ -22,10 +25,11 @@ class GridState:
     center: float
     spacing: float
     qty: float
-    phase: str = "waiting_buy"      # waiting_buy | waiting_sell
+    phase: str = "symmetric"           # symmetric | waiting_sell_tp | waiting_buy_tp
     buy_oid: Optional[int] = None
     sell_oid: Optional[int] = None
     buy_fill_price: Optional[float] = None
+    sell_fill_price: Optional[float] = None
     created_at: float = field(default_factory=time.time)
     last_update: float = field(default_factory=time.time)
     trade_count: int = 0
@@ -38,7 +42,7 @@ class GridManager:
     def __init__(self, exchange):
         self._exchange = exchange
         self._grids: Dict[str, GridState] = {}
-        self._deactivation_ts: Dict[str, float] = {}  # cooldown post-désactivation
+        self._deactivation_ts: Dict[str, float] = {}
 
     # ─── API publique ─────────────────────────────────────────────────────────
 
@@ -49,7 +53,6 @@ class GridManager:
         return list(self._grids.keys())
 
     def can_activate(self, symbol: str) -> bool:
-        """Retourne False si le symbole est en cooldown post-désactivation."""
         from config.settings import GRID_COOLDOWN_SEC
         last = self._deactivation_ts.get(symbol, 0.0)
         remaining = GRID_COOLDOWN_SEC - (time.time() - last)
@@ -59,7 +62,7 @@ class GridManager:
         return True
 
     def activate(self, symbol: str, center: float, atr: float) -> bool:
-        """Démarre une grille sur ce symbole. Retourne True si succès."""
+        """Place buy ET sell simultanément autour du center. Retourne True si succès."""
         if self.is_active(symbol):
             return False
         if not self.can_activate(symbol):
@@ -78,8 +81,16 @@ class GridManager:
             return False
 
         buy_price = round(center - spacing / 2, 6)
-        oid = self._place_limit(symbol, "buy", qty, buy_price, int(GRID_LEVERAGE))
-        if oid is None:
+        sell_price = round(center + spacing / 2, 6)
+        lev = int(GRID_LEVERAGE)
+
+        buy_oid = self._place_limit(symbol, "buy", qty, buy_price, lev, reduce_only=False)
+        if buy_oid is None:
+            return False
+
+        sell_oid = self._place_limit(symbol, "sell", qty, sell_price, lev, reduce_only=False)
+        if sell_oid is None:
+            self._cancel_oid(symbol, buy_oid)
             return False
 
         self._grids[symbol] = GridState(
@@ -87,12 +98,13 @@ class GridManager:
             center=center,
             spacing=spacing,
             qty=qty,
-            phase="waiting_buy",
-            buy_oid=oid,
+            phase="symmetric",
+            buy_oid=buy_oid,
+            sell_oid=sell_oid,
         )
         logger.info(
-            "GRID %s ACTIVÉ center=%.4f spacing=%.4f qty=%.6f buy@%.4f oid=%d",
-            symbol, center, spacing, qty, buy_price, oid,
+            "GRID %s ACTIVÉ center=%.4f spacing=%.4f qty=%.6f | buy@%.4f oid=%d | sell@%.4f oid=%d",
+            symbol, center, spacing, qty, buy_price, buy_oid, sell_price, sell_oid,
         )
         return True
 
@@ -104,14 +116,13 @@ class GridManager:
 
         from config.settings import GRID_LEVELS, GRID_LEVERAGE, GRID_GRACE_SEC
 
-        # Période de grâce : le cache HL peut ne pas encore connaître l'ordre
-        # fraîchement placé — évite de croire qu'il est rempli dès le 1er tick.
         if time.time() - g.created_at < GRID_GRACE_SEC:
             return
 
         g.last_update = time.time()
+        lev = int(GRID_LEVERAGE)
 
-        # Breakout guard : annule si le prix sort de la fenêtre prévue
+        # Breakout guard
         breakout_limit = g.spacing * (GRID_LEVELS + 1)
         if abs(current_price - g.center) > breakout_limit:
             logger.info(
@@ -121,42 +132,73 @@ class GridManager:
             self.deactivate(symbol, cancel=True)
             return
 
-        if g.phase == "waiting_buy":
-            if g.buy_oid is not None and g.buy_oid not in open_oids:
-                # Buy rempli → TP sell
+        if g.phase == "symmetric":
+            buy_filled = g.buy_oid is not None and g.buy_oid not in open_oids
+            sell_filled = g.sell_oid is not None and g.sell_oid not in open_oids
+
+            if buy_filled and sell_filled:
+                # Les deux remplis quasi-simultanément → net 0, nouveau cycle
+                g.trade_count += 1
+                logger.info("GRID %s double fill → nouveau cycle", symbol)
+                self._reset_symmetric(symbol, g, current_price, lev)
+
+            elif buy_filled:
+                # Long ouvert → cancel le sell pending, place TP sell reduce_only
                 g.buy_fill_price = current_price
+                self._cancel_oid(symbol, g.sell_oid)
+                g.sell_oid = None
                 tp_price = round(g.center + g.spacing / 2, 6)
-                oid = self._place_limit(symbol, "sell", g.qty, tp_price, int(GRID_LEVERAGE))
+                oid = self._place_limit(symbol, "sell", g.qty, tp_price, lev, reduce_only=True)
                 if oid:
                     g.buy_oid = None
                     g.sell_oid = oid
-                    g.phase = "waiting_sell"
-                    logger.info("GRID %s buy rempli → TP sell@%.4f oid=%d", symbol, tp_price, oid)
+                    g.phase = "waiting_sell_tp"
+                    logger.info("GRID %s long ouvert → TP sell@%.4f oid=%d", symbol, tp_price, oid)
                 else:
                     logger.warning("GRID %s: échec TP sell, désactivation", symbol)
                     self.deactivate(symbol, cancel=False)
 
-        elif g.phase == "waiting_sell":
-            if g.sell_oid is not None and g.sell_oid not in open_oids:
-                # TP rempli → cycle complet, on relance
-                sell_price = g.center + g.spacing / 2
-                buy_fill = g.buy_fill_price or (g.center - g.spacing / 2)
-                pnl_pct = (sell_price - buy_fill) / buy_fill if buy_fill > 0 else 0.0
-                g.total_pnl_pct += pnl_pct
-                g.trade_count += 1
-                logger.info(
-                    "GRID %s cycle #%d OK pnl=%.3f%% cumul=%.3f%%",
-                    symbol, g.trade_count, pnl_pct * 100, g.total_pnl_pct * 100,
-                )
-                # Nouveau cycle
-                buy_price = round(g.center - g.spacing / 2, 6)
-                oid = self._place_limit(symbol, "buy", g.qty, buy_price, int(GRID_LEVERAGE))
+            elif sell_filled:
+                # Short ouvert → cancel le buy pending, place TP buy reduce_only
+                g.sell_fill_price = current_price
+                self._cancel_oid(symbol, g.buy_oid)
+                g.buy_oid = None
+                tp_price = round(g.center - g.spacing / 2, 6)
+                oid = self._place_limit(symbol, "buy", g.qty, tp_price, lev, reduce_only=True)
                 if oid:
                     g.sell_oid = None
                     g.buy_oid = oid
-                    g.phase = "waiting_buy"
+                    g.phase = "waiting_buy_tp"
+                    logger.info("GRID %s short ouvert → TP buy@%.4f oid=%d", symbol, tp_price, oid)
                 else:
+                    logger.warning("GRID %s: échec TP buy, désactivation", symbol)
                     self.deactivate(symbol, cancel=False)
+
+        elif g.phase == "waiting_sell_tp":
+            if g.sell_oid is not None and g.sell_oid not in open_oids:
+                buy_px = g.buy_fill_price or (g.center - g.spacing / 2)
+                sell_px = g.center + g.spacing / 2
+                pnl_pct = (sell_px - buy_px) / buy_px if buy_px > 0 else g.spacing / g.center
+                g.total_pnl_pct += pnl_pct
+                g.trade_count += 1
+                logger.info(
+                    "GRID %s long TP #%d pnl=%.3f%% cumul=%.3f%%",
+                    symbol, g.trade_count, pnl_pct * 100, g.total_pnl_pct * 100,
+                )
+                self._reset_symmetric(symbol, g, current_price, lev)
+
+        elif g.phase == "waiting_buy_tp":
+            if g.buy_oid is not None and g.buy_oid not in open_oids:
+                sell_px = g.sell_fill_price or (g.center + g.spacing / 2)
+                buy_px = g.center - g.spacing / 2
+                pnl_pct = (sell_px - buy_px) / buy_px if buy_px > 0 else g.spacing / g.center
+                g.total_pnl_pct += pnl_pct
+                g.trade_count += 1
+                logger.info(
+                    "GRID %s short TP #%d pnl=%.3f%% cumul=%.3f%%",
+                    symbol, g.trade_count, pnl_pct * 100, g.total_pnl_pct * 100,
+                )
+                self._reset_symmetric(symbol, g, current_price, lev)
 
     def deactivate(self, symbol: str, cancel: bool = True) -> None:
         g = self._grids.pop(symbol, None)
@@ -165,10 +207,7 @@ class GridManager:
         if cancel:
             for oid in (g.buy_oid, g.sell_oid):
                 if oid is not None:
-                    try:
-                        self._exchange.cancel_order(str(oid))
-                    except Exception as e:
-                        logger.warning("GRID %s cancel oid=%d: %r", symbol, oid, e)
+                    self._cancel_oid(symbol, oid)
         self._deactivation_ts[symbol] = time.time()
         logger.info(
             "GRID %s désactivé phase=%s trades=%d pnl_cumul=%.3f%%",
@@ -181,8 +220,45 @@ class GridManager:
 
     # ─── Privé ────────────────────────────────────────────────────────────────
 
+    def _reset_symmetric(self, symbol: str, g: GridState, current_price: float, lev: int) -> None:
+        """Recentre la grille sur le prix courant et replace les deux ordres."""
+        g.center = current_price
+        buy_price = round(current_price - g.spacing / 2, 6)
+        sell_price = round(current_price + g.spacing / 2, 6)
+
+        buy_oid = self._place_limit(symbol, "buy", g.qty, buy_price, lev, reduce_only=False)
+        if buy_oid is None:
+            self.deactivate(symbol, cancel=False)
+            return
+
+        sell_oid = self._place_limit(symbol, "sell", g.qty, sell_price, lev, reduce_only=False)
+        if sell_oid is None:
+            self._cancel_oid(symbol, buy_oid)
+            self.deactivate(symbol, cancel=False)
+            return
+
+        g.buy_oid = buy_oid
+        g.sell_oid = sell_oid
+        g.phase = "symmetric"
+        g.buy_fill_price = None
+        g.sell_fill_price = None
+        g.created_at = time.time()  # remet la période de grâce
+        logger.info(
+            "GRID %s nouveau cycle center=%.4f buy@%.4f sell@%.4f",
+            symbol, current_price, buy_price, sell_price,
+        )
+
+    def _cancel_oid(self, symbol: str, oid: Optional[int]) -> None:
+        if oid is None:
+            return
+        try:
+            self._exchange.cancel_order(str(oid))
+        except Exception as e:
+            logger.warning("GRID %s cancel oid=%d: %r", symbol, oid, e)
+
     def _place_limit(
-        self, symbol: str, side: str, qty: float, price: float, leverage: int
+        self, symbol: str, side: str, qty: float, price: float,
+        leverage: int, reduce_only: bool = False,
     ) -> Optional[int]:
         try:
             req = OrderRequest(
@@ -192,7 +268,7 @@ class GridManager:
                 order_type="limit",
                 price=price,
                 leverage=leverage,
-                reduce_only=False,
+                reduce_only=reduce_only,
                 client_id=None,
             )
             result = self._exchange.place_order(req)
