@@ -24,6 +24,7 @@ import logging
 import logging.handlers
 import math
 import os
+import signal
 import threading
 import time
 from datetime import datetime, timezone
@@ -2040,10 +2041,21 @@ class SalleDesMarchesV6:
 def main() -> None:
     symbols = getattr(SETTINGS, "SYMBOLS", ["BTC", "ETH", "ATOM", "DYDX", "SOL"])
     bot = SalleDesMarchesV6(symbols=symbols, simulation=SIMULATION_MODE)
+
+    def _shutdown(signum, frame):
+        logger.info("Signal %d reçu — arrêt propre", signum)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
     try:
         bot.run_forever()
     except KeyboardInterrupt:
         logger.info("Arrêt — désactivation grilles actives")
+        if GRID_ENABLED:
+            bot.grid_manager.deactivate_all()
+    finally:
         if GRID_ENABLED:
             bot.grid_manager.deactivate_all()
 
