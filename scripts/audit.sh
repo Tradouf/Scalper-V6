@@ -33,6 +33,7 @@ ALLOWED_TOOLS=(
     "Edit"
     "Bash(git add config/settings.py)"
     "Bash(git add audit_log.md)"
+    "Bash(git add code_proposals.md)"
     "Bash(git commit:*)"
     "Bash(git status)"
     "Bash(git diff:*)"
@@ -50,7 +51,7 @@ claude -p \
     --model opus \
     --max-budget-usd 2.00 \
     --allowedTools $TOOLS_ARG \
-    --append-system-prompt "Tu es en mode audit autonome non-interactif. Ne modifie QUE config/settings.py et audit_log.md. Ne lance pas le bot, ne fais rien d'autre. Réponse finale courte." \
+    --append-system-prompt "Tu es en mode audit autonome non-interactif. Tu peux Edit UNIQUEMENT : config/settings.py, audit_log.md, code_proposals.md. Tu ne touches PAS au code Python. Tu ne lances pas le bot. Réponse finale courte." \
     "$FULL_PROMPT" \
     2>&1 | tee -a "$RUN_LOG"
 
