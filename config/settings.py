@@ -36,10 +36,10 @@ HL_SYNC_SEC = 2.0
 # main_v6.py attend TP_ARM_PCT par défaut à 0.0060 (0.60% brut),
 # puis un trailing par crans de ROE.
 TRAIL_CHECK_SEC = 2
-TP_ARM_PCT = 0.008
+TP_ARM_PCT = 0.005          # 0.8%→0.5% : arme le trail plus tôt, réduit les sorties breakeven
 TRAIL_DROP_PCT = 0.0025
 TRAIL_STEP_ROE = 0.0015
-TRAIL_BREAKEVEN_ROE = 0.0010
+TRAIL_BREAKEVEN_ROE = 0.0030  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au lieu de breakeven, élimine les sorties "TRAIL BREAKEVEN" à -0.05%
 
 # ── Watchlist scalping ───────────────────────────────────────────────────────
 SCALP_WATCHLIST = [
@@ -75,13 +75,32 @@ SCALP_MAX_DURATION_MIN = 30
 SCALP_TP_PNL_PCT = 0.015
 SCALP_SL_PNL_PCT = 0.015
 
+# ── Sécurité capital (in-process, hard rules) ───────────────────────────────
+# Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme
+# de force par ordre market reduce_only. Garde-fou contre :
+# - SL natif perdu / écrasé par positionTpsl singleton
+# - Position abandonnée par _recover_or_place_sl (SL passé)
+# - Bug réseau / cache stale qui empêche le trail de s'armer
+EMERGENCY_LOSS_ROE_MULT = 2.0   # ferme à -2× SL_PCT (= -3% ROE par défaut)
+
+# Si au recovery le prix actuel a déjà dépassé le SL théorique calculé sur
+# l'entry, on place un SL serré à current_price ± ce buffer au lieu d'abandonner.
+# Verrouille la perte au lieu de laisser la position sans protection.
+SL_FALLBACK_BUFFER_PCT = 0.005  # 0.5% au-delà du prix actuel
+
+# Override flip d'urgence : si la position perd plus que SCALP_SL_PNL_PCT et
+# que le signal de flip est aligné avec le régime global, on autorise le flip
+# au seuil normal (MIN_CONFIDENCE) au lieu de FLIP_MIN_CONFIDENCE.
+# Évite le blocage en retournement de tendance clair.
+FLIP_EMERGENCY_LOSS_PCT = 0.015  # ROE en-dessous duquel l'override s'active
+
 # ── Filtres pré-LLM ──────────────────────────────────────────────────────────
 SCALP_MIN_ATR_PCT = 0.003
 SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.73
+MIN_CONFIDENCE = 0.65         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -90,12 +109,14 @@ MIN_VOLRATIO = 0.003
 # Les flips à conf < 0.80 sont structurellement perdants (-19% sur l'échantillon
 # 29/04→02/05). On exige une conf élevée pour autoriser un changement de
 # direction sur un symbole déjà en position.
-FLIP_MIN_CONFIDENCE = 0.81
+FLIP_MIN_CONFIDENCE = 0.90    # 0.95→0.90 (audit 2026-05-05): 37 flip refusé + 2 EMERGENCY EXIT sur 6h, on assouplit légèrement pour permettre les retournements clairs.
 
 # ── Filtre horaire (#2 du diagnostic) ────────────────────────────────────────
 # Heures UTC où l'EV historique est négative. Pas d'entrée fraîche ni de flip
 # durant ces fenêtres. Le management des positions ouvertes reste actif.
-BLOCKED_HOURS_UTC = {13, 14, 18, 19, 20, 21, 22}
+# DÉSACTIVÉ TEMPORAIREMENT (2026-05-03) pour tester l'effet du smart limit
+# + nouveau seuil MIN_CONFIDENCE=0.70. Réactiver avec {13, 14, 18, 19, 20, 21, 22}.
+BLOCKED_HOURS_UTC: set = set()
 
 # ── Risk management ──────────────────────────────────────────────────────────
 MAX_OPEN_POSITIONS = 6
@@ -103,8 +124,8 @@ MAX_CONCURRENT_TRADES = 4
 CONSECUTIVE_STOPS = 2
 SYMBOL_COOLDOWN_MIN = 15
 DAILY_LOSS_LIMIT_PCT = 0.03
-COOLDOWN_SEC = 360
-EXIT_COOLDOWN_SEC = 600
+COOLDOWN_SEC = 180            # 360→180s : cooldown entre entrées sur le même symbole
+EXIT_COOLDOWN_SEC = 300       # 600→300s : cooldown post-sortie
 FLIP_COOLDOWN_SEC = 300
 
 # ── Sizing ───────────────────────────────────────────────────────────────────
@@ -147,12 +168,26 @@ METRICS_FILE = "memory/metrics_v5.json"
 GRID_ENABLED = True
 GRID_ATR_FACTOR = 0.50       # spacing = ATR × factor (0.5 = demi-ATR par côté)
 GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
-GRID_NOTIONAL = 20.0         # USDT par unité de grille
+GRID_NOTIONAL = 30.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
-GRID_MAX_SYMBOLS = 2         # max symboles en mode grille simultanément
+GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
 GRID_GRACE_SEC = 8.0         # délai avant 1er tick (laisse le cache HL confirmer l'ordre)
-GRID_FORCE_SYMBOLS: list = ["ETH"]  # debug: force la grille sur ces symboles (ignore régime + position)
+GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore régime + position)
+
+# ── Smart entry (limit Alo post-only avec fallback market) ──────────────────
+# Réduit les frais en visant le côté maker (~+0.01%) au lieu du taker (+0.045%).
+# Fallback market si l'ordre limit n'est pas rempli dans le timeout.
+LIMIT_FILL_TIMEOUT_SEC = 30       # Délai max d'attente d'un fill limit avant fallback
+LIMIT_USE_MIN_CONFIDENCE = 0.70   # Conf min pour tenter limit (sinon market direct)
+LIMIT_MAX_SPREAD_PCT = 0.0020     # Spread max pour tenter limit (20 bps — couvre BTC/SOL)
+LIMIT_OK_VOLATILITY = ("low", "medium")  # Régimes vol où limit est tenté
+LIMIT_POLL_INTERVAL_SEC = 0.5     # Fréquence de check de fill pendant l'attente
+LIMIT_STALE_PCT = 0.0030          # Cancel limit si mid s'éloigne de >0.3% du prix posé
+
+# Frais HL pour calcul fees_est dans les logs
+HL_MAKER_FEE_PCT = 0.0001         # 0.01% maker (standard, sans rebate VIP)
+HL_TAKER_FEE_PCT = 0.00045        # 0.045% taker
 
 # ── Mode simulation ──────────────────────────────────────────────────────────
 SIMULATION_MODE = False
