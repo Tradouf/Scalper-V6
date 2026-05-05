@@ -1,6 +1,14 @@
 """
 SalleDesMarches V6 — main_v6.py
 
+V6.1.0
+- AgentMomentum (bull) : prompt court, retourne signal+confidence directionnel
+- AgentRisk (bear) : prompt court, retourne risk_score numérique (0-1)
+- Consensus V6.1 : accord momentum×tech → moyenne ; risque réduit conf linéairement
+- Equity spot HL : lecture spotClearinghouseState pour vraie balance USDC
+- Smart limit : garde staleness (cancel si mid > 0.3% du prix posé)
+- SymbolSelector : filtre dans SCALP_WATCHLIST uniquement
+
 V6.0.0
 - boucle Hyperliquid Sync indépendante à HL_SYNC_SEC
 - cache local thread-safe normalisé (positions, ordres ouverts, prix, equity)
@@ -35,8 +43,8 @@ from exchanges.base import OrderRequest
 from exchanges.hyperliquid import HyperliquidExchangeClient
 from agents.agent_orchestrator import AgentOrchestrator
 from agents.agent_technical import AgentTechnical
-from agents.agent_bull import AgentBull
-from agents.agent_bear import AgentBear
+from agents.agent_momentum import AgentMomentum
+from agents.agent_risk_entry import AgentRiskEntry
 from agents.agent_news_v2 import AgentNewsV2
 from agents.agent_whales import AgentWhales
 from agents.agent_orderbook import AgentOrderbook
@@ -114,11 +122,18 @@ MAX_LEVERAGE = float(getattr(SETTINGS, "MAX_LEVERAGE", 3.0))
 MAX_NOTIONAL_PCT = float(getattr(SETTINGS, "MAX_NOTIONAL_PCT", 0.10))
 SIZING_CONF_FLOOR = float(getattr(SETTINGS, "SIZING_CONF_FLOOR", 0.40))
 FLIP_MIN_CONFIDENCE = float(getattr(SETTINGS, "FLIP_MIN_CONFIDENCE", 0.80))
+
+# Sécurité capital — hard rules (cf. config/settings.py pour les valeurs)
+SCALP_SL_PNL_PCT = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
+EMERGENCY_LOSS_ROE_MULT = float(getattr(SETTINGS, "EMERGENCY_LOSS_ROE_MULT", 2.0))
+SL_FALLBACK_BUFFER_PCT = float(getattr(SETTINGS, "SL_FALLBACK_BUFFER_PCT", 0.005))
+FLIP_EMERGENCY_LOSS_PCT = float(getattr(SETTINGS, "FLIP_EMERGENCY_LOSS_PCT", 0.015))
+
 BLOCKED_HOURS_UTC = set(getattr(SETTINGS, "BLOCKED_HOURS_UTC", set()))
 SYMBOLS_PER_CYCLE = int(getattr(SETTINGS, "SYMBOLS_PER_CYCLE", 2))
 BULL_BEAR_REFRESH_SEC = int(getattr(SETTINGS, "BULL_BEAR_REFRESH_SEC", 300))
 HL_SYNC_SEC = float(getattr(SETTINGS, "HL_SYNC_SEC", 2.0))
-HL_CACHE_MAX_AGE_SEC = float(getattr(SETTINGS, "HL_CACHE_MAX_AGE_SEC", max(5.0, HL_SYNC_SEC * 3.0)))
+HL_CACHE_MAX_AGE_SEC = float(getattr(SETTINGS, "HL_CACHE_MAX_AGE_SEC", max(10.0, HL_SYNC_SEC * 5.0)))
 
 # FIX #4: Période de grâce pour les trail guards fraîchement créés.
 # Empêche un sync HL en retard de supprimer un guard avant que la position
@@ -168,27 +183,39 @@ GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
 
 def _consensus(bull: Dict, bear: Dict, technical: Dict) -> Dict:
-    bconf = float(bull.get("confidence", 0) or 0)
-    risk_lvl = str(bear.get("risk_level", "medium") or "medium").lower()
-    tech_conf = float(technical.get("confidence", 0) or 0)
-    tech_sig = str(technical.get("signal", "wait") or "wait").lower()
+    """
+    V6.1 — consensus momentum × risque.
 
-    risk_penalty = {"low": 0.0, "medium": 0.1, "high": 0.25}.get(risk_lvl, 0.1)
+    Direction : momentum (AgentBull) + technique doivent s'aligner.
+    Confiance  : moyenne pondérée réduite par le risk_score (AgentBear).
+    """
+    mom_signal = str(bull.get("signal", "wait") or "wait").lower()
+    mom_conf   = float(bull.get("confidence", 0) or 0)
+    risk_score = float(bear.get("risk_score", 0.5) or 0.5)
+    risk_lvl   = str(bear.get("risk_level", "medium") or "medium").lower()
+    tech_conf  = float(technical.get("confidence", 0) or 0)
+    tech_sig   = str(technical.get("signal", "wait") or "wait").lower()
 
-    if tech_sig == "buy":
-        side = "buy"
-        conf = max(bconf, tech_conf) - risk_penalty
-    elif tech_sig == "sell":
-        side = "sell"
-        conf = max(bconf, tech_conf) - risk_penalty
+    # Direction et confiance de base
+    if mom_signal in ("buy", "sell") and mom_signal == tech_sig:
+        # Les deux s'accordent → confiance moyenne (bonus d'accord)
+        side = mom_signal
+        base_conf = (mom_conf + tech_conf) / 2.0
+    elif tech_sig in ("buy", "sell"):
+        # Tech seul → poids réduit (momentum silencieux ou neutre)
+        side = tech_sig
+        base_conf = tech_conf * 0.80
     else:
-        side = "wait"
-        conf = 0.0
+        return {"side": "wait", "confidence": 0.0,
+                "reason": f"bull={mom_conf:.2f} tech={tech_conf:.2f} bear_risk={risk_lvl}"}
+
+    # Réduction par le risque : risk_score=0 → pas de pénalité, 1 → -50%
+    final_conf = base_conf * (1.0 - risk_score * 0.5)
 
     return {
-        "side": side,
-        "confidence": max(0.0, min(1.0, conf)),
-        "reason": f"bull={bconf:.2f} tech={tech_conf:.2f} bear_risk={risk_lvl}",
+        "side":       side,
+        "confidence": max(0.0, min(1.0, final_conf)),
+        "reason":     f"bull={mom_conf:.2f} tech={tech_conf:.2f} bear_risk={risk_lvl}",
     }
 
 
@@ -203,8 +230,8 @@ class SalleDesMarchesV6:
 
         self.orchestrator = AgentOrchestrator(self.memory)
         self.technical = AgentTechnical(self.memory, self.exchange)
-        self.bull = AgentBull(self.memory)
-        self.bear = AgentBear(self.memory)
+        self.bull = AgentMomentum(self.memory)
+        self.bear = AgentRiskEntry(self.memory)
         self.news = AgentNewsV2(self.memory, SETTINGS)
         self.whales = AgentWhales(self.memory)
         self.orderbook = AgentOrderbook(self.exchange)
@@ -223,6 +250,11 @@ class SalleDesMarchesV6:
 
         self._trail_guards: Dict[str, Dict] = {}
         self._trail_lock = threading.Lock()  # Protège l'accès concurrent aux trail_guards
+        # Empêche un emergency exit de fire plusieurs fois sur le même symbole
+        # pendant que la fermeture est en vol. Stocke {symbol: timestamp_of_attempt}.
+        # Auto-libéré quand la position disparaît du HL cache, OU après 30s (TTL).
+        self._emergency_closing: Dict[str, float] = {}
+        self._emergency_lock = threading.Lock()
         self.grid_manager = GridManager(self.exchange)
         self._tick_decimals: Dict[str, int] = {}
         self._prev_open_positions: Dict[str, Dict] = {}
@@ -374,6 +406,16 @@ class SalleDesMarchesV6:
             user_state = self.exchange._client.get_user_state()
             margin_summary = user_state.get("marginSummary", {})
             account_value = float(margin_summary.get("accountValue", 0.0) or 0.0)
+            # Le compte perp n'a que la marge allouée aux positions ouvertes.
+            # La vraie balance est dans le compte spot (USDC). On l'additionne.
+            try:
+                spot_state = self.exchange._client.info.spot_user_state(self.exchange._client._wallet_address)
+                for bal in spot_state.get("balances", []):
+                    if str(bal.get("coin", "")).upper() in ("USDC", "USDT"):
+                        account_value += float(bal.get("total", 0.0) or 0.0)
+            except Exception as _spot_err:
+                logger.debug("HL spot balance non disponible: %r", _spot_err)
+            logger.debug("HL equity (perp+spot)=%.2f", account_value)
 
             for pos_data in user_state.get("assetPositions", []):
                 pos = pos_data.get("position", pos_data)
@@ -742,7 +784,30 @@ class SalleDesMarchesV6:
                         logger.debug("TRAIL NATIVE SL %s %s: fallback résolution échoué: %r", symbol, side, e)
                 
                 if not sl_oid:
-                    logger.warning("TRAIL NATIVE SL %s %s: sl_oid absent et non résolvable", symbol, side)
+                    # Aucun SL natif sur HL : en placer un nouveau au lieu de simplement ignorer.
+                    # On marque last_protected_roe pour éviter un double placement au prochain tick.
+                    guard["last_protected_roe"] = float(protected_roe)
+                    try:
+                        res = self.exchange.place_tpsl_native(
+                            symbol=symbol,
+                            side=side,
+                            qty=qty,
+                            entry=0.0,
+                            tp=None,
+                            sl=target_sl_px,
+                        )
+                        new_oid = res.get("sl_oid") if isinstance(res, dict) else None
+                        if new_oid:
+                            guard["sl_oid"] = int(new_oid)
+                            guard["native_sl_price"] = float(target_sl_px)
+                            logger.info(
+                                "TRAIL NATIVE SL %s %s: SL manquant → placé @ %.4f oid=%s",
+                                symbol, side, target_sl_px, new_oid,
+                            )
+                        else:
+                            logger.warning("TRAIL NATIVE SL %s %s: SL placé mais oid non résolu (res=%s)", symbol, side, res)
+                    except Exception as e:
+                        logger.warning("TRAIL NATIVE SL %s %s: placement SL échoué: %r", symbol, side, e)
                     return
 
             new_sl_oid = self.exchange.modify_stop_trigger_order(
@@ -792,6 +857,18 @@ class SalleDesMarchesV6:
 
         open_pos = self._get_open_positions()
 
+        # Cleanup mutex emergency : libère les symboles fermés (HL a confirmé)
+        # ou expirés (TTL 30s dépassé sans confirmation = on retentera).
+        if self._emergency_closing:
+            now_ts = time.time()
+            with self._emergency_lock:
+                expired = [
+                    s for s, ts in self._emergency_closing.items()
+                    if s not in open_pos or (now_ts - ts) > 30.0
+                ]
+                for s in expired:
+                    self._emergency_closing.pop(s, None)
+
         for symbol, guard in list(self._trail_guards.items()):
             if symbol not in open_pos:
                 # FIX #4: Période de grâce avant suppression
@@ -805,10 +882,28 @@ class SalleDesMarchesV6:
                 self._trail_guards.pop(symbol, None)
                 continue
 
-            entry = guard["entry"]
-            side = guard["side"]
-            leverage = float(guard.get("leverage", MAX_LEVERAGE))
+            # Préfère l'entry et la side de la position actuelle au cache HL plutôt
+            # que celle figée du guard : si le grid re-cycle (ferme et ré-ouvre à
+            # un nouveau prix), l'entry change mais le guard reste sur l'ancien.
+            # Sinon les ROE calculés divergent de la réalité (cf. incident BNB).
+            pos_now = open_pos.get(symbol, {})
+            entry_live = float(pos_now.get("entry", 0) or 0)
+            side_live = str(pos_now.get("side", "")).lower()
+            entry = entry_live if entry_live > 0 else guard["entry"]
+            side = side_live if side_live in {"buy", "sell"} else guard["side"]
+            leverage = float(pos_now.get("leverage", guard.get("leverage", MAX_LEVERAGE)) or MAX_LEVERAGE)
             tp_arm = float(guard.get("tp_arm", TP_ARM_PCT))
+
+            # Si la direction a changé (grid flip), le guard est obsolète : on le drop.
+            # Le prochain cycle le recréera correctement via _register_trail_guard ou
+            # _recover_or_place_sl si c'est un grid (ou autre).
+            if side_live and side_live != guard.get("side", side_live):
+                logger.warning(
+                    "TRAIL %s: direction changed (%s → %s), guard dropped",
+                    symbol, guard.get("side"), side_live,
+                )
+                self._trail_guards.pop(symbol, None)
+                continue
 
             if entry <= 0:
                 continue
@@ -820,6 +915,39 @@ class SalleDesMarchesV6:
                 else (entry - price) / entry
             )
             pnl_pct = pnl_brut * leverage
+
+            # ── EMERGENCY HARD EXIT ──────────────────────────────────────
+            # Garde-fou capital : si la perte dépasse EMERGENCY_LOSS_ROE_MULT × SL_PCT,
+            # ferme la position de force, indépendamment de armed/sl_oid.
+            # Couvre : SL natif perdu, recovery abandonnée, cache stale, flip bloqué.
+            emergency_threshold = -(EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT)
+            if pnl_pct <= emergency_threshold:
+                # Anti-double-fire : skippe si fermeture déjà en vol (TTL 30s).
+                now_ts = time.time()
+                with self._emergency_lock:
+                    last_ts = self._emergency_closing.get(symbol, 0.0)
+                    if now_ts - last_ts < 30.0:
+                        continue
+                    self._emergency_closing[symbol] = now_ts
+                logger.critical(
+                    "EMERGENCY EXIT %s ROE=%.3f%% <= %.3f%% — force close (entry=%.4f price=%.4f side=%s)",
+                    symbol, pnl_pct * 100, emergency_threshold * 100, entry, price, side.upper(),
+                )
+                pos_data = open_pos[symbol]  # garanti présent (early-continue plus haut)
+                try:
+                    closed = self._close_position_market(symbol, pos_data)
+                    if closed:
+                        self._mark_trade_exit(symbol, "emergency_loss")
+                        self._trail_guards.pop(symbol, None)
+                        self._entry_regime_ctx.pop(symbol, None)
+                except Exception as e:
+                    logger.error("EMERGENCY EXIT %s échec: %r", symbol, e)
+                finally:
+                    # Libère le mutex au prochain tick — laisse le temps au cache HL
+                    # de confirmer la fermeture. Si on libérait tout de suite, le
+                    # tick suivant pourrait revoir la position et re-fire.
+                    pass
+                continue
 
             if pnl_pct > guard["best_pnl_pct"]:
                 guard["best_pnl_pct"] = pnl_pct
@@ -877,7 +1005,52 @@ class SalleDesMarchesV6:
                 leverage,
                 pnl_brut * 100,
             )
-            
+
+        # ── EMERGENCY HARD EXIT pour positions HORS trail_guards ─────────────
+        # Couvre les positions ouvertes par le grid_manager qui ne passent pas
+        # par _register_trail_guard. Sans ce filet, un grid breakout violent
+        # n'a aucune protection (ni SL natif, ni trail).
+        emergency_threshold = -(EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT)
+        for symbol, pos in list(open_pos.items()):
+            if symbol in self._trail_guards:
+                continue  # déjà couvert par la boucle précédente
+            try:
+                side = str(pos.get("side", "")).lower()
+                entry = float(pos.get("entry", 0) or 0)
+                qty = abs(float(pos.get("qty", 0) or 0))
+                leverage = float(pos.get("leverage", MAX_LEVERAGE) or MAX_LEVERAGE)
+                if side not in {"buy", "sell"} or entry <= 0 or qty <= 0:
+                    continue
+                # Skip dust (HL refuse les ordres < $10)
+                price = self._get_current_price(symbol, entry)
+                if price <= 0 or qty * price < 10.0:
+                    continue
+                pnl_brut = (price - entry) / entry if side == "buy" else (entry - price) / entry
+                pnl_pct = pnl_brut * leverage
+                if pnl_pct <= emergency_threshold:
+                    now_ts = time.time()
+                    with self._emergency_lock:
+                        last_ts = self._emergency_closing.get(symbol, 0.0)
+                        if now_ts - last_ts < 30.0:
+                            continue
+                        self._emergency_closing[symbol] = now_ts
+                    logger.critical(
+                        "EMERGENCY EXIT (grid/orphan) %s ROE=%.3f%% <= %.3f%% — force close (entry=%.4f price=%.4f side=%s)",
+                        symbol, pnl_pct * 100, emergency_threshold * 100, entry, price, side.upper(),
+                    )
+                    closed = self._close_position_market(symbol, pos)
+                    if closed:
+                        self._mark_trade_exit(symbol, "emergency_loss_grid")
+                        # Au cas où grid_manager a un état pour ce symbole, on le désactive
+                        try:
+                            if hasattr(self, "grid_manager") and self.grid_manager.is_active(symbol):
+                                self.grid_manager.deactivate(symbol, cancel=True)
+                                logger.warning("EMERGENCY EXIT %s: grille désactivée + ordres annulés", symbol)
+                        except Exception as ge:
+                            logger.warning("EMERGENCY EXIT %s: désactivation grid échouée: %r", symbol, ge)
+            except Exception as e:
+                logger.warning("EMERGENCY EXIT (orphan) %s erreur: %r", symbol, e)
+
     def _register_trail_guard(
         self,
         symbol: str,
@@ -948,6 +1121,197 @@ class SalleDesMarchesV6:
             sl_oid or "?",
             tp_oid or "?",
         )
+
+    def _cancel_orphan_triggers(self, symbol: str, expected_close_side: str) -> int:
+        """
+        Annule les ordres trigger reduce_only dont le côté ne correspond PAS au
+        close_side de la position actuelle.
+
+        Un SL/TP est de l'autre côté de la position : pour fermer un short on BUY,
+        pour fermer un long on SELL. Si la position direction a changé (long → short
+        ou inverse) sans que les anciens SL/TP soient annulés, ils restent en zombi.
+
+        Returns: nombre d'ordres annulés.
+        """
+        try:
+            with self._hl_cache_lock:
+                cached_orders = list(self._hl_cache.get("open_orders", []))
+        except Exception as e:
+            logger.warning("[ORPHAN] %s: lecture cache échouée: %r", symbol, e)
+            return 0
+
+        cancelled = 0
+        for o in cached_orders:
+            if not isinstance(o, dict):
+                continue
+            order_coin = str(o.get("coin", "")).upper()
+            if order_coin != symbol.upper() and not order_coin.startswith(symbol.upper() + "-"):
+                continue
+            tpsl = str(o.get("tpsl", "")).lower()
+            is_trigger = (
+                bool(o.get("isTrigger", False))
+                or tpsl in ("tp", "sl")
+                or "trigger" in str(o.get("orderType", "")).lower()
+            )
+            if not is_trigger:
+                continue
+            if not bool(o.get("reduceOnly", False)):
+                continue  # ne touche pas aux ordres non-reduce_only (ex: limit grid d'entrée)
+
+            o_side = str(o.get("side", "")).lower()
+            o_side_norm = "buy" if o_side in ("b", "buy") else ("sell" if o_side in ("a", "sell") else o_side)
+            if o_side_norm == expected_close_side:
+                continue  # bonne direction, on garde
+
+            oid = o.get("oid")
+            if oid is None:
+                continue
+            try:
+                ok = self.exchange.cancel_order(str(oid))
+                if getattr(ok, "ok", False) or ok is True:
+                    cancelled += 1
+                    trigger_px = o.get("triggerPx") or o.get("limitPx") or "?"
+                    logger.warning(
+                        "[ORPHAN] %s: ordre zombi annulé oid=%s side=%s tpsl=%s px=%s",
+                        symbol, oid, o_side_norm, tpsl or "?", trigger_px,
+                    )
+            except Exception as e:
+                logger.warning("[ORPHAN] %s: cancel oid=%s échec: %r", symbol, oid, e)
+
+        return cancelled
+
+    def _recover_or_place_sl(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        qty: float,
+        leverage: float,
+        scalp_sl_pnl_pct: float,
+    ) -> Optional[str]:
+        """
+        Appelé lors du recovery quand sl_oid=None après _resolve_trigger_oids.
+
+        Étape 1 — scan large du cache d'ordres ouverts : si un ordre trigger
+        correspond au bon côté de fermeture ET est du côté adverse de l'entrée,
+        on l'adopte comme SL (évite de poser un doublon).
+
+        Étape 2 — si aucun SL trouvé : placement d'un nouveau SL via
+        place_tpsl_native. Garde-fou : on annule si le prix actuel a déjà
+        dépassé le niveau SL calculé (évite un fill immédiat).
+
+        Returns: sl_oid (str) ou None.
+        """
+        is_long = (side == "buy")
+        close_side = "sell" if is_long else "buy"
+        est_sl = (
+            entry * (1.0 - scalp_sl_pnl_pct / max(1.0, leverage))
+            if is_long
+            else entry * (1.0 + scalp_sl_pnl_pct / max(1.0, leverage))
+        )
+
+        # --- Étape 1 : scan large du cache ---
+        try:
+            with self._hl_cache_lock:
+                cached_orders = list(self._hl_cache.get("open_orders", []))
+
+            best: Optional[tuple] = None  # (diff, oid_int, trigger_px)
+            for o in cached_orders:
+                if not isinstance(o, dict):
+                    continue
+                order_coin = str(o.get("coin", "")).upper()
+                if order_coin != symbol.upper() and not order_coin.startswith(symbol.upper() + "-"):
+                    continue
+                tpsl = str(o.get("tpsl", "")).lower()
+                is_trigger = (
+                    bool(o.get("isTrigger", False))
+                    or tpsl in ("tp", "sl")
+                    or "trigger" in str(o.get("orderType", "")).lower()
+                )
+                if not is_trigger:
+                    continue
+                o_side = str(o.get("side", "")).lower()
+                o_side_norm = "buy" if o_side in ("b", "buy") else ("sell" if o_side in ("a", "sell") else o_side)
+                if o_side_norm != close_side:
+                    continue
+                try:
+                    trigger_px = float(o.get("triggerPx") or o.get("limitPx") or 0)
+                except (ValueError, TypeError):
+                    continue
+                if trigger_px <= 0:
+                    continue
+                oid = o.get("oid")
+                if oid is None:
+                    continue
+                is_adverse = (is_long and trigger_px < entry) or (not is_long and trigger_px > entry)
+                if tpsl == "sl" or is_adverse:
+                    diff = abs(trigger_px - est_sl)
+                    if best is None or diff < best[0]:
+                        best = (diff, int(oid), trigger_px)
+
+            if best is not None:
+                _, found_oid, found_px = best
+                logger.info(
+                    "[RECOVERY] %s: SL existant retrouvé (scan large) oid=%s trigger=%.4f",
+                    symbol, found_oid, found_px,
+                )
+                return str(found_oid)
+
+        except Exception as e:
+            logger.warning("[RECOVERY] %s: scan large SL échoué: %r", symbol, e)
+
+        # --- Étape 2 : placement d'un nouveau SL ---
+        try:
+            current_px = self._get_current_price(symbol, entry)
+            sl_already_passed = (is_long and current_px <= est_sl) or (not is_long and current_px >= est_sl)
+
+            # FIX permanent : si le SL théorique est dépassé, on ne ferme PAS la position
+            # silencieusement (cf. bug BTC -5.88% du 2026-05-04). On place un SL serré
+            # à current ± SL_FALLBACK_BUFFER_PCT pour verrouiller la perte courante au
+            # lieu de laisser la position dériver. L'emergency exit dans _monitor_trailing
+            # sert de filet supplémentaire si même ce fallback ne tient pas.
+            if sl_already_passed:
+                fallback_sl = (
+                    current_px * (1.0 - SL_FALLBACK_BUFFER_PCT) if is_long
+                    else current_px * (1.0 + SL_FALLBACK_BUFFER_PCT)
+                )
+                logger.warning(
+                    "[RECOVERY] %s: SL théorique (%.4f) dépassé par prix (%.4f) — fallback SL serré à %.4f (buffer=%.2f%%)",
+                    symbol, est_sl, current_px, fallback_sl, SL_FALLBACK_BUFFER_PCT * 100,
+                )
+                sl_to_place = fallback_sl
+            else:
+                sl_to_place = est_sl
+
+            # Nettoyage orphelins : annule tout trigger reduce_only dont le côté
+            # NE correspond PAS au close_side de la position actuelle. Ces ordres
+            # viennent de positions précédentes (ex: long fermé puis short ouvert)
+            # et restent dans l'order book en zombi car positionTpsl ne les remplace
+            # pas quand la direction change.
+            self._cancel_orphan_triggers(symbol, close_side)
+
+            logger.info(
+                "[RECOVERY] %s: placement nouveau SL | side=%s entry=%.4f sl=%.4f qty=%.6f lev=%.1fx",
+                symbol, side, entry, sl_to_place, qty, leverage,
+            )
+            result = self.exchange.place_tpsl_native(
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                entry=entry,
+                tp=None,
+                sl=sl_to_place,
+            )
+            new_oid = result.get("sl_oid")
+            if new_oid is not None:
+                logger.info("[RECOVERY] %s: nouveau SL PLACÉ oid=%s sl=%.4f", symbol, new_oid, sl_to_place)
+                return str(new_oid)
+            logger.warning("[RECOVERY] %s: SL placé mais OID non résolu — trail inactif", symbol)
+            return None
+
+        except Exception as e:
+            logger.error("[RECOVERY] %s: placement nouveau SL ÉCHOUÉ: %r", symbol, e)
+            return None
 
     def _recover_trail_guards(self) -> None:
         """
@@ -1031,6 +1395,17 @@ class SalleDesMarchesV6:
                     logger.warning(
                         "[RECOVERY] %s: résolution OID échouée: %r — guard créé sans sl_oid (recovery a posteriori actif)",
                         symbol, e,
+                    )
+
+                # Fallback : si sl_oid non résolu, chercher un SL existant ou en placer un nouveau
+                if sl_oid is None:
+                    sl_oid = self._recover_or_place_sl(
+                        symbol=symbol,
+                        side=side,
+                        entry=entry,
+                        qty=qty,
+                        leverage=leverage,
+                        scalp_sl_pnl_pct=scalp_sl_pnl_pct,
                     )
 
                 # Créer le trail guard (trail_armed toujours False au démarrage)
@@ -1425,6 +1800,7 @@ class SalleDesMarchesV6:
         leverage: float = 3.0,
         scalper_prices: Optional[Dict] = None,
         confidence: Optional[float] = None,
+        regime: Optional[Dict] = None,
     ) -> Optional[Dict]:
         if not math.isfinite(entry) or entry <= 0:
             logger.warning("LIVE %s: entry invalide %s", symbol, entry)
@@ -1448,16 +1824,11 @@ class SalleDesMarchesV6:
         planned_tp = tp
         planned_sl = sl
 
-        req = OrderRequest(
-            symbol=symbol,
-            side=side,
-            qty=qty,
-            order_type="market",
-            price=entry,
-            leverage=leverage,
-            reduce_only=False,
-            client_id=None,
-        )
+        if regime is None:
+            try:
+                regime = self.memory.get_regime() or {}
+            except Exception:
+                regime = {}
 
         margin_est = qty * entry / leverage
         equity_est = self._get_account_value_usdt()
@@ -1475,20 +1846,64 @@ class SalleDesMarchesV6:
         )
 
         try:
-            res = self.exchange.place_order(req)
+            smart = self.exchange.place_order_smart(
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                confidence=float(confidence or 0.0),
+                regime=regime,
+                leverage=int(leverage),
+                timeout_sec=float(getattr(SETTINGS, "LIMIT_FILL_TIMEOUT_SEC", 30.0)),
+                min_confidence=float(getattr(SETTINGS, "LIMIT_USE_MIN_CONFIDENCE", 0.70)),
+                max_spread_pct=float(getattr(SETTINGS, "LIMIT_MAX_SPREAD_PCT", 0.002)),
+                ok_volatilities=tuple(getattr(SETTINGS, "LIMIT_OK_VOLATILITY", ("low", "medium"))),
+                stale_pct=float(getattr(SETTINGS, "LIMIT_STALE_PCT", 0.003)),
+            )
         except Exception as e:
-            logger.warning("place_order %s %s: %r", symbol, side, e)
+            logger.warning("place_order_smart %s %s: %r", symbol, side, e)
             return None
 
-        fill_price = getattr(res, "price", getattr(res, "avg_px", 0.0)) or planned_entry
-        fill_qty = getattr(res, "qty", getattr(res, "total_sz", qty)) or qty
+        if not smart or smart.get("order_type") == "failed":
+            logger.warning("[LIVE] %s %s: ordre échoué (smart=%r)", symbol, side, smart)
+            return None
+
+        fill_price = float(smart.get("fill_price") or 0.0) or planned_entry
+        fill_qty = float(smart.get("fill_qty") or 0.0) or qty
+        order_type_used = str(smart.get("order_type", "market"))
+        spread_pct = float(smart.get("spread_pct") or 0.0)
+        slippage_pct = float(smart.get("slippage_pct") or 0.0)
         effective_leverage = float(leverage or MAX_LEVERAGE)
+
+        # Estimation des frais
+        notional = fill_price * fill_qty
+        if order_type_used == "limit":
+            fee_rate = float(getattr(SETTINGS, "HL_MAKER_FEE_PCT", 0.0001))
+        else:
+            fee_rate = float(getattr(SETTINGS, "HL_TAKER_FEE_PCT", 0.00045))
+        # Si on a la fee réelle reportée par HL, on l'utilise
+        real_fee = smart.get("fee")
+        fees_usd = float(real_fee) if (real_fee is not None and real_fee > 0) else notional * fee_rate
+
+        logger.info(
+            "[ENTRY] %s %s | type=%s fill=%.4f | spread=%.4f%% slippage=%.4f%% | fees_est=$%.4f conf=%.2f",
+            side.upper(), symbol,
+            order_type_used, fill_price,
+            spread_pct * 100, slippage_pct * 100,
+            fees_usd, float(confidence or 0.0),
+        )
+
+        # Compat : on garde un objet "res" minimal pour les blocs aval qui en dépendent
+        class _SmartRes:
+            def __init__(self, fill_price, fill_qty, oid):
+                self.price = fill_price
+                self.qty = fill_qty
+                self.order_id = str(oid) if oid is not None else ""
+                self.status = "filled"
+        res = _SmartRes(fill_price, fill_qty, smart.get("oid"))
 
         logger.info(
             "[LIVE] Résultat ordre: status=%s id=%s price=%.4f",
-            getattr(res, "status", "?"),
-            getattr(res, "order_id", getattr(res, "oid", "")),
-            fill_price,
+            res.status, res.order_id, fill_price,
         )
 
         adj_tp, adj_sl = self._recalc_tpsl_from_fill(
@@ -1724,7 +2139,7 @@ class SalleDesMarchesV6:
                 pass
 
     def run_forever(self) -> None:
-        logger.info("SalleDesMarches V6.0.0 — SIMULATION=%s", self.simulation)
+        logger.info("SalleDesMarches V6.1.0 — SIMULATION=%s", self.simulation)
         logger.info("LocalAI: %s | models=%s", LOCALAI_BASE_URL, list(MODELS.keys())[:10])
         logger.info("Symboles: %s", self.symbols)
         logger.info(
@@ -1875,8 +2290,10 @@ class SalleDesMarchesV6:
                                 logger.info("GRID %s désactivé (régime→%s)", symbol, regime_trend)
                                 self.grid_manager.deactivate(symbol, cancel=True)
 
-                    # Symbole en mode grille sans position ouverte : skip pipeline scalp
-                    if GRID_ENABLED and self.grid_manager.is_active(symbol) and not open_positions.get(symbol):
+                    # Symbole en mode grille : skip pipeline scalp (peu importe si position ouverte).
+                    # Évite que le scalp flip/ferme une position grid, ce qui rendrait le TP
+                    # reduce_only invalide et déclencherait une désactivation prématurée.
+                    if GRID_ENABLED and self.grid_manager.is_active(symbol):
                         continue
 
                     bull = self.bull.analyze(symbol, symbol_regime, tech)
@@ -1932,9 +2349,37 @@ class SalleDesMarchesV6:
                         # Filtre conf pour les flips (#1 diagnostic) : les flips à
                         # conf < 0.80 ont une EV de -0.34% sur l'échantillon, vs
                         # +0.19% pour les flips à conf >= 0.80. Refus pur et simple.
-                        if conf < FLIP_MIN_CONFIDENCE:
+                        # OVERRIDE D'URGENCE : si position en perte importante ET signal
+                        # de flip aligné avec le régime global, on autorise au seuil
+                        # MIN_CONFIDENCE. Évite le blocage en retournement de tendance
+                        # (cf. bug BTC -5.88% du 2026-05-04 où le bot voulait flipper
+                        # depuis 07:25 mais était verrouillé à 0.95).
+                        flip_threshold = FLIP_MIN_CONFIDENCE
+                        try:
+                            ex_entry = float(existing.get("entry", 0) or 0)
+                            ex_lev = float(existing.get("leverage", MAX_LEVERAGE) or MAX_LEVERAGE)
+                            cur_px = self._get_current_price(symbol, ex_entry)
+                            if ex_entry > 0 and cur_px > 0:
+                                ex_side = str(existing.get("side", "")).lower()
+                                ex_brut = (cur_px - ex_entry) / ex_entry if ex_side == "buy" else (ex_entry - cur_px) / ex_entry
+                                ex_roe = ex_brut * ex_lev
+                                regime_trend = str(regime.get("trend", "range")).lower()
+                                aligned = (
+                                    (side == "buy" and regime_trend in ("bull", "trend"))
+                                    or (side == "sell" and regime_trend in ("bear",))
+                                )
+                                if ex_roe <= -FLIP_EMERGENCY_LOSS_PCT and aligned:
+                                    flip_threshold = MIN_CONFIDENCE
+                                    logger.warning(
+                                        "FLIP EMERGENCY OVERRIDE %s | ROE=%.2f%% trend=%s flip→%s | seuil %.2f→%.2f",
+                                        symbol, ex_roe * 100, regime_trend, side, FLIP_MIN_CONFIDENCE, flip_threshold,
+                                    )
+                        except Exception as _e:
+                            logger.debug("flip override compute %s: %r", symbol, _e)
+
+                        if conf < flip_threshold:
                             stats["skipped"] += 1
-                            logger.info("SKIP %s — flip refusé (conf %.2f < %.2f)", symbol, conf, FLIP_MIN_CONFIDENCE)
+                            logger.info("SKIP %s — flip refusé (conf %.2f < %.2f)", symbol, conf, flip_threshold)
                             continue
                         flip_ts = self._flip_cooldowns.get(symbol, 0.0)
                         flip_wait = FLIP_COOLDOWN_SEC - (time.time() - flip_ts)
