@@ -54,3 +54,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : le volume de LLM errors a quasi-décuplé en un cycle d'audit ; surveiller la santé LocalAI hors-périmètre (CPU/RAM hôte).
 
 ---
+
+## 2026-05-06 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=2, external_exit=5, open=2 (BTC +0.28% / SOL +0.50%), enter=0, skip_conf=2, skip_cooldown=5, trail_arm=1, trail_modify=2, llm_error=21
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. flip_refusé=2 < seuil 5 ; EMERGENCY=0 ; SKIP conf=2/720 cycles ≈ 0.003/cycle (très en deçà du seuil 10/cycle) ; TRAIL ARM=1 (≠0). LLM error=21 vs 261 au précédent audit (÷12) — la saturation LocalAI semble s'être résorbée, la proposition pending du 13:00 reste valide mais devient moins urgente. ENTER=0 sur 6h s'explique par le contexte : seulement 2 positions ouvertes (vs 4 normalement) + 5 external_exit récents (cooldowns post-sortie actifs : 5 SKIP cooldown observés), pas par un seuil mal réglé. Grid bot actif côté BNB (cf. log "GRID BNB long TP #2 cumul=0.384%") — fonctionne nominalement.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur.
+
+**Code proposals** : aucune nouvelle. Proposition pending du 13:00 sur LLM timeouts toujours valide mais la pression a chuté (21 errors/6h vs 261).
+
+**Alerts** : aucun.
+
+---
