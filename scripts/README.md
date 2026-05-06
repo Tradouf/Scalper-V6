@@ -58,11 +58,28 @@ de marché. Pour une fréquence plus élevée :
 ### Garde-fous
 
 - **Whitelist outils** : Claude n'a accès qu'à `Read`, `Edit`, `git add/commit/diff/log/status`. Pas de `Write`, pas de `Bash` arbitraire.
-- **Scope fichier** : seul `config/settings.py` et `audit_log.md` peuvent être modifiés.
+- **Scope fichier** : seul `config/settings.py`, `audit_log.md`, `code_proposals.md` peuvent être modifiés.
 - **Bornes paramètres** : 12 paramètres autorisés, chacun avec min/max stricts (cf. `audit_prompt.md`).
 - **Budget cap** : `--max-budget-usd 2.00` par run. Cron continue même si un audit échoue.
 - **Anti-oscillation** : Claude lit `audit_log.md` avant de décider — il évite les changements répétés trop rapprochés.
 - **Git commits** : chaque modif est commitée avec message `audit(opus): ...` → revert facile via `git revert`.
+
+### Restart automatique
+
+Après l'appel Opus, `audit.sh` détecte si le commit créé a touché `config/settings.py`.
+Si oui, il appelle `./scripts/bot.sh restart` pour appliquer la nouvelle valeur.
+
+Garde-fous :
+1. Restart UNIQUEMENT si `config/settings.py` change (un commit qui ne touche que `audit_log.md` ou `code_proposals.md` ne déclenche rien).
+2. **Anti-flap** : refus si un précédent restart a eu lieu il y a moins de 30 min. Empêche les boucles de redémarrage si plusieurs audits proposent des changements rapprochés. Marqueur stocké dans `audit_history/last_restart.ts`.
+3. Skip si le bot n'est pas actif (utilisateur l'a stoppé exprès).
+
+Pour revert un changement appliqué automatiquement :
+```bash
+git log --oneline | head -10           # trouver le commit audit
+git revert <hash>
+./scripts/bot.sh restart
+```
 
 ### Suivi
 

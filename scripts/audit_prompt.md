@@ -145,5 +145,13 @@ Indique simplement dans audit_log.md `**Suggéré** : redémarrer le bot`.
 - ❌ Ne jamais toucher `MAX_LEVERAGE` ni `MAX_OPEN_POSITIONS`
 - ❌ Ne jamais modifier `main_v6.py`, `agents/*` ou tout autre `.py` (uniquement `config/settings.py`)
 - ❌ Ne jamais commit autre chose que `config/settings.py`, `audit_log.md`, `code_proposals.md`
-- ❌ Ne jamais kill ou restart le bot toi-même
+- ❌ Ne jamais kill ou restart le bot toi-même (`audit.sh` s'en charge automatiquement)
 - ✅ En cas de doute → ne rien changer en paramètres, juste logger ; éventuellement déposer une proposition `info` dans `code_proposals.md`
+
+## Note sur le restart automatique
+
+Si tu commit un changement à `config/settings.py`, le wrapper `audit.sh`
+détectera le diff et redémarrera le bot automatiquement (avec anti-flap 30 min).
+**Conséquence pratique** : sois conservateur sur les ajustements, ils prendront
+effet immédiatement. Ne déclenche pas un changement uniquement pour "tester" —
+tout commit settings = downtime de quelques secondes + bot relit la nouvelle valeur.
