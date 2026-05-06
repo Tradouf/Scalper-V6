@@ -45,6 +45,8 @@ actuelles.
 | COOLDOWN_SEC | 60 | 600 |
 | EXIT_COOLDOWN_SEC | 60 | 600 |
 | FLIP_COOLDOWN_SEC | 60 | 600 |
+| SCALP_ENABLED | False | True |
+| GRID_ENABLED | False | True |
 
 **Tout autre paramètre est interdit.** Tu n'as PAS le droit de modifier
 `main_v6.py`, `agents/*`, ou autre code Python — uniquement `config/settings.py`.
@@ -60,6 +62,26 @@ actuelles.
 | ≥10 SKIP "conf trop faible" / cycle | Baisser `MIN_CONFIDENCE` de 0.02 (min 0.55) |
 | Beaucoup de "TRAIL BREAKEVEN" à perte | Augmenter `TRAIL_BREAKEVEN_ROE` de 0.0005 (max 0.005) |
 | Aucun pattern net | Ne rien changer |
+
+### Règles spéciales master switches (SCALP_ENABLED / GRID_ENABLED)
+
+Ces deux flags coupent une stratégie entière. À manipuler avec **prudence accrue** :
+exige un signal fort sur **≥24h** (4 audits consécutifs), pas une heure de mauvais
+résultats.
+
+| Pattern (sur 24h fenêtre, =4 audits cumulés) | Réaction |
+|---|---|
+| `SCALP_ENABLED=True` + bilan scalp net négatif **2 audits consécutifs** ET grid net positif | `SCALP_ENABLED=False` (isole le grid) |
+| `SCALP_ENABLED=False` + grid net négatif sur 24h ET régime bull/bear/trend dominant | `SCALP_ENABLED=True` (le scalp peut profiter du trend, le grid pas) |
+| `GRID_ENABLED=True` + 0 grid TPs sur 24h (régime trend depuis longtemps) | `GRID_ENABLED=False` (économise les fees inutiles) |
+| `GRID_ENABLED=False` + régime range stable depuis ≥24h | `GRID_ENABLED=True` (le grid prospère en range) |
+
+**Pour évaluer le bilan scalp/grid net** : croise les compteurs (enter, external_exit,
+emergency_exit) avec l'évolution de l'equity dans `audit_log.md` historique. Si tu n'as
+pas la donnée fiable, **ne flippe pas** — laisse l'utilisateur décider.
+
+Ne flippe **jamais** les deux dans le même audit (cela créerait un trou : aucune stratégie
+active). Toujours au moins une des deux à `True`.
 
 Privilégie les **petits pas** (one parameter at a time, delta minimal).
 **Jamais plus de 3 changements par audit.**
@@ -143,7 +165,6 @@ Indique simplement dans audit_log.md `**Suggéré** : redémarrer le bot`.
 
 - ❌ Ne jamais désactiver l'emergency exit (`EMERGENCY_LOSS_ROE_MULT` ne descend pas sous 1.5)
 - ❌ Ne jamais toucher `MAX_LEVERAGE` ni `MAX_OPEN_POSITIONS`
-- ❌ Ne jamais toucher `SCALP_ENABLED`, `GRID_ENABLED` (master switches stratégies, choix utilisateur)
 - ❌ Ne jamais modifier `main_v6.py`, `agents/*` ou tout autre `.py` (uniquement `config/settings.py`)
 - ❌ Ne jamais commit autre chose que `config/settings.py`, `audit_log.md`, `code_proposals.md`
 - ❌ Ne jamais kill ou restart le bot toi-même (`audit.sh` s'en charge automatiquement)
