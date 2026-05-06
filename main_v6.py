@@ -357,8 +357,11 @@ class SalleDesMarchesV6:
         time.sleep(max(2.0, HL_SYNC_SEC * 1.5))
         while True:
             try:
-                if self._trail_guards:
-                    self._monitor_trailing()
+                # Toujours appeler _monitor_trailing : il contient le filet
+                # emergency exit pour les positions grid/orphan (hors trail_guards).
+                # Si on skippait quand _trail_guards est vide, les positions
+                # ouvertes par le grid n'auraient AUCUNE protection.
+                self._monitor_trailing()
             except Exception as e:
                 logger.warning("trail loop error: %r", e)
             time.sleep(TRAIL_CHECK_SEC)
