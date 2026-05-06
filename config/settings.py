@@ -73,7 +73,7 @@ SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
 SCALP_MAX_DURATION_MIN = 30
 SCALP_TP_PNL_PCT = 0.015
-SCALP_SL_PNL_PCT = 0.015
+SCALP_SL_PNL_PCT = 0.013
 
 # ── Sécurité capital (in-process, hard rules) ───────────────────────────────
 # Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme
@@ -100,7 +100,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.72         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
+MIN_CONFIDENCE = 0.70         # 0.72→0.70 (audit 2026-05-06 12:00): 0 ENTER en 6h, confs réelles 0.68-0.71 systématiquement sous seuil 0.72
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003

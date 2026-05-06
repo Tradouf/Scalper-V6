@@ -67,3 +67,18 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-06 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=4, flip_refusé=4, external_exit=21, open=5 (APE +0.78% / BNB -1.47% / BTC +0.45% / ETH -1.19% / SOL +1.38%), enter=0, skip_conf=35, skip_cooldown=26, trail_arm=3, trail_modify=10, llm_error=0, hl_cache_stale=549, hl_sync_err=14
+**Diagnostic** : Deux patterns paramétriques se déclenchent. (1) **EMERGENCY=4 ≥3** → la règle prescrit de resserrer le SL pour réduire les pertes en cascade ; SCALP_SL_PNL_PCT 0.015 → 0.013 (delta minimum -0.002, dans la borne min 0.010). (2) **ENTER=0 sur 6h alors que les confs observées flottent à 0.68-0.71 systématiquement sous MIN_CONFIDENCE=0.72** (5 SKIP visibles dans l'échantillon, tous "conf trop faible (0.6X < 0.72)") → on baisse MIN_CONFIDENCE 0.72 → 0.70 (delta -0.02, dans la borne min 0.55). flip_refusé=4 < seuil 5, pas de trigger flip. TRAIL ARM=3 (≠0) donc le pattern "0 trade armed en 24h" non actif. **HL cache périmé=549 et HL sync error=14** : signal de saturation client Hyperliquid mais hors périmètre paramétrique strict (pas de proposition code déposée car symptôme sans mécanisme bien identifié dans les logs visibles ; à surveiller).
+
+**Changes** :
+- `SCALP_SL_PNL_PCT`: 0.015 → 0.013 — pattern EMERGENCY=4 ≥3, SL plus serré pour limiter les pertes en cascade
+- `MIN_CONFIDENCE`: 0.72 → 0.70 — 0 ENTER en 6h, confs réelles 0.68-0.71 sous seuil, capture des signaux marginaux
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique humain. Observation : HL cache stale=549 / sync_err=14 sur 6h, à surveiller au prochain audit. **Suggéré** : redémarrer le bot (4 EMERGENCY EXIT + 2 changes settings = restart auto via audit.sh).
+
+---
