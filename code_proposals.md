@@ -57,7 +57,7 @@ def _llm(self, prompt, model=None, **kwargs):
 ```
 Et côté `compute_consensus` (main_v6.py) : si `tech is None` (LLM down) plutôt que `tech=0.00` (signal neutre), produire `side="skip_llm_down"` distinct de `wait`, et logger `LLM_DEGRADED` au lieu de `SKIP conf trop faible`. Permet de mesurer la perte d'opportunité réelle.
 **Risk si non corrigé** : Pendant les pics de charge LocalAI, le bot reste flat indéfiniment. Sur 12h observées, 0 entrée ouverte alors que 124 cycles de consensus ont eu lieu. La cause est invisible dans les métriques actuelles (ressemble à un marché sans signal), ce qui retarde le diagnostic à chaque cycle.
-**Status** : applied 2026-05-06 (commit à venir) — `_llm` retry/None déjà en place, ajouté `llm_status="down"` dans agents (technical, momentum, risk_entry), `_consensus` retourne `side="llm_down"` distinct de `wait`, log `LLM_DEGRADED` en warning au lieu de SKIP conf.
+**Status** : applied 2026-05-06 (commit ebabfab) — `_llm` retry/None déjà en place, ajouté `llm_status="down"` dans agents (technical, momentum, risk_entry), `_consensus` retourne `side="llm_down"` distinct de `wait`, log `LLM_DEGRADED` en warning au lieu de SKIP conf.
 
 ---
 
@@ -117,6 +117,6 @@ def main() -> None:
 ```
 
 **Risk si non corrigé** : Race conditions répétées qui produisent des orphelins, des cancellations parasites, et des positions sans SL. Les deux incidents critiques de cette session (BNB orphan SL 2026-05-05, BTC -5.88% du 2026-05-04) avaient en partie cette cause. Sans correction, chaque restart maladroit recrée le risque.
-**Status** : applied 2026-05-06 (commit à venir) — `_acquire_singleton_lock()` ajouté, fcntl.flock sur logs/sdm.pid, sortie sys.exit(1) si lock déjà tenu, atexit cleanup.
+**Status** : applied 2026-05-06 (commit ebabfab) — `_acquire_singleton_lock()` ajouté, fcntl.flock sur logs/sdm.pid, sortie sys.exit(1) si lock déjà tenu, atexit cleanup.
 
 ---
