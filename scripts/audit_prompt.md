@@ -143,6 +143,7 @@ Indique simplement dans audit_log.md `**Suggéré** : redémarrer le bot`.
 
 - ❌ Ne jamais désactiver l'emergency exit (`EMERGENCY_LOSS_ROE_MULT` ne descend pas sous 1.5)
 - ❌ Ne jamais toucher `MAX_LEVERAGE` ni `MAX_OPEN_POSITIONS`
+- ❌ Ne jamais toucher `SCALP_ENABLED`, `GRID_ENABLED` (master switches stratégies, choix utilisateur)
 - ❌ Ne jamais modifier `main_v6.py`, `agents/*` ou tout autre `.py` (uniquement `config/settings.py`)
 - ❌ Ne jamais commit autre chose que `config/settings.py`, `audit_log.md`, `code_proposals.md`
 - ❌ Ne jamais kill ou restart le bot toi-même (`audit.sh` s'en charge automatiquement)

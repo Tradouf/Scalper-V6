@@ -100,7 +100,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.65         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
+MIN_CONFIDENCE = 0.7         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -161,6 +161,14 @@ NEWS_HTTP_TIMEOUT = 5.0
 SHARED_MEMORY_FILE = "memory/shared_memory.json"
 TRADE_HISTORY_FILE = "memory/trade_history.json"
 METRICS_FILE = "memory/metrics_v5.json"
+
+# ── Master switches stratégies ──────────────────────────────────────────────
+# Permet de tester/isoler une stratégie. À False, le pipeline correspondant
+# ne se lance pas (mais les positions existantes restent monitorées par le
+# trail loop + emergency exit). Utile pour évaluer la rentabilité réelle de
+# chaque brique séparément.
+SCALP_ENABLED = False  # bull/bear/consensus → entrées dirigées via scalper (test grid-only 2026-05-06)
+# GRID_ENABLED ci-dessous
 
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le

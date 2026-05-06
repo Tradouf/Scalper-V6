@@ -181,6 +181,7 @@ DEFENSIVE_CUT_MIN_AGE_SEC = int(getattr(SETTINGS, "DEFENSIVE_CUT_MIN_AGE_SEC", 4
 DEFENSIVE_CUT_FLAT_PNL_MAX = float(getattr(SETTINGS, "DEFENSIVE_CUT_FLAT_PNL_MAX", 0.0015))
 
 GRID_ENABLED = bool(getattr(SETTINGS, "GRID_ENABLED", False))
+SCALP_ENABLED = bool(getattr(SETTINGS, "SCALP_ENABLED", True))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
 GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
@@ -2311,6 +2312,14 @@ class SalleDesMarchesV6:
                     # Évite que le scalp flip/ferme une position grid, ce qui rendrait le TP
                     # reduce_only invalide et déclencherait une désactivation prématurée.
                     if GRID_ENABLED and self.grid_manager.is_active(symbol):
+                        continue
+
+                    # Master switch SCALP_ENABLED : si False, on ne lance ni bull/bear ni
+                    # consensus ni scalper sur ce symbole. Les positions existantes restent
+                    # monitorées par le trail loop + emergency exit. Utile pour isoler la
+                    # rentabilité du grid (cf. analyse profit 2026-05-06).
+                    if not SCALP_ENABLED:
+                        stats["skipped"] += 1
                         continue
 
                     bull = self.bull.analyze(symbol, symbol_regime, tech)
