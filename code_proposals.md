@@ -60,3 +60,63 @@ Et côté `compute_consensus` (main_v6.py) : si `tech is None` (LLM down) plutô
 **Status** : pending
 
 ---
+
+## 2026-05-06 07:05 — [WARNING] Doublons de processus bot — pas de PID file lock
+
+**Severity** : warning
+**Files** : `main_v6.py:2489-2512` (fonction `main`)
+**Pattern** : Au cours des sessions du 2026-05-04 et 2026-05-05, plusieurs occurrences de **deux processus `python3 main_v6.py` tournant en parallèle** ont été observées (PIDs 22470/111971, 129854/134390, 185507/190063, 191619/195189, 228671/228847). Causes constatées :
+- `nohup ... &` lancé deux fois (manuel + cron, ou shell imbriqué qui dédouble)
+- `start_sdm.sh` invoqué pendant qu'un bot tourne déjà
+- Crash silencieux d'un parent qui laisse le child orphelin actif
+
+Conséquences observées :
+1. **Tous les logs dupliqués** — chaque ligne apparaît 2× (chaque process a son propre handler sur `logs/sdm.log`).
+2. **Métriques d'audit faussées** (compteurs ×2 — corrigé partiellement par la dédup `awk` dans `audit_metrics.sh`).
+3. **Race conditions sur la gestion des positions** — les deux bots placent et annulent des SL/TP en parallèle, créant des orphelins (cf. incident BNB orphan SL du 2026-05-05).
+4. **Double LLM load** sur LocalAI (déjà saturé), 2× plus de timeouts, donc 2× plus de `tech=0.00`.
+
+**Diagnostic** : Le bot ne vérifie pas qu'aucune autre instance ne tourne avant de démarrer. Aucun PID file, aucun lock fichier, aucun port unique. La fonction `main()` (l. 2489) crée directement le bot et tombe dans `run_forever()` sans contrôle d'unicité.
+
+**Proposed fix** :
+```python
+# Before — main_v6.py
+def main() -> None:
+    symbols = getattr(SETTINGS, "SYMBOLS", ["BTC", "ETH", "ATOM", "DYDX", "SOL"])
+    bot = SalleDesMarchesV6(symbols=symbols, simulation=SIMULATION_MODE)
+    ...
+
+# After — PID lock + cleanup
+import fcntl, os, atexit
+
+PID_FILE = "logs/sdm.pid"
+
+def _acquire_singleton_lock() -> int:
+    """Ouvre un fichier PID, prend un lock exclusif non-bloquant, écrit le PID.
+    Échoue avec sys.exit(1) si une autre instance tient déjà le lock.
+    Le lock est libéré automatiquement à la mort du process (kernel)."""
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    fd = os.open(PID_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        with open(PID_FILE) as f:
+            existing = f.read().strip()
+        logger.error("Une autre instance tourne déjà (PID=%s). Abandon.", existing)
+        sys.exit(1)
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    atexit.register(lambda: os.unlink(PID_FILE) if os.path.exists(PID_FILE) else None)
+    return fd  # garder le fd vivant pour ne pas perdre le lock
+
+def main() -> None:
+    _lock_fd = _acquire_singleton_lock()  # noqa: F841 — gardé en scope
+    symbols = getattr(SETTINGS, "SYMBOLS", ["BTC", "ETH", "ATOM", "DYDX", "SOL"])
+    bot = SalleDesMarchesV6(symbols=symbols, simulation=SIMULATION_MODE)
+    ...
+```
+
+**Risk si non corrigé** : Race conditions répétées qui produisent des orphelins, des cancellations parasites, et des positions sans SL. Les deux incidents critiques de cette session (BNB orphan SL 2026-05-05, BTC -5.88% du 2026-05-04) avaient en partie cette cause. Sans correction, chaque restart maladroit recrée le risque.
+**Status** : pending
+
+---
