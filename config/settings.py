@@ -67,7 +67,7 @@ DEFENSIVE_CUT_FLAT_PNL_MAX = 0.0015
 SYMBOLS_PER_CYCLE = 4
 
 # ── Stratégie scalping ───────────────────────────────────────────────────────
-SCALP_TARGET_PCT = 0.002
+SCALP_TARGET_PCT = 0.003
 SCALP_BE_BUFFER_PCT = 0.008
 SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
@@ -100,7 +100,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.7         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
+MIN_CONFIDENCE = 0.72         # 0.70→0.65 : capture les signaux marginaux (ATR/RSI réels maintenant)
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -167,7 +167,7 @@ METRICS_FILE = "memory/metrics_v5.json"
 # ne se lance pas (mais les positions existantes restent monitorées par le
 # trail loop + emergency exit). Utile pour évaluer la rentabilité réelle de
 # chaque brique séparément.
-SCALP_ENABLED = False  # bull/bear/consensus → entrées dirigées via scalper (test grid-only 2026-05-06)
+SCALP_ENABLED = True  # bull/bear/consensus → entrées dirigées via scalper (test grid-only 2026-05-06)
 # GRID_ENABLED ci-dessous
 
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
@@ -176,7 +176,7 @@ SCALP_ENABLED = False  # bull/bear/consensus → entrées dirigées via scalper 
 GRID_ENABLED = True
 GRID_ATR_FACTOR = 0.50       # spacing = ATR × factor (0.5 = demi-ATR par côté)
 GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
-GRID_NOTIONAL = 30.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
+GRID_NOTIONAL = 15.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)

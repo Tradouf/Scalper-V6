@@ -155,8 +155,8 @@ class GridManager:
                     g.phase = "waiting_sell_tp"
                     logger.info("GRID %s long ouvert → TP sell@%.4f oid=%d", symbol, tp_price, oid)
                 else:
-                    logger.warning("GRID %s: échec TP sell, désactivation", symbol)
-                    self.deactivate(symbol, cancel=False)
+                    logger.warning("GRID %s: échec TP sell, désactivation + close position", symbol)
+                    self.deactivate(symbol, cancel=False, close_position=True)
 
             elif sell_filled:
                 # Short ouvert → cancel le buy pending, place TP buy reduce_only
@@ -171,8 +171,8 @@ class GridManager:
                     g.phase = "waiting_buy_tp"
                     logger.info("GRID %s short ouvert → TP buy@%.4f oid=%d", symbol, tp_price, oid)
                 else:
-                    logger.warning("GRID %s: échec TP buy, désactivation", symbol)
-                    self.deactivate(symbol, cancel=False)
+                    logger.warning("GRID %s: échec TP buy, désactivation + close position", symbol)
+                    self.deactivate(symbol, cancel=False, close_position=True)
 
         elif g.phase == "waiting_sell_tp":
             if g.sell_oid is not None and g.sell_oid not in open_oids:
@@ -200,7 +200,13 @@ class GridManager:
                 )
                 self._reset_symmetric(symbol, g, current_price, lev)
 
-    def deactivate(self, symbol: str, cancel: bool = True) -> None:
+    def deactivate(self, symbol: str, cancel: bool = True, close_position: bool = False) -> None:
+        """
+        close_position=True : ferme aussi la position spot via reduce_only market.
+        À utiliser quand la désactivation vient d'une erreur (insufficient margin,
+        échec TP, échec reset symétrique). Sinon on laisse une position nue qui
+        dérive sans surveillance grid (cf. bug BNB $242 du 2026-05-06).
+        """
         g = self._grids.pop(symbol, None)
         if g is None:
             return
@@ -213,6 +219,38 @@ class GridManager:
             "GRID %s désactivé phase=%s trades=%d pnl_cumul=%.3f%%",
             symbol, g.phase, g.trade_count, g.total_pnl_pct * 100,
         )
+        if close_position:
+            self._close_position_if_open(symbol)
+
+    def _close_position_if_open(self, symbol: str) -> None:
+        """Si une position spot existe pour ce symbole, la ferme via market reduce_only.
+        Évite les positions zombies après deactivate sur erreur."""
+        try:
+            us = self._exchange._client.get_user_state()
+            for p in us.get("assetPositions", []):
+                pos = p.get("position", p)
+                if str(pos.get("coin", "")).upper() != symbol.upper():
+                    continue
+                szi = float(pos.get("szi", 0) or 0)
+                if szi == 0:
+                    return
+                qty = abs(szi)
+                close_side = "sell" if szi > 0 else "buy"
+                lev_raw = pos.get("leverage", {})
+                lev = int(lev_raw.get("value", 3) if isinstance(lev_raw, dict) else (lev_raw or 3))
+                req = OrderRequest(
+                    symbol=symbol, side=close_side, qty=qty,
+                    order_type="market", price=0,
+                    leverage=lev, reduce_only=True, client_id=None,
+                )
+                result = self._exchange.place_order(req)
+                logger.warning(
+                    "GRID %s position fermée d'urgence (deactivate close_position=True) qty=%.6f side=%s status=%s",
+                    symbol, qty, close_side, getattr(result, "status", "?"),
+                )
+                return
+        except Exception as e:
+            logger.error("GRID %s _close_position_if_open: %r", symbol, e)
 
     def deactivate_all(self) -> None:
         for sym in list(self._grids.keys()):
@@ -228,13 +266,15 @@ class GridManager:
 
         buy_oid = self._place_limit(symbol, "buy", g.qty, buy_price, lev, reduce_only=False)
         if buy_oid is None:
-            self.deactivate(symbol, cancel=False)
+            # _reset_symmetric : ne devrait pas y avoir de position résiduelle (TP juste fillé)
+            # mais si margin insuffisante d'un autre symbole, mieux vaut vérifier et fermer.
+            self.deactivate(symbol, cancel=False, close_position=True)
             return
 
         sell_oid = self._place_limit(symbol, "sell", g.qty, sell_price, lev, reduce_only=False)
         if sell_oid is None:
             self._cancel_oid(symbol, buy_oid)
-            self.deactivate(symbol, cancel=False)
+            self.deactivate(symbol, cancel=False, close_position=True)
             return
 
         g.buy_oid = buy_oid
