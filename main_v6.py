@@ -28,11 +28,14 @@ V6.0.0
 
 from __future__ import annotations
 
+import atexit
+import fcntl
 import logging
 import logging.handlers
 import math
 import os
 import signal
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -189,6 +192,17 @@ def _consensus(bull: Dict, bear: Dict, technical: Dict) -> Dict:
     Direction : momentum (AgentBull) + technique doivent s'aligner.
     Confiance  : moyenne pondérée réduite par le risk_score (AgentBear).
     """
+    # LLM saturé / down ? On retourne un side distinct pour mesurer la perte
+    # d'opportunité réelle (cf. code_proposals.md 2026-05-05 [INFO] LLM timeouts).
+    # Sans ça, tech=0.00 issu d'un timeout est traité comme un signal neutre légitime.
+    llm_down_sources = [
+        name for name, src in (("bull", bull), ("bear", bear), ("tech", technical))
+        if str(src.get("llm_status", "") or "").lower() == "down"
+    ]
+    if llm_down_sources:
+        return {"side": "llm_down", "confidence": 0.0,
+                "reason": f"LLM down on: {','.join(llm_down_sources)}"}
+
     mom_signal = str(bull.get("signal", "wait") or "wait").lower()
     mom_conf   = float(bull.get("confidence", 0) or 0)
     risk_score = float(bear.get("risk_score", 0.5) or 0.5)
@@ -2309,6 +2323,11 @@ class SalleDesMarchesV6:
 
                     logger.info("CONSENSUS %s | side=%s conf=%.2f | %s", symbol, side, conf, reason)
 
+                    # Distinction LLM_DEGRADED vs vrai signal neutre
+                    if side == "llm_down":
+                        stats["skipped"] += 1
+                        logger.warning("LLM_DEGRADED %s — skip cycle | %s", symbol, reason)
+                        continue
                     if side == "wait" or conf < MIN_CONFIDENCE:
                         stats["skipped"] += 1
                         logger.info("SKIP %s — conf trop faible (%.2f < %.2f) ou côté=wait", symbol, conf, MIN_CONFIDENCE)
@@ -2486,7 +2505,41 @@ class SalleDesMarchesV6:
             time.sleep(delay)
 
 
+PID_FILE = "logs/sdm.pid"
+
+
+def _acquire_singleton_lock() -> int:
+    """Empêche deux instances du bot de tourner en parallèle (cf. code_proposals.md
+    2026-05-06 [WARNING]). Prend un lock fcntl exclusif non-bloquant sur logs/sdm.pid.
+    Si un autre process tient déjà le lock, on log et on quitte.
+    Le lock est libéré automatiquement à la mort du process (kernel)."""
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    fd = os.open(PID_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        try:
+            with open(PID_FILE) as f:
+                existing = f.read().strip()
+        except Exception:
+            existing = "?"
+        logger.error("Une autre instance tourne déjà (PID=%s) — abandon.", existing)
+        sys.exit(1)
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+
+    def _cleanup_pid():
+        try:
+            if os.path.exists(PID_FILE):
+                os.unlink(PID_FILE)
+        except Exception:
+            pass
+    atexit.register(_cleanup_pid)
+    return fd  # gardé en scope dans main() pour ne pas fermer le fd
+
+
 def main() -> None:
+    _lock_fd = _acquire_singleton_lock()  # noqa: F841 — gardé en scope pour le lock
     symbols = getattr(SETTINGS, "SYMBOLS", ["BTC", "ETH", "ATOM", "DYDX", "SOL"])
     bot = SalleDesMarchesV6(symbols=symbols, simulation=SIMULATION_MODE)
 

@@ -39,6 +39,15 @@ class AgentTechnical(BaseAgent):
         ind    = self._compute_indicators(df)
         result = self._interpret(symbol, ind)
 
+        # Promote raw indicators to top level for downstream access
+        for k in ("atr", "rsi", "price", "vol_ratio", "macd", "macd_signal",
+                  "bb_upper", "bb_lower", "bb_mid", "bb_position"):
+            if k not in result:
+                result[k] = ind.get(k, 0)
+        price = float(ind.get("price", 1) or 1)
+        result["macd_hist"] = float(ind.get("macd", 0) or 0) - float(ind.get("macd_signal", 0) or 0)
+        result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price * 100
+
         try:
             self.memory.update_analysis(symbol, "technical", result)
         except Exception:
@@ -110,9 +119,18 @@ class AgentTechnical(BaseAgent):
             '"regime":"trending"|"ranging"|"volatile",'
             '"reason":"explication courte"}'
         )
-        parsed = self._parse_json(self._llm(system, user, temperature=0.1, max_tokens=300))
+        llm_resp = self._llm(system, user, temperature=0.1, max_tokens=300)
+        # Distinguer LLM down (None) d'un parsing raté ou d'une vraie réponse
+        # neutre. Sans ça, le consensus traite tech=0.00 comme un signal légitime
+        # et le bot reste flat pendant les pics de saturation LocalAI.
+        # cf. code_proposals.md 2026-05-05 [INFO] LLM timeouts.
+        if llm_resp is None:
+            return {"signal": "wait", "confidence": 0.0, "reason": "llm_down",
+                    "llm_status": "down", "indicators": ind}
+        parsed = self._parse_json(llm_resp)
         if not parsed:
-            return {"signal": "wait", "confidence": 0.0, "reason": "parse error"}
+            return {"signal": "wait", "confidence": 0.0, "reason": "parse error",
+                    "indicators": ind}
         parsed["indicators"] = ind
         return parsed
 
