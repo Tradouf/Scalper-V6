@@ -322,6 +322,17 @@ class SalleDesMarchesV6:
                 self._grid_thread.start()
                 logger.info("Grid monitor thread démarré")
 
+            # Health check thread : scan périodique 60s pour détecter les
+            # positions orphelines (sans SL ni trail guard) et leur poser un SL.
+            # Filet de rattrapage indépendant de la boucle principale et du grid.
+            self._health_check_thread = threading.Thread(
+                target=self._health_check_loop,
+                daemon=True,
+                name="health-check",
+            )
+            self._health_check_thread.start()
+            logger.info("Health check thread démarré (intervalle=60s)")
+
         if self.simulation and RESET_SIM_POSITIONS:
             self._reset_sim_positions()
 
@@ -380,6 +391,91 @@ class SalleDesMarchesV6:
             except Exception as e:
                 logger.warning("trail loop error: %r", e)
             time.sleep(TRAIL_CHECK_SEC)
+
+    def _health_check_loop(self) -> None:
+        """Thread démon : scan périodique de toutes les positions pour détecter
+        les orphelins (sans SL natif ni trail guard) et leur poser un SL.
+
+        Fréquence basse (60s) : c'est un filet de rattrapage, pas un mécanisme
+        temps réel. L'emergency exit + trail loop couvrent le temps réel.
+
+        Cas couverts :
+        - Position grid résiduelle après désactivation normale (cf. SOL +4.93% nu 2026-05-06)
+        - Trail guard avec sl_oid=None resté orphelin depuis le boot
+        - Position ouverte par mécanisme externe (manuel sur UI HL)
+        """
+        time.sleep(max(20.0, HL_SYNC_SEC * 10))  # délai initial pour boot stable
+        while True:
+            try:
+                self._health_check_positions()
+            except Exception as e:
+                logger.warning("health check loop error: %r", e)
+            time.sleep(60)
+
+    def _health_check_positions(self) -> None:
+        """Détecte et corrige les positions orphelines (sans protection)."""
+        if self.simulation:
+            return
+        open_pos = self._get_open_positions()
+        if not open_pos:
+            return
+
+        scalp_sl_pnl_pct = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
+
+        for symbol, pos in open_pos.items():
+            try:
+                side = str(pos.get("side", "")).lower()
+                entry = float(pos.get("entry", 0) or 0)
+                qty = abs(float(pos.get("qty", 0) or 0))
+                leverage = float(pos.get("leverage", MAX_LEVERAGE) or MAX_LEVERAGE)
+
+                if side not in {"buy", "sell"} or entry <= 0 or qty <= 0:
+                    continue
+
+                # Skip dust (HL refuse les ordres < $10)
+                price = self._get_current_price(symbol, entry)
+                if price <= 0 or qty * price < 10.0:
+                    continue
+
+                guard = self._trail_guards.get(symbol)
+                # Si guard existe ET a un sl_oid valide → considéré protégé
+                if guard and guard.get("sl_oid"):
+                    continue
+
+                # Orphelin détecté : tente le scan large + place_tpsl_native fallback
+                logger.warning(
+                    "[HEALTH_CHECK] %s position orpheline (guard=%s sl_oid=%s) → tentative protection",
+                    symbol, "yes" if guard else "no",
+                    guard.get("sl_oid") if guard else "n/a",
+                )
+                sl_oid = self._recover_or_place_sl(
+                    symbol=symbol, side=side, entry=entry,
+                    qty=qty, leverage=leverage,
+                    scalp_sl_pnl_pct=scalp_sl_pnl_pct,
+                )
+                if sl_oid:
+                    if guard:
+                        # Met à jour le guard existant
+                        guard["sl_oid"] = sl_oid
+                        logger.info("[HEALTH_CHECK] %s sl_oid mis à jour sur guard existant: %s", symbol, sl_oid)
+                    else:
+                        # Crée un nouveau guard pour activer la trail logic
+                        self._register_trail_guard(
+                            symbol=symbol, side=side, entry=entry,
+                            leverage=leverage, scalper_prices=None,
+                            sl_oid=sl_oid, tp_oid=None,
+                        )
+                        logger.warning(
+                            "[HEALTH_CHECK] %s guard créé + SL placé oid=%s — position désormais protégée",
+                            symbol, sl_oid,
+                        )
+                else:
+                    logger.error(
+                        "[HEALTH_CHECK] %s ÉCHEC protection — position toujours orpheline (emergency exit reste actif)",
+                        symbol,
+                    )
+            except Exception as e:
+                logger.warning("[HEALTH_CHECK] %s erreur: %r", symbol, e)
 
     def _grid_loop(self) -> None:
         """Thread démon : gère les grilles actives (range markets)."""
