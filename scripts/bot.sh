@@ -34,12 +34,43 @@ cmd_status() {
     fi
 }
 
+_ensure_localai() {
+    # Vérifie que LocalAI répond, le démarre via Docker sinon. Reproduit la
+    # logique de start_sdm.sh (gardée historiquement) pour que bot.sh start
+    # soit suffisant à lui seul, sans script externe.
+    if curl -s --max-time 3 http://localhost:8080/v1/models 2>/dev/null | grep -q "qwen"; then
+        echo "✓ LocalAI déjà en cours"
+        return 0
+    fi
+    echo "Démarrage LocalAI (Docker)..."
+    if ! docker start local-ai > /dev/null 2>&1; then
+        echo "⚠️ docker start local-ai a échoué — vérifier 'docker ps -a'"
+        return 1
+    fi
+    echo -n "Chargement des modèles"
+    for i in {1..60}; do
+        sleep 2
+        if curl -s --max-time 3 http://localhost:8080/v1/models 2>/dev/null | grep -q "qwen"; then
+            echo " ✓ prêt après $((i*2))s"
+            return 0
+        fi
+        echo -n "."
+    done
+    echo ""
+    echo "⚠️ LocalAI n'a pas répondu après 2 min — abandon (vérifier 'docker logs local-ai')"
+    return 1
+}
+
 cmd_start() {
     if cmd_status > /dev/null 2>&1; then
         echo "❌ Bot déjà actif :"
         cmd_status
         return 1
     fi
+    _ensure_localai || {
+        echo "❌ Pré-requis LocalAI manquant — bot non démarré"
+        return 1
+    }
     rm -f "$PID_FILE"
     source .venv/bin/activate
     set -a; source .env; set +a
