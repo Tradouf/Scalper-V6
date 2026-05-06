@@ -82,3 +82,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique humain. Observation : HL cache stale=549 / sync_err=14 sur 6h, à surveiller au prochain audit. **Suggéré** : redémarrer le bot (4 EMERGENCY EXIT + 2 changes settings = restart auto via audit.sh).
 
 ---
+
+## 2026-05-07 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=5, open=5 (APE +1.09% / BNB -0.21% / BTC -0.42% / ETH -0.10% / SOL -0.21%), enter=0, skip_conf=9, skip_cooldown=5, trail_arm=4, trail_modify=8, llm_error=0, hl_cache_stale=1, hl_sync_err=1
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0 + flip_refusé=0 → pas de trigger SL ni flip ; SKIP conf=9/720 cycles ≈ 0.0125/cycle (très en deçà du seuil 10/cycle) ; TRAIL ARM=4 (≠0) donc pattern "0 trade armed" non actif ; pas de signal "TRAIL BREAKEVEN à perte". Le contexte santé est nettement meilleur qu'à l'audit 12:00 (LLM error 0 vs avant, HL cache stale 1 vs 549). ENTER=0 sur 6h s'explique par regime range medium stable + 5 external_exit récents (5 SKIP cooldown observés) + audit précédent vient de baisser MIN_CONFIDENCE 0.72→0.70 il y a ~12h → laisser le nouveau seuil produire ≥1 cycle complet d'observation avant nouvelle action (anti-oscillation). ROE positions globalement saines (4 marginales sous 0.5% en valeur absolue, 1 positive +1.09%). Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=0 → WR statistiquement non significatif), donc on ne remonte pas FLIP_MIN_CONFIDENCE.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, anti-oscillation après audit précédent.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
