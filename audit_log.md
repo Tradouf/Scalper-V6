@@ -134,3 +134,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-08 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=1, open=1 (SOL +0.484%), enter=1, consensus=166, skip_conf=165, skip_cooldown=1, trail_arm=1, trail_modify=1, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=165/720 cycles ≈ 0.23/cycle (très en deçà du seuil 10/cycle, malgré ratio 165/166 ≈ 99% car strate gate filtre déjà la majorité avant consensus, seul ~1 symbole/cycle atteint la phase consensus). TRAIL ARM=1 (≠0) → pattern "0 trade armed" non actif. ENTER=1 + TRAIL ARM=1 + position SOL en gain (+0.484%) → la chaîne complète scalp→armement→trailing fonctionne. Échantillon montre confs 0.58 sur APE (sous MIN_CONFIDENCE=0.70) ; baisser à 0.68 ne capturerait toujours pas 0.58, et 0.55 (borne min) déclencherait des entrées trop bruitées : pas de levier paramétrique pertinent. Infra parfaitement saine (LLM/HL sync/cache stale tous à 0). Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=1 → 1 trade non statistiquement significatif). Anti-oscillation maintenue : aucun changement settings depuis ~36h, le système est dans son régime nominal calme (range medium persistant + strate gate H1/M15 conservatrice).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; infra saine, anti-oscillation maintenue.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
