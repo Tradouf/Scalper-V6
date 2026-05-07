@@ -422,6 +422,20 @@ class SalleDesMarchesV6:
 
         scalp_sl_pnl_pct = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
 
+        # Snapshot des OIDs vivants côté exchange (depuis le cache HL).
+        # Si guard.sl_oid n'est PAS dedans, c'est qu'il a été annulé externe-
+        # ment (UI HL, autre bot, expiration) → la position est orpheline
+        # même si le guard semble OK.
+        with self._hl_cache_lock:
+            cached_orders = list(self._hl_cache.get("open_orders", []))
+        live_oids: set = set()
+        for o in cached_orders:
+            if isinstance(o, dict) and o.get("oid") is not None:
+                try:
+                    live_oids.add(int(o["oid"]))
+                except (ValueError, TypeError):
+                    pass
+
         for symbol, pos in open_pos.items():
             try:
                 side = str(pos.get("side", "")).lower()
@@ -438,9 +452,24 @@ class SalleDesMarchesV6:
                     continue
 
                 guard = self._trail_guards.get(symbol)
-                # Si guard existe ET a un sl_oid valide → considéré protégé
+                # Position considérée protégée SEULEMENT si :
+                #   1) guard existe avec sl_oid renseigné
+                #   2) sl_oid est encore vivant côté exchange (pas annulé)
                 if guard and guard.get("sl_oid"):
-                    continue
+                    try:
+                        sl_oid_int = int(guard["sl_oid"])
+                        if sl_oid_int in live_oids:
+                            continue  # vraiment protégé
+                        # OID dans le guard mais l'ordre n'existe plus → orphelin
+                        logger.warning(
+                            "[HEALTH_CHECK] %s sl_oid %s du guard introuvable côté exchange (annulé externe?) — re-protection",
+                            symbol, guard["sl_oid"],
+                        )
+                        # On nettoie le sl_oid mort pour que _recover_or_place_sl
+                        # ne tombe pas dessus en faisant son scan.
+                        guard["sl_oid"] = None
+                    except (ValueError, TypeError):
+                        guard["sl_oid"] = None
 
                 # Orphelin détecté : tente le scan large + place_tpsl_native fallback
                 logger.warning(
@@ -519,17 +548,31 @@ class SalleDesMarchesV6:
         try:
             user_state = self.exchange._client.get_user_state()
             margin_summary = user_state.get("marginSummary", {})
-            account_value = float(margin_summary.get("accountValue", 0.0) or 0.0)
-            # Le compte perp n'a que la marge allouée aux positions ouvertes.
-            # La vraie balance est dans le compte spot (USDC). On l'additionne.
+            perp_account_value = float(margin_summary.get("accountValue", 0.0) or 0.0)
+            # IMPORTANT (fix bug 2026-05-07) : ne JAMAIS additionner naïvement
+            # spot_total + perp_accountValue. Sur Hyperliquid, le `hold` du spot
+            # USDC EST déjà l'argent qui backe les positions perp ; la même
+            # somme apparaît dans perp.accountValue. On éliminait le double-
+            # compte avec : equity = spot_total - spot_hold + perp_accountValue
+            #             = spot_free + perp_accountValue.
+            #
+            # Avant ce fix : equity gonflée d'environ +spot_hold (jusqu'à $30+
+            # sur ce compte), faussant le DAILY_LOSS_LIMIT et le sizing.
+            spot_total = 0.0
+            spot_hold = 0.0
             try:
                 spot_state = self.exchange._client.info.spot_user_state(self.exchange._client._wallet_address)
                 for bal in spot_state.get("balances", []):
                     if str(bal.get("coin", "")).upper() in ("USDC", "USDT"):
-                        account_value += float(bal.get("total", 0.0) or 0.0)
+                        spot_total += float(bal.get("total", 0.0) or 0.0)
+                        spot_hold  += float(bal.get("hold", 0.0) or 0.0)
             except Exception as _spot_err:
                 logger.debug("HL spot balance non disponible: %r", _spot_err)
-            logger.debug("HL equity (perp+spot)=%.2f", account_value)
+            account_value = (spot_total - spot_hold) + perp_account_value
+            logger.debug(
+                "HL equity total=%.2f (spot_free=%.2f + perp=%.2f) | spot_total=%.2f spot_hold=%.2f",
+                account_value, spot_total - spot_hold, perp_account_value, spot_total, spot_hold,
+            )
 
             for pos_data in user_state.get("assetPositions", []):
                 pos = pos_data.get("position", pos_data)
