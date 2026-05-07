@@ -95,3 +95,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-07 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=2, flip_refusé=0, external_exit=10, open=5 (APE -0.94% / BNB +0.47% / BTC -0.94% / ETH +0.05% / SOL -0.69%), enter=0, skip_conf=23, skip_cooldown=11, trail_arm=8, trail_modify=24, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=2 sous seuil 3 ; flip_refusé=0 sous seuil 5 ; SKIP conf=23/720 cycles ≈ 0.032/cycle (très en deçà du seuil 10/cycle) ; TRAIL ARM=8 (≠0) → pattern "0 trade armed en 24h" non actif. Santé infra excellente (LLM 0, HL sync 0, cache stale 0). 3 positions négatives (APE/BTC/SOL) à -0.7/-0.94% ROE, dans la plage normale (sous le SL 1.3%) — pas de cascade. Le contexte régime range medium stable depuis ≥24h pourrait justifier une action sur GRID/SCALP master switches, mais (1) GRID_ENABLED=True déjà en place et fonctionne, (2) SCALP_ENABLED=True n'a pas généré d'ENTER mais 24h ne suffit pas pour conclure scalp net négatif (besoin 2 audits consécutifs avec bilan vérifiable, ENTER=0 ne signifie pas "scalp perdant" — signifie "scalp inactif"). Anti-oscillation après audits 12:00 (06) et 00:00 (07) : laisser observer. Pattern "0 EMERGENCY + WR>60%" toujours non évaluable (ENTER=0 → WR n/a).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra saine.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
