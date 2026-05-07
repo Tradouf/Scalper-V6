@@ -108,3 +108,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-07 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=1, external_exit=17, open=4 (BNB -0.42% / BTC -0.07% / ETH +0.03% / SOL +0.41%), enter=0, consensus=178, skip_conf=177, skip_cooldown=17, trail_arm=10, trail_modify=16, llm_error=0, hl_cache_stale=66, hl_sync_err=167
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0 ; flip_refusé=1 sous seuil 5 ; SKIP conf=177/720 cycles ≈ 0.25/cycle (très en deçà du seuil 10/cycle) ; TRAIL ARM=10 (≠0). Le ratio SKIP_conf/CONSENSUS ≈ 99% est élevé mais les confs observées dans l'échantillon (0.39, 0.42, 0.00 sur APE) sont structurellement sous tout seuil ≥ 0.55 (borne min MIN_CONFIDENCE) — baisser ne capturerait pas ces signaux. Régime range medium persistant + 17 external_exit récents (17 SKIP cooldown observés) + MIN_CONFIDENCE vient juste d'être baissé à 0.70 il y a 24h → anti-oscillation. **HL sync_err=167 + cache_stale=66** : pic de saturation infra mais sous le précédent (cache_stale=549 au 12:00 hier était jugé acceptable), pas de mécanisme bug clair dans les logs visibles, hors périmètre paramétrique. Pattern master switches non déclenché : SCALP_ENABLED=True + ENTER=0 ne signifie pas "scalp perdant", uniquement "scalp inactif en range" ; GRID_ENABLED=True actif et performant (16 TRAIL NATIVE SL MODIFY).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, anti-oscillation maintenue.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique. Observation : HL sync_err=167 sur 6h (~28/h) à surveiller au prochain audit ; si croît au-delà de 500/6h, envisager proposition code sur résilience client HL.
+
+---
