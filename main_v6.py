@@ -57,6 +57,7 @@ from agents.agent_symbol_selector import AgentSymbolSelector
 from agents.agent_trader import AgentTrader
 from agents.feature_engine import FeatureEngine
 from agents.regime_engine import RegimeEngine
+from agents.multi_tf import StrategistH1, TacticalM15, ExecutionM1, strate_gate
 from agents.grid_manager import GridManager
 
 
@@ -182,6 +183,7 @@ DEFENSIVE_CUT_FLAT_PNL_MAX = float(getattr(SETTINGS, "DEFENSIVE_CUT_FLAT_PNL_MAX
 
 GRID_ENABLED = bool(getattr(SETTINGS, "GRID_ENABLED", False))
 SCALP_ENABLED = bool(getattr(SETTINGS, "SCALP_ENABLED", True))
+MULTI_TF_GATE_ENABLED = bool(getattr(SETTINGS, "MULTI_TF_GATE_ENABLED", True))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
 GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
@@ -247,6 +249,10 @@ class SalleDesMarchesV6:
         self.technical = AgentTechnical(self.memory, self.exchange)
         self.bull = AgentMomentum(self.memory)
         self.bear = AgentRiskEntry(self.memory)
+        # Trading floor — strates LLM hiérarchisées (cf. agents/multi_tf.py)
+        self.strate_h1  = StrategistH1(self.memory, self.exchange._client)
+        self.strate_m15 = TacticalM15(self.memory, self.exchange._client)
+        self.strate_m1  = ExecutionM1(self.memory, self.exchange._client)
         self.news = AgentNewsV2(self.memory, SETTINGS)
         self.whales = AgentWhales(self.memory)
         self.orderbook = AgentOrderbook(self.exchange)
@@ -2460,6 +2466,30 @@ class SalleDesMarchesV6:
                     if not SCALP_ENABLED:
                         stats["skipped"] += 1
                         continue
+
+                    # Multi-timeframe gate (trading floor : H1 + M15 + M1, veto strict).
+                    # Court-circuite le pipeline si les 3 strates ne s'accordent pas
+                    # AVANT même de payer les LLM bull/bear/scalper. Désactivable via
+                    # MULTI_TF_GATE_ENABLED=False (gate transparent → comportement V6).
+                    if MULTI_TF_GATE_ENABLED:
+                        h1_view  = self.strate_h1.analyze(symbol)
+                        m15_view = self.strate_m15.analyze(symbol, h1_bias=h1_view.get("signal"))
+                        m1_view  = self.strate_m1.analyze(symbol,
+                                                          h1_bias=h1_view.get("signal"),
+                                                          m15_signal=m15_view.get("signal"))
+                        gate = strate_gate(h1_view, m15_view, m1_view)
+                        logger.info(
+                            "STRATE GATE %s | H1=%s(%.2f) M15=%s(%.2f) M1=%s(%.2f) → %s veto=%s",
+                            symbol,
+                            gate["h1_signal"], gate["h1_conf"],
+                            gate["m15_signal"], gate["m15_conf"],
+                            gate["m1_signal"], gate["m1_conf"],
+                            gate["side"].upper(), gate.get("veto") or "-",
+                        )
+                        if gate["side"] == "wait":
+                            stats["skipped"] += 1
+                            logger.info("SKIP %s — strate gate veto=%s", symbol, gate.get("veto"))
+                            continue
 
                     bull = self.bull.analyze(symbol, symbol_regime, tech)
                     bear = self.bear.analyze(symbol, symbol_regime, tech)

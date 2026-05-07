@@ -170,6 +170,11 @@ METRICS_FILE = "memory/metrics_v5.json"
 SCALP_ENABLED = True  # bull/bear/consensus → entrées dirigées via scalper (test grid-only 2026-05-06)
 # GRID_ENABLED ci-dessous
 
+# Multi-timeframe gate (architecture "trading floor" — strates H1+M15+M1, veto strict).
+# Si True : on exige que les 3 strates LLM s'accordent AVANT de déclencher le
+# pipeline bull/bear/scalper. Sinon le gate est transparent (comportement V6).
+MULTI_TF_GATE_ENABLED = True
+
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
 # marché → quand rempli, sell limit (TP) au-dessus. Cycle auto-renouvelant.
