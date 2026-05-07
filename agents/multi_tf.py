@@ -42,10 +42,18 @@ def fetch_ohlcv_cached(client, symbol: str, interval: str, limit: int, ttl_sec: 
         candles = client.get_candles(symbol, interval=interval, limit=limit)
         if not candles:
             return None
-        df = pd.DataFrame(candles, columns=["ts", "open", "high", "low", "close", "volume"])
+        # get_candles retourne une liste de dicts {'open','high','low','close','vol','time'}
+        df = pd.DataFrame(candles)
+        if df.empty:
+            return None
+        # Renommage cohérent + tri chronologique
+        df = df.rename(columns={"vol": "volume", "time": "ts"})
         for c in ("open", "high", "low", "close", "volume"):
+            if c not in df.columns:
+                logger.warning("fetch_ohlcv_cached(%s,%s): colonne %s manquante", symbol, interval, c)
+                return None
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.dropna()
+        df = df.dropna(subset=["open", "high", "low", "close"]).sort_values("ts").reset_index(drop=True)
         if len(df) < 10:
             return None
         _OHLCV_CACHE[key] = (now, df)
@@ -57,8 +65,14 @@ def fetch_ohlcv_cached(client, symbol: str, interval: str, limit: int, ttl_sec: 
 
 # ── INDICATEURS RÉUTILISABLES ─────────────────────────────────────────────────
 def compute_basic_indicators(df: pd.DataFrame, rsi_period: int = 14,
-                              ema_fast: int = 20, ema_slow: int = 50) -> Dict:
-    """Suite d'indicateurs adaptable selon la strate (period configurable)."""
+                              ema_fast: int = 20, ema_slow: int = 50,
+                              slope_short: int = 10, slope_long: int = 100) -> Dict:
+    """Suite d'indicateurs adaptable selon la strate (period configurable).
+
+    slope_short : pente sur fenêtre courte (lecture du moment)
+    slope_long  : pente sur fenêtre longue (contexte multi-temporel) — clé
+                  pour détecter un trend doux (ex: BTC +5%/semaine sur H1).
+    """
     close = df["close"]
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
@@ -85,12 +99,13 @@ def compute_basic_indicators(df: pd.DataFrame, rsi_period: int = 14,
     vol_ratio = float((df["volume"].iloc[-1] / df["volume"].rolling(20).mean().iloc[-1])
                       if not pd.isna(df["volume"].rolling(20).mean().iloc[-1]) else 1.0)
 
-    # Slope (pente normalisée sur 10 dernières bougies)
-    last_n = close.iloc[-10:].values if len(close) >= 10 else close.values
-    if len(last_n) >= 2:
-        slope = (last_n[-1] - last_n[0]) / max(abs(last_n[0]), 1e-9)
-    else:
-        slope = 0.0
+    # Slopes multi-fenêtre (court + long pour le contexte multi-temporel)
+    def _slope(window):
+        n = min(window, len(close))
+        if n < 2:
+            return 0.0
+        sub = close.iloc[-n:].values
+        return (sub[-1] - sub[0]) / max(abs(sub[0]), 1e-9)
 
     return {
         "rsi": rsi if not np.isnan(rsi) else 50.0,
@@ -101,7 +116,10 @@ def compute_basic_indicators(df: pd.DataFrame, rsi_period: int = 14,
         "atr": atr if not np.isnan(atr) else 0.0,
         "atr_pct": atr_pct,
         "vol_ratio": vol_ratio if not np.isnan(vol_ratio) else 1.0,
-        "slope_10": slope,
+        "slope_short": _slope(slope_short),
+        "slope_long":  _slope(slope_long),
+        "slope_short_n": slope_short,
+        "slope_long_n":  slope_long,
     }
 
 
@@ -114,6 +132,8 @@ class _MultiTFAgent(BaseAgent):
     RSI_PERIOD: int = 14
     EMA_FAST: int = 20
     EMA_SLOW: int = 50
+    SLOPE_SHORT: int = 10   # fenêtre "lecture du moment"
+    SLOPE_LONG:  int = 100  # fenêtre "contexte trend" (sera adapté par strate)
 
     def __init__(self, name: str, memory: SharedMemory, exchange_client):
         super().__init__(name, memory)
@@ -123,7 +143,8 @@ class _MultiTFAgent(BaseAgent):
         df = fetch_ohlcv_cached(self._client, symbol, self.INTERVAL, self.LIMIT, self.TTL_SEC)
         if df is None or len(df) < max(self.EMA_SLOW, self.RSI_PERIOD) + 5:
             return None
-        return compute_basic_indicators(df, self.RSI_PERIOD, self.EMA_FAST, self.EMA_SLOW)
+        return compute_basic_indicators(df, self.RSI_PERIOD, self.EMA_FAST, self.EMA_SLOW,
+                                        self.SLOPE_SHORT, self.SLOPE_LONG)
 
     def _llm_call(self, system: str, user: str) -> Dict:
         """Appelle le LLM, parse JSON, gère LLM down."""
@@ -155,6 +176,8 @@ class StrategistH1(_MultiTFAgent):
     RSI_PERIOD = 14
     EMA_FAST = 20
     EMA_SLOW = 50
+    SLOPE_SHORT = 24     # 24 dernières heures
+    SLOPE_LONG  = 168    # 7 jours complets (= toute la fenêtre)
 
     def __init__(self, memory: SharedMemory, exchange_client):
         super().__init__("strategist_h1", memory, exchange_client)
@@ -165,9 +188,10 @@ class StrategistH1(_MultiTFAgent):
             return {"signal": "wait", "confidence": 0.0, "reason": "no_data", "tf": "H1"}
 
         system = (
-            "Tu es portfolio manager senior. Tu analyses sur base H1 (7 jours) "
-            "pour donner un BIAIS directionnel macro : BUY si tendance haussière "
-            "claire, SELL si baissière, WAIT si pas de bias. Sois conservateur."
+            "Tu es portfolio manager senior. Tu analyses sur base H1 pour donner "
+            "un BIAIS directionnel macro. Le SIGNAL DOMINANT est le slope LONG "
+            "(7j) : si le marché a fait +5% en 7j, le bias est BULL même si les "
+            "dernières heures pull-back. WAIT seulement si slope long < ±2%."
         )
         user = (
             f"H1 indicators on {symbol}:\n"
@@ -175,8 +199,10 @@ class StrategistH1(_MultiTFAgent):
             f"  RSI(14)={ind['rsi']:.1f}\n"
             f"  EMA20={ind['ema_fast']:.4f} EMA50={ind['ema_slow']:.4f} ({ind['ema_cross']} cross)\n"
             f"  ATR%={ind['atr_pct']*100:.2f}%\n"
-            f"  Slope(10 bougies H1)={ind['slope_10']*100:+.2f}%\n"
+            f"  Slope court ({ind['slope_short_n']}h)={ind['slope_short']*100:+.2f}%  ← lecture récente\n"
+            f"  Slope long  ({ind['slope_long_n']}h)={ind['slope_long']*100:+.2f}%   ← TREND DOMINANT\n"
             f"\nQuel BIAIS macro pour les 4-12 prochaines heures ?\n"
+            f"Règle : si |slope long| > 2% → BUY/SELL aligné, sinon WAIT.\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
@@ -194,6 +220,8 @@ class TacticalM15(_MultiTFAgent):
     RSI_PERIOD = 9
     EMA_FAST = 9
     EMA_SLOW = 21
+    SLOPE_SHORT = 12     # 3 dernières heures
+    SLOPE_LONG  = 96     # 24h complètes
 
     def __init__(self, memory: SharedMemory, exchange_client):
         super().__init__("tactical_m15", memory, exchange_client)
@@ -209,16 +237,19 @@ class TacticalM15(_MultiTFAgent):
             "pour valider un setup d'entrée court terme : pullback, breakout, "
             "retest. Tu confirmes le biais H1 si conditions présentes, sinon WAIT."
         )
+        sh_h = ind['slope_short_n'] * 0.25   # M15 : 1 bougie = 0.25h
+        lg_h = ind['slope_long_n']  * 0.25
         user = (
             f"M15 indicators on {symbol}:\n"
             f"  Price={ind['price']:.4f}\n"
             f"  RSI(9)={ind['rsi']:.1f}\n"
             f"  EMA9={ind['ema_fast']:.4f} EMA21={ind['ema_slow']:.4f} ({ind['ema_cross']})\n"
             f"  ATR%={ind['atr_pct']*100:.2f}%\n"
-            f"  Slope(10 bougies M15)={ind['slope_10']*100:+.2f}%\n"
+            f"  Slope court ({sh_h:.0f}h)={ind['slope_short']*100:+.2f}%\n"
+            f"  Slope long  ({lg_h:.0f}h)={ind['slope_long']*100:+.2f}%\n"
             f"  Volume relatif={ind['vol_ratio']:.2f}x"
             f"{bias_hint}\n"
-            f"\nLe setup intraday valide-t-il une entrée ? (sinon WAIT)\n"
+            f"\nLe setup intraday valide-t-il une entrée alignée avec le biais H1 ? (sinon WAIT)\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
@@ -236,6 +267,8 @@ class ExecutionM1(_MultiTFAgent):
     RSI_PERIOD = 7
     EMA_FAST = 5
     EMA_SLOW = 13
+    SLOPE_SHORT = 10     # 10 dernières minutes
+    SLOPE_LONG  = 60     # 1h complète
 
     def __init__(self, memory: SharedMemory, exchange_client):
         super().__init__("execution_m1", memory, exchange_client)
@@ -263,10 +296,11 @@ class ExecutionM1(_MultiTFAgent):
             f"  RSI(7)={ind['rsi']:.1f}\n"
             f"  EMA5={ind['ema_fast']:.4f} EMA13={ind['ema_slow']:.4f} ({ind['ema_cross']})\n"
             f"  ATR%={ind['atr_pct']*100:.3f}%\n"
-            f"  Slope(10 bougies M1)={ind['slope_10']*100:+.3f}%\n"
+            f"  Slope court ({ind['slope_short_n']}m)={ind['slope_short']*100:+.3f}%\n"
+            f"  Slope long  ({ind['slope_long_n']}m)={ind['slope_long']*100:+.3f}%\n"
             f"  Volume relatif={ind['vol_ratio']:.2f}x"
             f"{ctx}\n"
-            f"\nLe timing intra-minute est-il favorable ?\n"
+            f"\nLe timing intra-minute est-il favorable pour entrer dans le sens H1+M15 ?\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
