@@ -121,3 +121,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : HL sync_err=167 sur 6h (~28/h) à surveiller au prochain audit ; si croît au-delà de 500/6h, envisager proposition code sur résilience client HL.
 
 ---
+
+## 2026-05-07 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=2, open=4 (BNB +0.27% / BTC +0.06% / ETH +0.14% / SOL -0.02%), enter=0, consensus=0, skip_conf=0, skip_cooldown=2, trail_arm=0, trail_modify=0, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0, SKIP conf=0 — toutes les conditions de déclenchement sont sous leurs seuils. CONSENSUS=0 et TRAIL ARM=0 cohérents avec le contexte observé : (1) STRATE GATE veto=h1_wait sur tous les symboles dans l'échantillon (BTC/BNB/APE) bloque le pipeline scalp avant le consensus, (2) bot post-restart visible dans les logs (HEALTH_CHECK + RECOVERY actifs sur SOL/ETH avec placement SL ad hoc), donc fenêtre métriques peu peuplée. Infra parfaitement saine (LLM/HL sync/cache stale tous à 0). Anti-oscillation : MIN_CONFIDENCE 0.70 et SCALP_SL_PNL_PCT 0.013 datent du 12:00 du 06 (~30h), pas de signal pour bouger. Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=0 → WR n/a, tendance qui se confirme depuis ≥4 audits — symptôme structurel du gate H1=wait, pas paramétrique). Master switches : SCALP_ENABLED=True inactif faute de signal H1 (pas de bilan négatif évaluable, juste passif) ; GRID_ENABLED=True visible dans les logs (cycle ETH actif "GRID ETH long TP #2 cumul=0.609%") — fonctionne nominalement.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; infra saine, anti-oscillation maintenue.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
