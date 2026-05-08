@@ -25,6 +25,20 @@ from memory.shared_memory import SharedMemory
 logger = logging.getLogger("sdm.multi_tf")
 
 
+def _history_snippet(symbol: str, max_chars: int = 200) -> str:
+    """Phase C : extrait court de l'historique récent pour injection LLM.
+    Les agents reçoivent dans leur prompt : 'tes 10 derniers trades : WR=X% ...'
+    Permet l'auto-correction sur patterns perdants."""
+    try:
+        from agents.scalp_memory import get_scalp_memory
+        s = get_scalp_memory().stats_summary(symbol=symbol, n=10)
+        if s.get("n", 0) == 0:
+            return ""
+        return f"Historique récent {symbol} : {s.get('summary', '')}"[:max_chars]
+    except Exception:
+        return ""
+
+
 # ── OHLCV CACHE ───────────────────────────────────────────────────────────────
 # Cache global partagé entre les 3 agents pour économiser les API calls.
 # Chaque entrée : {(symbol, interval): (timestamp, dataframe)}
@@ -193,6 +207,7 @@ class StrategistH1(_MultiTFAgent):
             "(7j) : si le marché a fait +5% en 7j, le bias est BULL même si les "
             "dernières heures pull-back. WAIT seulement si slope long < ±2%."
         )
+        hist = _history_snippet(symbol)
         user = (
             f"H1 indicators on {symbol}:\n"
             f"  Price={ind['price']:.4f}\n"
@@ -201,8 +216,11 @@ class StrategistH1(_MultiTFAgent):
             f"  ATR%={ind['atr_pct']*100:.2f}%\n"
             f"  Slope court ({ind['slope_short_n']}h)={ind['slope_short']*100:+.2f}%  ← lecture récente\n"
             f"  Slope long  ({ind['slope_long_n']}h)={ind['slope_long']*100:+.2f}%   ← TREND DOMINANT\n"
-            f"\nQuel BIAIS macro pour les 4-12 prochaines heures ?\n"
+            + (f"\n{hist}\n" if hist else "")
+            + f"\nQuel BIAIS macro pour les 4-12 prochaines heures ?\n"
             f"Règle : si |slope long| > 2% → BUY/SELL aligné, sinon WAIT.\n"
+            f"Si l'historique récent montre un pattern perdant (ex: trail_hit_profit dominant en perte), "
+            f"sois plus exigeant ou WAIT.\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
@@ -239,6 +257,7 @@ class TacticalM15(_MultiTFAgent):
         )
         sh_h = ind['slope_short_n'] * 0.25   # M15 : 1 bougie = 0.25h
         lg_h = ind['slope_long_n']  * 0.25
+        hist = _history_snippet(symbol)
         user = (
             f"M15 indicators on {symbol}:\n"
             f"  Price={ind['price']:.4f}\n"
@@ -249,7 +268,8 @@ class TacticalM15(_MultiTFAgent):
             f"  Slope long  ({lg_h:.0f}h)={ind['slope_long']*100:+.2f}%\n"
             f"  Volume relatif={ind['vol_ratio']:.2f}x"
             f"{bias_hint}\n"
-            f"\nLe setup intraday valide-t-il une entrée alignée avec le biais H1 ? (sinon WAIT)\n"
+            + (f"{hist}\n" if hist else "")
+            + f"\nLe setup intraday valide-t-il une entrée alignée avec le biais H1 ? (sinon WAIT)\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
@@ -290,6 +310,7 @@ class ExecutionM1(_MultiTFAgent):
             "M1 (2h). Tu cherches : momentum tick frais, vol burst, pas de "
             "divergence M1. Si momentum baisse ou divergence avec H1/M15 → WAIT."
         )
+        hist = _history_snippet(symbol)
         user = (
             f"M1 indicators on {symbol}:\n"
             f"  Price={ind['price']:.4f}\n"
@@ -300,7 +321,8 @@ class ExecutionM1(_MultiTFAgent):
             f"  Slope long  ({ind['slope_long_n']}m)={ind['slope_long']*100:+.3f}%\n"
             f"  Volume relatif={ind['vol_ratio']:.2f}x"
             f"{ctx}\n"
-            f"\nLe timing intra-minute est-il favorable pour entrer dans le sens H1+M15 ?\n"
+            + (f"{hist}\n" if hist else "")
+            + f"\nLe timing intra-minute est-il favorable pour entrer dans le sens H1+M15 ?\n"
             'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
         )
         out = self._llm_call(system, user)
