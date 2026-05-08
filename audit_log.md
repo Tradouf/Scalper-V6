@@ -147,3 +147,18 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-08 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=1, flip_refusé=0, external_exit=2, open=2 (APE -0.504% / SOL -2.529%), enter=2, consensus=251, skip_conf=247, skip_cooldown=3, trail_arm=1, trail_modify=5, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=1 sous seuil 3 ; flip_refusé=0 sous seuil 5 ; SKIP conf=247/720 cycles ≈ 0.34/cycle (très en deçà du seuil 10/cycle ; ratio 247/251 ≈ 98% mais structurel — strate gate filtre déjà la majorité, ~1 symbole/cycle atteint le consensus avec confs typiques 0.39-0.72). TRAIL ARM=1 (≠0) → pattern "0 trade armed" non actif. ENTER=2 + TRAIL ARM=1 + 5 TRAIL NATIVE SL MODIFY → chaîne scalp→armement→trail native opérationnelle. Infra parfaitement saine (LLM/HL sync/cache stale tous à 0). Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=2, échantillon trop court). Master switches : SCALP_ENABLED=True a généré 2 ENTER → actif et nominal ; GRID_ENABLED=False inchangé (régime range medium persistant pourrait justifier un flip à True selon la règle 24h, mais la suggestion mérite l'attention humaine — pas de bilan grid net négatif évaluable côté audit pour déclencher automatiquement, d'autant que la règle de flip nécessite "régime range stable depuis ≥24h", confirmé, mais aussi un grid net négatif sur 24h, non vérifiable ici puisque GRID est désactivé). Anti-oscillation maintenue.
+
+**Observation SOL** : ROE -2.529% est très proche du seuil EMERGENCY (= 2× SCALP_SL_PNL_PCT 0.013 = -2.6% ROE). Position juste sous l'override emergency exit ; le SL natif (5 TRAIL NATIVE SL MODIFY observés) ou le tick suivant devrait gérer. À surveiller au prochain audit — si la position reste ouverte avec ROE pire que -2.6%, il y a une défaillance du chemin de fermeture (proposition code à envisager).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra saine.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique. Observation : SOL ROE -2.529% au seuil emergency à surveiller au prochain audit.
+
+---
