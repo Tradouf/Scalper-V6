@@ -175,3 +175,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : APE ROE -2.221% à surveiller au prochain audit (si dégrade au-delà de -2.6% sans fermeture, défaillance du chemin emergency à investiguer).
 
 ---
+
+## 2026-05-08 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=2, open=2 (BNB +1.495% / SOL +1.751%), enter=2, consensus=294, skip_conf=292, skip_cooldown=2, trail_arm=3, trail_modify=13, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=292/720 cycles ≈ 0.41/cycle (très en deçà du seuil 10/cycle ; ratio 292/294 ≈ 99% structurel — strate gate filtre la majorité avant consensus, confs typiques 0.45-0.52 dans l'échantillon BNB/BTC/SOL). TRAIL ARM=3 (≠0) → pattern "0 trade armed" non actif. **Bilan très sain** : ENTER=2 + TRAIL ARM=3 + 13 TRAIL NATIVE SL MODIFY → chaîne scalp→armement→trail native pleinement opérationnelle ; les 2 positions ouvertes (BNB +1.495%, SOL +1.751%) sont en gain, l'observation APE -2.221% du précédent audit s'est résolue (sortie via external_exit=2). Infra parfaitement saine (LLM/HL sync/cache stale tous à 0). Pattern "0 EMERGENCY + WR>60%" : ENTER=2 sur 6h reste sous le seuil de significativité statistique pour remonter FLIP_MIN_CONFIDENCE — on ne flippe pas. Confs observées (BTC side=sell conf=0.45 alors que bull=0.70/tech=0.80 ; BNB conf=0.50 ; SOL conf=0.52) toutes sous MIN_CONFIDENCE=0.70 ; baisser à 0.55 (borne min) déclencherait des entrées trop bruitées sur des signaux contradictoires (BTC bull/tech haut + bear_risk medium → side=sell est suspect mais hors périmètre paramétrique). Master switches inchangés : SCALP_ENABLED=True a généré 2 ENTER cohérents → nominal ; GRID_ENABLED=False, régime range medium persistant (≥4 audits) mais pas de bilan grid net négatif vérifiable côté audit (GRID off donc pas de comparable). Anti-oscillation maintenue (~54h depuis dernier change).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; chaîne complète saine, positions en gain, infra impeccable.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
