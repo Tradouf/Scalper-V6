@@ -72,8 +72,8 @@ SCALP_BE_BUFFER_PCT = 0.008
 SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
 SCALP_MAX_DURATION_MIN = 30
-SCALP_TP_PNL_PCT = 0.015
 SCALP_SL_PNL_PCT = 0.013
+SCALP_TP_PNL_PCT = 2 * SCALP_SL_PNL_PCT  # 2026-05-08 : TP = 2 × SL (RR 2:1, ratchet trail)
 
 # ── Sécurité capital (in-process, hard rules) ───────────────────────────────
 # Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme

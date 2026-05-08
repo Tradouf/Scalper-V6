@@ -38,10 +38,10 @@ actuelles.
 | EMERGENCY_LOSS_ROE_MULT | 1.5 | 3.0 |
 | SL_FALLBACK_BUFFER_PCT | 0.003 | 0.010 |
 | FLIP_EMERGENCY_LOSS_PCT | 0.010 | 0.025 |
-| TP_ARM_PCT | 0.003 | 0.010 |
-| TRAIL_BREAKEVEN_ROE | 0.001 | 0.005 |
-| SCALP_TP_PNL_PCT | 0.010 | 0.030 |
-| SCALP_SL_PNL_PCT | 0.010 | 0.025 |
+| TP_ARM_PCT | 0.003 | 0.010 |  *(legacy, ignoré depuis trail ratchet 2026-05-08)*
+| TRAIL_BREAKEVEN_ROE | 0.001 | 0.005 |  *(legacy, idem)*
+| SCALP_TP_PNL_PCT | 0.015 | 0.040 |  *(typiquement = 2 × SL)*
+| SCALP_SL_PNL_PCT | 0.008 | 0.025 |  *(détermine aussi la distance trail)*
 | COOLDOWN_SEC | 60 | 600 |
 | EXIT_COOLDOWN_SEC | 60 | 600 |
 | FLIP_COOLDOWN_SEC | 60 | 600 |

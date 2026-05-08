@@ -802,7 +802,11 @@ class SalleDesMarchesV6:
                 logger.warning("TRAIL NATIVE SL %s: side invalide %r", symbol, side)
                 return
 
-            if entry <= 0 or prot < 0.0 or current_price <= 0.0:
+            # Note (2026-05-08) : on accepte protected_roe négatif pour permettre
+            # au trail ratchet de remonter le SL depuis l'entry SL initial même
+            # quand la position est encore en perte. Le check ratchet plus bas
+            # garantit le caractère monotonique (SL ne redescend jamais).
+            if entry <= 0 or current_price <= 0.0:
                 return
 
             if lev <= 0:
@@ -1114,47 +1118,58 @@ class SalleDesMarchesV6:
 
             if pnl_pct > guard["best_pnl_pct"]:
                 guard["best_pnl_pct"] = pnl_pct
-
             best = guard["best_pnl_pct"]
 
-            # Armement du trailing
-            if not guard["trail_armed"] and best >= tp_arm:
-                guard["trail_armed"] = True
-                logger.info(
-                    "TRAIL ARM %s ROE_pic=%.3f%% (TP_arm=%.2f%%)",
-                    symbol,
-                    best * 100,
-                    tp_arm * 100,
+            # ── TRAIL RATCHET CONTINU (refonte 2026-05-08) ───────────────────
+            # Plus de "armement à TP_ARM_PCT" + "saut au breakeven+". Le SL
+            # commence à entry ± SL_PCT (déjà placé) et avance dès que le prix
+            # progresse en notre faveur. SL = best_price ∓ SL_PCT (constant
+            # offset). Monotonique : ne descend jamais (pour BUY) / ne monte
+            # jamais (pour SELL).
+            best_price = guard.get("best_price") or entry
+            if side == "buy":
+                if price > best_price:
+                    best_price = price
+            else:
+                if price < best_price or best_price <= 0:
+                    best_price = price
+            guard["best_price"] = best_price
+
+            sl_dist_price = SCALP_SL_PNL_PCT / max(1.0, leverage)
+            target_sl_px = (
+                best_price * (1.0 - sl_dist_price) if side == "buy"
+                else best_price * (1.0 + sl_dist_price)
+            )
+
+            # Conversion en ROE équivalent (pour réutiliser _update_native_trailing_sl)
+            if side == "buy":
+                target_change = (target_sl_px - entry) / entry
+            else:
+                target_change = (entry - target_sl_px) / entry
+            protected_roe = target_change * leverage
+
+            # Throttle : ne modifie que si SL cible a réellement progressé
+            # ET qu'au moins 5s sont écoulées depuis le dernier modify.
+            last_modify_ts = guard.get("last_modify_ts", 0.0)
+            last_sl_px = float(guard.get("native_sl_price", 0.0) or 0.0)
+            now = time.time()
+
+            if side == "buy":
+                sl_progressed = last_sl_px <= 0.0 or target_sl_px > last_sl_px + 1e-9
+            else:
+                sl_progressed = last_sl_px <= 0.0 or target_sl_px < last_sl_px - 1e-9
+
+            if sl_progressed and (now - last_modify_ts) >= 5.0:
+                self._update_native_trailing_sl(
+                    symbol=symbol,
+                    guard=guard,
+                    protected_roe=protected_roe,
+                    current_price=price,
                 )
+                guard["last_modify_ts"] = now
 
-            # Calcul du ROE protégé (breakeven + crans)
-            protected_roe = 0.0
-            if guard["trail_armed"]:
-                raw_steps = (best - tp_arm) / TRAIL_STEP_ROE if TRAIL_STEP_ROE > 0 else 0.0
-                n_steps = max(0, int(raw_steps))
-                protected_roe = TRAIL_BREAKEVEN_ROE + (n_steps * TRAIL_STEP_ROE)
-                if protected_roe > best:
-                    protected_roe = best
-
-            # Mise à jour du SL natif à effet cliquet
-            if guard["trail_armed"] and protected_roe >= 0.0:
-                last_protected = guard.get("last_protected_roe")
-                last_modify_ts = guard.get("last_modify_ts", 0.0)
-                now = time.time()
-                
-                # Throttle : on ne modifie que si le ROE protégé a vraiment changé
-                # ET qu'au moins 5 secondes se sont écoulées depuis le dernier modify
-                roe_changed = (last_protected is None) or (protected_roe > float(last_protected) + 1e-9)
-                time_elapsed = (now - last_modify_ts) >= 5.0
-                
-                if roe_changed and time_elapsed:
-                    self._update_native_trailing_sl(
-                        symbol=symbol,
-                        guard=guard,
-                        protected_roe=protected_roe,
-                        current_price=price,
-                    )
-                    guard["last_modify_ts"] = now
+            # Marque le trail comme armé pour les logs (compat anciens parsers)
+            guard["trail_armed"] = True
 
             logger.info(
                 "TRAIL %s %s ROE=%.3f%% best=%.3f%% protected=%.3f%% armed=%s | TP_arm=%.2f%% lev=%.1fx brut=%.3f%%",
