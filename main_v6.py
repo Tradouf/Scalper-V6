@@ -692,9 +692,72 @@ class SalleDesMarchesV6:
         self._exit_cooldowns[symbol] = time.time()
         logger.info("[COOLDOWN] %s exit marqué (%s), cooldown %ds", symbol, reason, EXIT_COOLDOWN_SEC)
 
+    def _record_scalp_exit(self, symbol: str, previous_pos: Dict,
+                           guard: Optional[Dict]) -> None:
+        """Enregistre la fermeture dans ScalpMemory avec détection de cause.
+
+        Causes différenciées (cf. discussion 2026-05-08) :
+          - emergency_exit : si le mutex emergency a fired récemment (<60s)
+          - tp_natif_hit   : exit_px proche du TP initial
+          - trail_hit_profit : SL avait monté en gain (exit > entry pour BUY)
+          - sl_natif_hit_loss : SL initial touché (exit ≈ SL initial)
+          - manual_or_unknown : autre
+        """
+        from agents.scalp_memory import get_scalp_memory
+        mem = get_scalp_memory()
+
+        # Trouve le trade_id : soit dans le guard, soit on cherche le dernier ouvert
+        trade_id = None
+        if guard:
+            trade_id = guard.get("trade_id")
+        if not trade_id:
+            trade_id = mem.find_open_trade_id(symbol)
+        if not trade_id:
+            return  # pas d'enregistrement pour cette position
+
+        side = str(previous_pos.get("side", "buy")).lower()
+        entry = float(previous_pos.get("entry", 0) or 0)
+        # Exit price : on prend le mark price actuel (proche du fill)
+        exit_px = self._get_current_price(symbol, entry)
+
+        # Détection cause
+        cause = "manual_or_unknown"
+        # 1) Emergency : mutex récent ?
+        emerg_ts = self._emergency_closing.get(symbol, 0.0)
+        if (time.time() - emerg_ts) < 60.0:
+            cause = "emergency_exit"
+        # 2) TP/SL natif : compare au SL initial connu
+        elif guard:
+            sl_initial = float(guard.get("entry", entry) * (1 - SCALP_SL_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))) if side == "buy"
+                               else guard.get("entry", entry) * (1 + SCALP_SL_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))))
+            tp_initial = float(guard.get("entry", entry) * (1 + SCALP_TP_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))) if side == "buy"
+                               else guard.get("entry", entry) * (1 - SCALP_TP_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))))
+            tol = entry * 0.003  # tolérance 0.3% sur le matching
+            if abs(exit_px - tp_initial) < tol:
+                cause = "tp_natif_hit"
+            elif side == "buy" and exit_px > entry:
+                cause = "trail_hit_profit"
+            elif side == "sell" and exit_px < entry:
+                cause = "trail_hit_profit"
+            elif abs(exit_px - sl_initial) < tol:
+                cause = "sl_natif_hit_loss"
+            else:
+                # Position en perte, ni SL initial ni trail → probablement trail descendu
+                # (rare avec le ratchet) ou close manuel
+                cause = "manual_or_unknown"
+
+        mem.record_exit(trade_id, exit_px, cause)
+        # Calcul approximatif du PnL pour le log
+        if entry > 0:
+            pnl_pct = ((exit_px - entry) / entry) if side == "buy" else ((entry - exit_px) / entry)
+            logger.info("[SCALP_MEM] exit %s %s pnl=%+.3f%% cause=%s",
+                        symbol, trade_id, pnl_pct * 100, cause)
+        else:
+            logger.info("[SCALP_MEM] exit %s %s cause=%s", symbol, trade_id, cause)
+
     def _sync_manual_closures(self, current_open: Dict[str, Dict]) -> None:
         """Détecte les positions fermées manuellement (hors bot) et nettoie les guards.
-        
+
         IMPORTANT : Ne supprime les guards QUE si la position a vraiment disparu
         ET qu'elle existait dans le cycle précédent (pour éviter de supprimer
         les guards des positions fraîchement ouvertes entre deux syncs).
@@ -718,6 +781,12 @@ class SalleDesMarchesV6:
                         continue
 
                 # La position existait avant mais n'existe plus → fermeture externe
+                # SCALP MEMORY (A) : enregistre la fermeture avec détection de cause
+                try:
+                    self._record_scalp_exit(symbol, previous_open[symbol], guard)
+                except Exception as _e:
+                    logger.warning("[SCALP_MEM] exit record %s failed: %r", symbol, _e)
+
                 self._mark_trade_exit(symbol, "external_exit")
                 self._trail_guards.pop(symbol, None)
                 self._entry_regime_ctx.pop(symbol, None)
@@ -1104,6 +1173,11 @@ class SalleDesMarchesV6:
                 try:
                     closed = self._close_position_market(symbol, pos_data)
                     if closed:
+                        # SCALP MEMORY : record exit avant de drop le guard
+                        try:
+                            self._record_scalp_exit(symbol, pos_data, guard)
+                        except Exception as _e:
+                            logger.warning("[SCALP_MEM] emergency exit record %s: %r", symbol, _e)
                         self._mark_trade_exit(symbol, "emergency_loss")
                         self._trail_guards.pop(symbol, None)
                         self._entry_regime_ctx.pop(symbol, None)
@@ -2486,6 +2560,7 @@ class SalleDesMarchesV6:
                     # Court-circuite le pipeline si les 3 strates ne s'accordent pas
                     # AVANT même de payer les LLM bull/bear/scalper. Désactivable via
                     # MULTI_TF_GATE_ENABLED=False (gate transparent → comportement V6).
+                    gate: Dict = {}  # init pour permettre snapshot scalp_memory même si gate désactivé
                     if MULTI_TF_GATE_ENABLED:
                         h1_view  = self.strate_h1.analyze(symbol)
                         m15_view = self.strate_m15.analyze(symbol, h1_bias=h1_view.get("signal"))
@@ -2669,6 +2744,44 @@ class SalleDesMarchesV6:
                         "[LIVE] ENTER %s %s | entry=%.4f sl=%.4f tp=%.4f | %s",
                         side.upper(), symbol, fill_price, adj_sl, adj_tp, reason[:120]
                     )
+
+                    # ── SCALP MEMORY (A+B) : record entry avec snapshot complet ──
+                    try:
+                        snapshot = {
+                            # Régime
+                            "regime_trend": str(symbol_regime.get("trend", "?")),
+                            "regime_vol": str(symbol_regime.get("volatility", "?")),
+                            "regime_risk": str(symbol_regime.get("risk", "?")),
+                            # Indicateurs technical (si dispo)
+                            "rsi": float(tech.get("rsi", 0) or 0) if isinstance(tech, dict) else 0,
+                            "atr_pct": float(tech.get("atr_pct", 0) or 0) if isinstance(tech, dict) else 0,
+                            "vol_ratio": float(tech.get("vol_ratio", 1) or 1) if isinstance(tech, dict) else 1,
+                            # Consensus bull/bear/scalper
+                            "bull_conf": float(bull.get("confidence", 0) or 0) if isinstance(bull, dict) else 0,
+                            "bear_risk": str(bear.get("risk_level", "?")) if isinstance(bear, dict) else "?",
+                            "consensus_conf": float(conf or 0),
+                            # 3-strate gate (si dispo dans cette branche)
+                            "h1_signal": gate.get("h1_signal"),
+                            "h1_conf":   gate.get("h1_conf"),
+                            "m15_signal": gate.get("m15_signal"),
+                            "m15_conf":  gate.get("m15_conf"),
+                            "m1_signal": gate.get("m1_signal"),
+                            "m1_conf":   gate.get("m1_conf"),
+                            # Quantitatif pour calcul PnL au close
+                            "qty": fill_qty,
+                            "leverage": float(MAX_LEVERAGE),
+                            "sl_initial": adj_sl,
+                            "tp_initial": adj_tp,
+                        }
+                        from agents.scalp_memory import get_scalp_memory
+                        trade_id = get_scalp_memory().record_entry(symbol, side, fill_price, snapshot)
+                        # Le trade_id est stocké dans le guard pour lier exit→entry
+                        if symbol in self._trail_guards:
+                            self._trail_guards[symbol]["trade_id"] = trade_id
+                        logger.info("[SCALP_MEM] entry record %s (RSI=%.1f conf=%.2f)",
+                                    trade_id, snapshot["rsi"], snapshot["consensus_conf"])
+                    except Exception as _mem_e:
+                        logger.warning("[SCALP_MEM] entry record failed: %r", _mem_e)
 
                     stats["entered"] += 1
                     self.last_entry_ts[symbol] = time.time()
