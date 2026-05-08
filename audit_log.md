@@ -188,3 +188,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-09 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=9, open=3 (BNB +0.494% / ETH -0.869% / SOL +0.403%), enter=10, consensus=282, skip_conf=253, skip_cooldown=13, trail_arm=0, trail_modify=180, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=253/720 cycles ≈ 0.35/cycle (très en deçà du seuil 10/cycle ; ratio 253/282 ≈ 90% structurel — strate gate filtre déjà la majorité, confs typiques observées 0.52-0.63 dans l'échantillon BTC/BNB/ETH). TRAIL ARM=0 sur 6h alors qu'audit précédent (18:00) affichait TRAIL ARM=3 → cumul 24h ≥ 3 > 0, pattern "0 trade armed en 24h" non actif (et règle legacy depuis le ratchet 2026-05-08, donc TP_ARM_PCT n'a plus de levier). **Observation notable** : ENTER=10 + external_exit=9 + TRAIL ARM=0 = ratio sortie SL/entrée ≈ 90% et aucune position armée sur 6h ; 180 TRAIL NATIVE SL MODIFY observés (ratchet continu en perte, log `protected=-1.033%, -0.789%, -0.853%` confirme positions jamais en gain assez pour armer). Pattern non listé dans le tableau (pas un EMERGENCY, pas un BREAKEVEN à perte, pas un signal flip), donc pas de levier paramétrique du tableau ; un resserrement SL aggraverait le rythme de sorties, un élargissement violerait la borne max. Pattern "0 EMERGENCY + WR>60%" : WR est manifestement basse (90% external_exit), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. Infra parfaitement saine (LLM 0, HL sync 0, cache stale 0). Anti-oscillation : aucun changement settings depuis ~72h, le système est dans son régime nominal mais peu rentable sur cette fenêtre.
+
+**Changes** : aucun, aucun pattern paramétrique du tableau ne se déclenche ; le ratio sorties/entrées élevé ne s'adresse pas par tuning des bornes (ce serait au-delà du périmètre de l'audit autonome — diagnostic timing d'entrée à confier à l'humain).
+
+**Code proposals** : aucune nouvelle (le pattern observé est statistique sur la WR, pas un bug code identifié dans les logs ; n'entre pas dans les critères "bug structurel non-paramétrique").
+
+**Alerts** : aucun déclencheur paramétrique. Observation : 9 sorties SL sur 10 entrées en 6h (WR très basse) à surveiller au prochain audit ; si le pattern persiste sur ≥2 audits consécutifs avec 0 EMERGENCY, escalader à l'humain pour revue du timing d'entrée (consensus, strate gate, ou seuils filtre pré-LLM).
+
+---
