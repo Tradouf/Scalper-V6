@@ -39,11 +39,11 @@ TRAIL_CHECK_SEC = 2
 TP_ARM_PCT = 0.005          # 0.8%→0.5% : arme le trail plus tôt, réduit les sorties breakeven
 TRAIL_DROP_PCT = 0.0025
 TRAIL_STEP_ROE = 0.0015
-TRAIL_BREAKEVEN_ROE = 0.0030  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au lieu de breakeven, élimine les sorties "TRAIL BREAKEVEN" à -0.05%
+TRAIL_BREAKEVEN_ROE = 0.000  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au lieu de breakeven, élimine les sorties "TRAIL BREAKEVEN" à -0.05%
 
 # ── Watchlist scalping ───────────────────────────────────────────────────────
 SCALP_WATCHLIST = [
-    "BTC", "ETH", "SOL", "BNB", "LINK", "HYPE", "ZEC", "APE", "DOGE", "XRP", "TAO", "AAVE",
+    "BTC", "ETH", "SOL", "BNB", "LINK", "HYPE", "ZEC", "APE", "DOGE", "XRP", "TAO", "AAVE","PENDLE",
 ]
 
 SYMBOLS = SCALP_WATCHLIST
@@ -178,10 +178,10 @@ MULTI_TF_GATE_ENABLED = True
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
 # marché → quand rempli, sell limit (TP) au-dessus. Cycle auto-renouvelant.
-GRID_ENABLED = True
-GRID_ATR_FACTOR = 0.50       # spacing = ATR × factor (0.5 = demi-ATR par côté)
+GRID_ENABLED = False
+GRID_ATR_FACTOR = 0.7       # spacing = ATR × factor (0.5 = demi-ATR par côté)
 GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
-GRID_NOTIONAL = 15.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
+GRID_NOTIONAL = 20.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)

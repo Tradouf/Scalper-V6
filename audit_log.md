@@ -162,3 +162,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : SOL ROE -2.529% au seuil emergency à surveiller au prochain audit.
 
 ---
+
+## 2026-05-08 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=1, flip_refusé=0, external_exit=1, open=1 (APE -2.221%), enter=1, consensus=261, skip_conf=260, skip_cooldown=2, trail_arm=0, trail_modify=0, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=1 sous seuil 3 ; flip_refusé=0 sous seuil 5 ; SKIP conf=260/720 cycles ≈ 0.36/cycle (très en deçà du seuil 10/cycle ; ratio 260/261 ≈ 99% structurel comme aux audits précédents — strate gate filtre la majorité avant consensus, confs typiques observées 0.00 / 0.58 / 0.70 sur APE/SOL/BTC). TRAIL ARM=0 sur 6h MAIS audit 06:00 affichait TRAIL ARM=1 et 00:00 TRAIL ARM=1 → cumul 24h ≥ 1, pattern "0 trade armed en 24h" non actif. Infra parfaitement saine (LLM/HL sync/cache stale tous à 0). **Observation SOL résolue** : la position SOL signalée au seuil emergency à -2.529% au précédent audit a été fermée — l'EMERGENCY EXIT (1) et l'external_exit (1) comptabilisés sur la fenêtre couvrent le scénario, le chemin de fermeture a fonctionné. Pas de proposition code requise. **Nouvelle observation APE** : ROE -2.221% sur position ouverte, sous le seuil EMERGENCY (-2.6%) mais à surveiller — le trail natif n'a pas armé (TRAIL ARM=0) puisque la position est restée en perte depuis l'entrée. Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=1, échantillon nul). Master switches inchangés : SCALP_ENABLED=True nominal, GRID_ENABLED=False — toujours pas de bilan grid net négatif vérifiable. Anti-oscillation maintenue (aucun changement settings depuis 12:00 du 06, ~48h).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra saine.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique. Observation : APE ROE -2.221% à surveiller au prochain audit (si dégrade au-delà de -2.6% sans fermeture, défaillance du chemin emergency à investiguer).
+
+---
