@@ -717,34 +717,38 @@ class SalleDesMarchesV6:
 
         side = str(previous_pos.get("side", "buy")).lower()
         entry = float(previous_pos.get("entry", 0) or 0)
+        leverage = float((guard or previous_pos).get("leverage", 3) or 3)
         # Exit price : on prend le mark price actuel (proche du fill)
         exit_px = self._get_current_price(symbol, entry)
 
-        # Détection cause
+        # Détection cause — fonctionne même si guard=None (le trail loop l'a
+        # parfois déjà popé avant que _sync_manual_closures ne tourne).
         cause = "manual_or_unknown"
         # 1) Emergency : mutex récent ?
         emerg_ts = self._emergency_closing.get(symbol, 0.0)
         if (time.time() - emerg_ts) < 60.0:
             cause = "emergency_exit"
-        # 2) TP/SL natif : compare au SL initial connu
-        elif guard:
-            sl_initial = float(guard.get("entry", entry) * (1 - SCALP_SL_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))) if side == "buy"
-                               else guard.get("entry", entry) * (1 + SCALP_SL_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))))
-            tp_initial = float(guard.get("entry", entry) * (1 + SCALP_TP_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))) if side == "buy"
-                               else guard.get("entry", entry) * (1 - SCALP_TP_PNL_PCT / max(1.0, float(guard.get("leverage", 3)))))
-            tol = entry * 0.003  # tolérance 0.3% sur le matching
+        elif entry > 0 and exit_px > 0:
+            # Niveaux SL/TP natifs initiaux calculés depuis entry+leverage
+            if side == "buy":
+                sl_initial = entry * (1 - SCALP_SL_PNL_PCT / max(1.0, leverage))
+                tp_initial = entry * (1 + SCALP_TP_PNL_PCT / max(1.0, leverage))
+            else:
+                sl_initial = entry * (1 + SCALP_SL_PNL_PCT / max(1.0, leverage))
+                tp_initial = entry * (1 - SCALP_TP_PNL_PCT / max(1.0, leverage))
+            tol = entry * 0.003
+
             if abs(exit_px - tp_initial) < tol:
                 cause = "tp_natif_hit"
-            elif side == "buy" and exit_px > entry:
-                cause = "trail_hit_profit"
-            elif side == "sell" and exit_px < entry:
+            elif (side == "buy" and exit_px > entry) or (side == "sell" and exit_px < entry):
+                # Sortie en gain mais avant le TP → trail SL a monté et hit
                 cause = "trail_hit_profit"
             elif abs(exit_px - sl_initial) < tol:
                 cause = "sl_natif_hit_loss"
-            else:
-                # Position en perte, ni SL initial ni trail → probablement trail descendu
-                # (rare avec le ratchet) ou close manuel
-                cause = "manual_or_unknown"
+            elif (side == "buy" and exit_px < entry) or (side == "sell" and exit_px > entry):
+                # Perte mais pas exactement au SL initial : trail trop tôt
+                # ou close manuel. Le ratchet rendrait ce cas rare.
+                cause = "sl_natif_hit_loss"
 
         mem.record_exit(trade_id, exit_px, cause)
         # Calcul approximatif du PnL pour le log
