@@ -240,3 +240,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1293 (vs 0 audit précédent) à surveiller au prochain audit ; si persiste ET sync_err > 0, escalader via proposition code.
 
 ---
+
+## 2026-05-10 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=4, open=3 (BTC -0.323% / ETH +0.245% / SOL +1.161%), enter=6, consensus=307, skip_conf=294, skip_cooldown=4, trail_arm=0, trail_modify=116, llm_error=0, hl_cache_stale=1153, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=294/720 cycles ≈ 0.41/cycle (très en deçà du seuil 10/cycle ; ratio 294/307 ≈ 96% structurel comme aux audits récents — strate gate filtre la quasi-totalité avant consensus, échantillon montre confs 0.00/0.45/0.58/0.68 sous MIN_CONFIDENCE=0.70 en régime range medium persistant). TRAIL ARM=0 sur 6h mais 116 TRAIL NATIVE SL MODIFY confirme un ratchet actif (probablement sur SOL +1.161% qui s'arme/désarme près du seuil) ; règle "0 trade armed en 24h" legacy depuis ratchet 2026-05-08, non applicable. **Bilan d'activité sain** : ENTER=6 + external_exit=4 → la chaîne scalp produit des entrées et la sortie défensive fonctionne ; positions ouvertes non détresse (BTC marginale -0.32%, ETH +0.25%, SOL +1.16% en gain). Pattern "0 EMERGENCY + WR>60%" non évaluable (composition TP vs SL des 4 external_exit non décomposable côté audit ; 6 entrées + 4 sorties carry-over insuffisant), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. **HL cache stale=1153 (vs 1293 audit précédent)** : pattern persiste mais sync_err=0 inchangé (mécanisme de recovery fonctionne à chaque péremption). Critère d'escalade pour proposition code = "persiste ET sync_err > 0" pas atteint (sync_err reste à 0), donc pas de proposition. Anti-oscillation : aucun changement settings depuis ~96h, le système reste dans son régime nominal.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; chaîne saine, infra fonctionnelle.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1153 sur 2 audits consécutifs avec sync_err=0 — comportement reproductible mais sans erreur métier. À surveiller au prochain audit ; si sync_err > 0 apparaît, escalader via proposition code (résilience client HL).
+
+---
