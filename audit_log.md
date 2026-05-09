@@ -227,3 +227,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-09 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=1, open=1 (SOL -1.081%), enter=1, consensus=170, skip_conf=169, skip_cooldown=1, trail_arm=0, trail_modify=2, llm_error=0, hl_cache_stale=1293, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=169/720 cycles ≈ 0.23/cycle (très en deçà du seuil 10/cycle ; ratio 169/170 ≈ 99% structurel comme à chaque audit récent — strate gate filtre la quasi-totalité avant consensus, l'échantillon montre vetos m15_wait/h1_wait dominants en régime range medium persistant, confs typiques 0.42-0.45 sous MIN_CONFIDENCE=0.70). TRAIL ARM=0 sur 6h mais cumul 24h via audits précédents (12:00=0, 06:00=0, 09-00:00=0, 08-18:00=3) = 3 > 0, pattern "0 trade armed en 24h" non actif (règle legacy depuis ratchet 2026-05-08 de toute façon). Position courante SOL -1.081% bien à l'intérieur du SL_PNL=1.3% — trail va arbitrer normalement (2 TRAIL NATIVE SL MODIFY confirme le ratchet en cours côté défensif). Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=1, échantillon nul). **Observation notable HL cache stale=1293** sur 6h (~3.6/min, soit ~1 par cycle 30s) vs 0 à l'audit précédent : pic significatif mais sync_err=0 (le forced sync gère systématiquement, log "HL cache périmé (10.0s > 10.0s), sync forcé" se résout sans erreur). Pas de mécanisme bug clair dans les logs visibles — le système se met à jour correctement, juste un peu plus de bruit que d'habitude. Pas de proposition code car comportement attendu (le code détecte la péremption et force le sync, qui réussit à chaque fois). Si le pattern persiste sur ≥2 audits consécutifs avec sync_err > 0, alors envisager proposition code (résilience client HL). Anti-oscillation : aucun changement settings depuis ~90h, le système est dans son régime nominal calme.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra fonctionnelle malgré pic cache stale (sync_err=0 confirme que le mécanisme de récupération fait son travail).
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1293 (vs 0 audit précédent) à surveiller au prochain audit ; si persiste ET sync_err > 0, escalader via proposition code.
+
+---
