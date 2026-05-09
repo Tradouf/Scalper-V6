@@ -201,3 +201,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : 9 sorties SL sur 10 entrées en 6h (WR très basse) à surveiller au prochain audit ; si le pattern persiste sur ≥2 audits consécutifs avec 0 EMERGENCY, escalader à l'humain pour revue du timing d'entrée (consensus, strate gate, ou seuils filtre pré-LLM).
 
 ---
+
+## 2026-05-09 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=7, open=3 (BNB +0.170% / BTC -0.161% / SOL +5.178%), enter=6, consensus=295, skip_conf=260, skip_cooldown=7, trail_arm=0, trail_modify=155, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=260/720 cycles ≈ 0.36/cycle (très en deçà du seuil 10/cycle ; ratio 260/295 ≈ 88% structurel comme aux audits précédents — strate gate filtre la majorité, confs typiques observées 0.50-0.76 dans l'échantillon BNB/BTC/SOL). TRAIL ARM=0 sur 6h MAIS la position SOL est à +5.178% ROE et a déjà 155 TRAIL NATIVE SL MODIFY (ratchet continu en gain) → la position s'est manifestement armée hors fenêtre 6h, le pattern "0 trade armed" est faux positif (règle legacy depuis ratchet 2026-05-08 de toute façon). **Bilan très positif sur SOL** : +5.178% ROE est la plus grosse position en gain observée depuis l'instauration du ratchet, le système trail capture bien le mouvement (155 modify confirme le suivi serré). BNB et BTC marginales (±0.17%), pas d'inquiétude. Pattern "0 EMERGENCY + WR>60%" : ENTER=6 + 7 external_exit = échantillon trop court pour conclure WR>60% (ne sait pas combien étaient TP vs SL), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. Infra parfaitement saine (LLM 0, HL sync 0, cache stale 0). Anti-oscillation : aucun changement settings depuis ~78h, contraste net avec audit précédent (00:00) où la WR semblait basse — cette fenêtre montre le ratchet en train de payer sur SOL.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; chaîne saine, ratchet fait son job sur SOL +5.178%, infra impeccable.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
