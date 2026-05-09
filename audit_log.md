@@ -214,3 +214,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-09 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=4, open=1 (SOL -0.988%), enter=3, consensus=104, skip_conf=93, skip_cooldown=6, trail_arm=0, trail_modify=61, llm_error=0, hl_cache_stale=0, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=93/720 cycles ≈ 0.13/cycle (très en deçà du seuil 10/cycle ; ratio 93/104 ≈ 89% structurel — strate gate filtre la majorité avant consensus, échantillon des logs montre vetos m15_wait/h1_wait/m1_wait dominants, régime range/medium persistant). TRAIL ARM=0 sur 6h mais cumul 24h via audits précédents (06:00=0, 09-00:00=0, 08-18:00=3) = 3 > 0, pattern "0 trade armed en 24h" non actif (et règle legacy depuis ratchet 2026-05-08 de toute façon). **Lecture probable de la fenêtre** : ENTER=3 + external_exit=4 = au moins 1 sortie carry-over de la fenêtre précédente (très probablement la SOL +5.178% du audit 06:00 que le ratchet a fait sortir profitablement, cohérent avec 61 TRAIL NATIVE SL MODIFY observés). Pattern "0 EMERGENCY + WR>60%" : non évaluable (composition TP vs SL des 4 external_exit non décomposable côté audit, ENTER=3 trop court), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. Position courante SOL -0.988% bien à l'intérieur du SL_PNL=1.3% — trail va arbitrer normalement. Infra parfaitement saine (LLM 0, HL sync 0, cache stale 0). Anti-oscillation : aucun changement settings depuis ~84h, le système est dans son régime nominal calme.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra saine.
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
