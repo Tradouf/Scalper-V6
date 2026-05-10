@@ -132,6 +132,9 @@ SCALP_SL_PNL_PCT = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
 EMERGENCY_LOSS_ROE_MULT = float(getattr(SETTINGS, "EMERGENCY_LOSS_ROE_MULT", 2.0))
 SL_FALLBACK_BUFFER_PCT = float(getattr(SETTINGS, "SL_FALLBACK_BUFFER_PCT", 0.005))
 FLIP_EMERGENCY_LOSS_PCT = float(getattr(SETTINGS, "FLIP_EMERGENCY_LOSS_PCT", 0.015))
+# Trail/emergency en distance PRIX absolue (2026-05-10) — indépendant du levier
+SCALP_SL_DIST_PRICE_PCT = float(getattr(SETTINGS, "SCALP_SL_DIST_PRICE_PCT", 0.005))
+EMERGENCY_LOSS_DIST_PRICE_MULT = float(getattr(SETTINGS, "EMERGENCY_LOSS_DIST_PRICE_MULT", 2.0))
 
 BLOCKED_HOURS_UTC = set(getattr(SETTINGS, "BLOCKED_HOURS_UTC", set()))
 SYMBOLS_PER_CYCLE = int(getattr(SETTINGS, "SYMBOLS_PER_CYCLE", 2))
@@ -1160,7 +1163,11 @@ class SalleDesMarchesV6:
             # Garde-fou capital : si la perte dépasse EMERGENCY_LOSS_ROE_MULT × SL_PCT,
             # ferme la position de force, indépendamment de armed/sl_oid.
             # Couvre : SL natif perdu, recovery abandonnée, cache stale, flip bloqué.
-            emergency_threshold = -(EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT)
+            # Emergency = 2× distance trail en PRIX, converti en ROE selon le levier
+            # courant. À lev 10x le seuil ROE = -10%, à lev 3x = -3%. Le filet ne
+            # déclenche que si le SL natif a vraiment échoué (sinon le trail tape avant).
+            emergency_dist_price = SCALP_SL_DIST_PRICE_PCT * EMERGENCY_LOSS_DIST_PRICE_MULT
+            emergency_threshold = -emergency_dist_price * max(1.0, leverage)
             if pnl_pct <= emergency_threshold:
                 # Anti-double-fire : skippe si fermeture déjà en vol (TTL 30s).
                 now_ts = time.time()
@@ -1213,7 +1220,11 @@ class SalleDesMarchesV6:
                     best_price = price
             guard["best_price"] = best_price
 
-            sl_dist_price = SCALP_SL_PNL_PCT / max(1.0, leverage)
+            # Distance ratchet en PRIX absolu (2026-05-10) — indépendante du levier.
+            # L'agent qui prend lev 10x mérite la même marge prix qu'à lev 3x.
+            # Conséquence : le risque ROE scale avec le levier (cohérent : haut
+            # levier = haute conviction = on accepte plus de variance ROE).
+            sl_dist_price = SCALP_SL_DIST_PRICE_PCT
             target_sl_px = (
                 best_price * (1.0 - sl_dist_price) if side == "buy"
                 else best_price * (1.0 + sl_dist_price)
@@ -1266,7 +1277,7 @@ class SalleDesMarchesV6:
         # Couvre les positions ouvertes par le grid_manager qui ne passent pas
         # par _register_trail_guard. Sans ce filet, un grid breakout violent
         # n'a aucune protection (ni SL natif, ni trail).
-        emergency_threshold = -(EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT)
+        emergency_dist_price_grid = SCALP_SL_DIST_PRICE_PCT * EMERGENCY_LOSS_DIST_PRICE_MULT
         for symbol, pos in list(open_pos.items()):
             if symbol in self._trail_guards:
                 continue  # déjà couvert par la boucle précédente
@@ -1283,6 +1294,7 @@ class SalleDesMarchesV6:
                     continue
                 pnl_brut = (price - entry) / entry if side == "buy" else (entry - price) / entry
                 pnl_pct = pnl_brut * leverage
+                emergency_threshold = -emergency_dist_price_grid * max(1.0, leverage)
                 if pnl_pct <= emergency_threshold:
                     now_ts = time.time()
                     with self._emergency_lock:

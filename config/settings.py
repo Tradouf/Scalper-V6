@@ -75,6 +75,16 @@ SCALP_MAX_DURATION_MIN = 30
 SCALP_SL_PNL_PCT = 0.013
 SCALP_TP_PNL_PCT = 2 * SCALP_SL_PNL_PCT  # 2026-05-08 : TP = 2 × SL (RR 2:1, ratchet trail)
 
+# 2026-05-10 — Trail ratchet en distance prix ABSOLUE (indépendante du levier).
+# Avant : sl_dist_price = SL_PNL_PCT / leverage → trail ultra-serré à haut levier
+# (lev 10x → 0.13% prix = sortie sur le moindre frémissement). L'agent qui
+# choisit le levier max le fait pour amplifier un setup, le SL doit lui laisser
+# la marge en prix correspondante. Le risque ROE varie maintenant avec le levier.
+SCALP_SL_DIST_PRICE_PCT = 0.005   # 0.5% prix entre best et SL ratchet
+# Emergency = 2× la distance trail, en prix absolu également.
+# ROE conséquent : lev 3x → -3% emergency, lev 6x → -6%, lev 10x → -10%.
+EMERGENCY_LOSS_DIST_PRICE_MULT = 2.0
+
 # ── Sécurité capital (in-process, hard rules) ───────────────────────────────
 # Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme
 # de force par ordre market reduce_only. Garde-fou contre :
@@ -131,7 +141,7 @@ FLIP_COOLDOWN_SEC = 300
 # ── Sizing ───────────────────────────────────────────────────────────────────
 MAX_POSITION_PCT = 0.01
 RISK_PER_TRADE_PCT = MAX_POSITION_PCT
-MAX_LEVERAGE = 6.0
+MAX_LEVERAGE = 10.0
 MAX_NOTIONAL_PCT = 0.15
 DEFAULT_LEVERAGE = 3
 
@@ -181,7 +191,7 @@ MULTI_TF_GATE_ENABLED = True
 GRID_ENABLED = False
 GRID_ATR_FACTOR = 0.7       # spacing = ATR × factor (0.5 = demi-ATR par côté)
 GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
-GRID_NOTIONAL = 20.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
+GRID_NOTIONAL = 15.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
