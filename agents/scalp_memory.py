@@ -39,6 +39,7 @@ class ScalpMemory:
         "manual_or_unknown",    # Fermeture externe non identifiable
         "scalper_exit",         # Le scalper LLM a décidé d'EXIT
         "flip",                 # Position flippée (close + reverse)
+        "replaced_by_new_entry", # Auto-close zombie au moment d'une nouvelle entrée
     }
 
     def __init__(self, path: str = DEFAULT_PATH):
@@ -76,7 +77,34 @@ class ScalpMemory:
     def record_entry(self, symbol: str, side: str, entry_px: float,
                      snapshot: Dict) -> str:
         """Crée un nouveau trade record. snapshot doit contenir au minimum
-        les indicateurs/confs/régime au moment de l'entrée pour B (corrélation)."""
+        les indicateurs/confs/régime au moment de l'entrée pour B (corrélation).
+
+        Garde-fou : si un trade précédent sur ce symbole n'a jamais été fermé
+        (cas du close+reopen instantané ou d'un flip que _sync_manual_closures
+        rate parce que la position ne disparaît pas du cache HL), on le ferme
+        d'office avec cause 'replaced_by_new_entry'. Évite l'accumulation de
+        trades zombies (cf. observation 2026-05-10 : 40 records 'open' alors
+        que les positions correspondantes étaient closes depuis longtemps).
+        """
+        # Auto-close des trades zombies pour ce symbole
+        with self._lock:
+            for rec in self._data["trades"]:
+                if (rec["symbol"] == symbol.upper() and rec.get("exit_ts") is None):
+                    rec["exit_ts"] = time.time()
+                    rec["exit_px"] = float(entry_px)  # approximation : prix au moment du replace
+                    rec["cause"] = "replaced_by_new_entry"
+                    rec["duration_sec"] = rec["exit_ts"] - rec.get("entry_ts", rec["exit_ts"])
+                    side_old = rec.get("side", "buy")
+                    entry_old = float(rec.get("entry_px", entry_px))
+                    if entry_old > 0:
+                        if side_old == "buy":
+                            rec["pnl_pct"] = (entry_px - entry_old) / entry_old
+                        else:
+                            rec["pnl_pct"] = (entry_old - entry_px) / entry_old
+                        qty_old = float(rec.get("qty", 0) or 0)
+                        rec["pnl_usdt"] = abs(qty_old) * (entry_px - entry_old) * (1 if side_old == "buy" else -1)
+                    logger.info("[SCALP_MEM] auto-closed zombie %s as replaced_by_new_entry", rec["id"])
+
         trade_id = f"{symbol.upper()}-{int(time.time() * 1000)}"
         rec = {
             "id": trade_id,
