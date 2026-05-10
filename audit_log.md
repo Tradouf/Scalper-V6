@@ -266,3 +266,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1661 (max sur 3 audits consécutifs) + sync_err=1 (première occurrence depuis le 09-12:00) — surveillance renforcée au prochain audit ; si sync_err récurrent ou croissant, escalader via proposition code.
 
 ---
+
+## 2026-05-10 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=5, open=4 (BNB +0.996% / BTC -0.071% / ETH -0.116% / SOL -0.512%), enter=6, consensus=201, skip_conf=184, skip_cooldown=6, trail_arm=0, trail_modify=127, llm_error=0, hl_cache_stale=705, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=184/720 cycles ≈ 0.26/cycle (très en deçà du seuil 10/cycle ; ratio 184/201 ≈ 92% structurel comme aux audits récents — strate gate filtre la quasi-totalité avant consensus, échantillon montre confs 0.58/0.68/0.71 sous MIN_CONFIDENCE=0.70 en régime range medium persistant, vetos h1_wait dominants). TRAIL ARM=0 sur 6h mais 127 TRAIL NATIVE SL MODIFY confirme un ratchet actif côté défensif sur les 4 positions ; règle "0 trade armed en 24h" legacy depuis ratchet 2026-05-08, non applicable. **Bilan d'activité sain** : ENTER=6 + external_exit=5 → chaîne scalp produit régulièrement, BNB en gain modéré (+0.996%), BTC/ETH marginales (±0.12%), SOL -0.512% bien à l'intérieur du SL_PNL=1.3% — pas de cascade. Pattern "0 EMERGENCY + WR>60%" non évaluable (composition TP vs SL des 5 external_exit non décomposable côté audit, ENTER=6 trop court), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. **Évolution HL cache stale=705 (vs 1661 → 1153 → 1293 audits précédents) et sync_err=0 (vs 1 audit précédent)** : la dégradation de 3 audits consécutifs semble se résorber, mécanisme de recovery fonctionne nominalement. Critère d'escalade pour proposition code ("sync_err récurrent ou croissant") non atteint — au contraire, retour à 0. Anti-oscillation : aucun changement settings depuis ~108h, le système reste dans son régime nominal range.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; chaîne saine, infra retour à la normale (cache stale en baisse, sync_err=0).
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
