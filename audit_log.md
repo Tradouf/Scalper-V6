@@ -279,3 +279,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun.
 
 ---
+
+## 2026-05-10 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=5, open=2 (BNB +0.642% / BTC +0.197%), enter=7, consensus=390, skip_conf=361, skip_cooldown=8, trail_arm=0, trail_modify=33, llm_error=0, hl_cache_stale=467, hl_sync_err=0
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=361/720 cycles ≈ 0.50/cycle (très en deçà du seuil 10/cycle ; ratio 361/390 ≈ 93% structurel comme aux audits récents — strate gate filtre la quasi-totalité avant consensus, échantillon montre confs 0.56/0.70/0.71 sous MIN_CONFIDENCE=0.70 en régime range medium persistant, vetos h1_wait/m1_wait dominants). TRAIL ARM=0 sur 6h mais 33 TRAIL NATIVE SL MODIFY confirme le ratchet actif côté défensif ; règle "0 trade armed en 24h" legacy depuis ratchet 2026-05-08, non applicable. **Bilan d'activité sain** : ENTER=7 (max sur les derniers audits) + external_exit=5 → la chaîne scalp produit régulièrement, les 2 positions ouvertes sont toutes en gain (BNB +0.642%, BTC +0.197%). Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=7 + composition TP vs SL des 5 external_exit non décomposable côté audit), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. **Évolution HL cache stale=467 (vs 705 → 1661 → 1153 → 1293 audits précédents) et sync_err=0 (2ème consécutif)** : la dégradation antérieure se résorbe nettement, mécanisme de recovery fonctionne nominalement, critère d'escalade non atteint. Anti-oscillation : aucun changement settings depuis ~114h, système nominal en régime range.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; chaîne saine, infra en amélioration continue (cache stale -34% vs précédent, sync_err=0).
+
+**Code proposals** : aucune nouvelle.
+
+**Alerts** : aucun.
+
+---
