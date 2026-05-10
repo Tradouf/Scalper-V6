@@ -253,3 +253,16 @@ Historique des audits Opus du bot. Append-only.
 **Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1153 sur 2 audits consécutifs avec sync_err=0 — comportement reproductible mais sans erreur métier. À surveiller au prochain audit ; si sync_err > 0 apparaît, escalader via proposition code (résilience client HL).
 
 ---
+
+## 2026-05-10 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=4, open=2 (BNB -1.049% / ETH -0.864%), enter=2, consensus=172, skip_conf=170, skip_cooldown=4, trail_arm=0, trail_modify=19, llm_error=0, hl_cache_stale=1661, hl_sync_err=1
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0, flip_refusé=0 — pas de trigger SL/flip. SKIP conf=170/720 cycles ≈ 0.24/cycle (très en deçà du seuil 10/cycle ; ratio 170/172 ≈ 99% structurel — strate gate filtre la quasi-totalité avant consensus, échantillon montre vetos m15_wait/m1_wait/h1_wait dominants en régime range medium persistant, confs typiques 0.42 sur SOL). TRAIL ARM=0 sur 6h mais 19 TRAIL NATIVE SL MODIFY confirme le ratchet actif côté défensif sur les 2 positions négatives ; règle "0 trade armed en 24h" legacy depuis ratchet 2026-05-08, non applicable. **Bilan d'activité modéré** : ENTER=2 + external_exit=4 → la chaîne scalp tourne au ralenti (régime range strict), 2 positions ouvertes BNB -1.049% / ETH -0.864% bien à l'intérieur du SL_PNL=1.3% — trail va arbitrer normalement. Pattern "0 EMERGENCY + WR>60%" non évaluable (ENTER=2 + composition TP vs SL des external_exit non décomposable côté audit), donc on ne remonte PAS FLIP_MIN_CONFIDENCE. **HL cache stale=1661** sur 3ème audit consécutif (1293 → 1153 → 1661, tendance haussière) **et sync_err=1** (vs 0 sur les 2 précédents) : critère d'escalade approche mais reste borderline — 1 erreur sync isolée n'établit pas un pattern reproductible (statistiquement compatible avec un blip réseau ponctuel). Pas de proposition code immédiate, mais surveillance renforcée au prochain audit (si sync_err ≥ 5 ou si cache stale dépasse 2000 avec sync_err > 0 récurrent, déposer proposition warning sur résilience client HL). Anti-oscillation : aucun changement settings depuis ~102h, système nominal en régime range.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur, infra fonctionnelle malgré pic cache stale.
+
+**Code proposals** : aucune nouvelle (sync_err=1 isolé sous le seuil d'escalade, mécanisme recovery toujours fonctionnel).
+
+**Alerts** : aucun déclencheur paramétrique. Observation : HL cache stale=1661 (max sur 3 audits consécutifs) + sync_err=1 (première occurrence depuis le 09-12:00) — surveillance renforcée au prochain audit ; si sync_err récurrent ou croissant, escalader via proposition code.
+
+---
