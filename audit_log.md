@@ -118,6 +118,19 @@ Historique des audits Opus du bot. Append-only.
 
 **Code proposals** : aucune nouvelle.
 
+---
+
+## 2026-05-12 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=3, open_réel=3 (BNB +4.66% / BTC -2.44% / SOL +2.51%), enter=0, consensus=152, skip_conf=134, skip_cooldown=4, trail_arm=0, trail_modify=5, llm_error=0, hl_cache_stale=3, hl_sync_err=2
+**Diagnostic** : Aucun pattern paramétrique du tableau ne se déclenche. EMERGENCY=0 ; flip_refusé=0 sous seuil 5 ; SKIP conf=134/720 cycles ≈ 0.19/cycle (largement sous le seuil 10/cycle, mais 88% des consensus, ce qui est cohérent avec un régime range où les confs réelles restent structurellement sous 0.70). TRAIL ARM=0 sur 6h n'est pas en soi déclencheur (les 24h cumulées totalisent ≥22 trail_arm via audits précédents), donc pattern "0 armed en 24h" non actif. TRAIL NATIVE SL MODIFY=5 confirme le ratchet natif HL fonctionne sur les 3 positions ouvertes. ROE sain (2 positions positives marquées BNB +4.66% / SOL +2.51%, BTC à -2.44% encore sous seuil EMERGENCY de -2.6%=2× SL_PNL 1.3%). External_exit=3 dans la fenêtre = sorties exchange propres (SL natif déclenché ou TP), 4 SKIP cooldown observés en aval cohérents. Bug "Stats cycle open=0 vs réel=3" reproduit (3e audit consécutif), déjà couvert par proposition pending du 2026-05-11 06:00 — pas de doublon à déposer.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; pas de pattern déclencheur.
+
+**Code proposals** : aucune nouvelle. La proposition pending du 2026-05-11 06:00 (`Stats cycle open` désynchronisé) reste pertinente — 3e occurrence du symptôme observée.
+
+**Alerts** : aucun. À surveiller : BTC -2.44% se rapproche du seuil EMERGENCY (≈-2.6% ROE à lev 3x sur SL 1.3%) — si le trail natif HL ne se déclenche pas et que le ROE continue de dégrader, l'emergency exit interne devrait prendre le relais au prochain cycle.
+
 **Alerts** : aucun déclencheur paramétrique. Observation : HL sync_err=167 sur 6h (~28/h) à surveiller au prochain audit ; si croît au-delà de 500/6h, envisager proposition code sur résilience client HL.
 
 ---
