@@ -120,3 +120,23 @@ def main() -> None:
 **Status** : applied 2026-05-06 (commit ebabfab) — `_acquire_singleton_lock()` ajouté, fcntl.flock sur logs/sdm.pid, sortie sys.exit(1) si lock déjà tenu, atexit cleanup.
 
 ---
+
+## 2026-05-11 06:00 — [INFO] Compteur `Stats cycle open=N` désynchronisé du recensement exchange
+
+**Severity** : info
+**Files** : `main_v6.py` (boucle principale, log `Stats cycle: analyzed=X skipped=Y entered=Z flipped=W open=N trail_guards=T`)
+**Pattern** : Sur 2 audits consécutifs (2026-05-11 00:00 et 06:00), les logs récents affichent `Stats cycle: ... open=0 trail_guards=0` alors que le suivi ROE confirme 4 positions ouvertes sur l'exchange (BNB/BTC/ETH/SOL). Le décalage est reproductible et persiste pendant l'ensemble des fenêtres 6h.
+**Diagnostic** : Le compteur `open` du log "Stats cycle" semble compter les positions gérées par le pipeline scalp interne (probablement la liste/dict local du bot ou `scalp_memory`) et non l'état réel des positions Hyperliquid. Hypothèse de mécanisme : restart sans recovery complet du state scalp local, ou les 4 positions ont migré dans un état qui les rend invisibles au compteur de cycle (orphelines vis-à-vis du pipeline mais bien ouvertes côté exchange). `trail_guards=0` cohérent avec cette hypothèse — le pipeline scalp considère qu'il n'y a rien à protéger, alors que les 106 TRAIL NATIVE SL MODIFY de l'audit prouvent que le ratchet natif HL fonctionne bien sur ces positions. Sans inspection des fichiers, racine exacte à identifier.
+**Proposed fix** :
+```python
+# Audit nécessaire de la source du compteur `open` dans la stat de cycle.
+# Comparer à hl_client.get_positions() au même instant.
+# Si divergence : reconcilier le state local depuis l'exchange à chaque cycle,
+# logger warning si des positions exchange existent sans état local correspondant.
+# Idéalement, le compteur open du log Stats cycle doit = nombre réel de positions
+# exchange (sinon valeur peu utile pour l'opérateur).
+```
+**Risk si non corrigé** : Compteur trompeur — un opérateur consultant les logs croira le bot flat alors qu'il a 4 positions en cascade. Plus inquiétant : si `trail_guards=0` reflète une réalité (pas de supervision scalp active sur ces positions), le défaut d'EMERGENCY EXIT sur les 3 longs à -2.76/-3.20/-4.50% ROE pourrait s'expliquer par un pipeline scalp qui ne supervise plus ces positions — laissant la seule protection au trail natif HL et au scalper LLM (qui ne se déclenche que dans le pipeline). À confirmer en lisant le code.
+**Status** : pending
+
+---
