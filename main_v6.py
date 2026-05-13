@@ -129,6 +129,7 @@ FLIP_MIN_CONFIDENCE = float(getattr(SETTINGS, "FLIP_MIN_CONFIDENCE", 0.80))
 
 # Sécurité capital — hard rules (cf. config/settings.py pour les valeurs)
 SCALP_SL_PNL_PCT = float(getattr(SETTINGS, "SCALP_SL_PNL_PCT", 0.015))
+SCALP_TP_PNL_PCT = float(getattr(SETTINGS, "SCALP_TP_PNL_PCT", 2 * SCALP_SL_PNL_PCT))
 EMERGENCY_LOSS_ROE_MULT = float(getattr(SETTINGS, "EMERGENCY_LOSS_ROE_MULT", 2.0))
 SL_FALLBACK_BUFFER_PCT = float(getattr(SETTINGS, "SL_FALLBACK_BUFFER_PCT", 0.005))
 FLIP_EMERGENCY_LOSS_PCT = float(getattr(SETTINGS, "FLIP_EMERGENCY_LOSS_PCT", 0.015))
@@ -624,8 +625,20 @@ class SalleDesMarchesV6:
             # Ne pas écraser le cache avec des données vides si l'appel API a échoué.
             # Un fetch raté ne doit pas supprimer les positions/ordres connus.
             if positions_ok:
-                self._hl_cache["positions"] = positions
-                self._hl_cache["account_value_usdt"] = account_value
+                # Garde-fou anti-réponse-vide-fantôme (2026-05-13) : si HL renvoie
+                # assetPositions=[] alors qu'on avait des positions connues, on
+                # ignore et on garde l'ancien cache. Évite le "Stats cycle open=0
+                # alors qu'il y a des positions" + désynchro des guards.
+                old_positions = dict(self._hl_cache.get("positions", {}) or {})
+                if not positions and old_positions:
+                    logger.warning(
+                        "HL sync: assetPositions vide mais cache avait %d position(s) (%s) "
+                        "→ on conserve l'ancien cache (réponse API suspecte)",
+                        len(old_positions), ",".join(old_positions.keys()),
+                    )
+                else:
+                    self._hl_cache["positions"] = positions
+                    self._hl_cache["account_value_usdt"] = account_value
             if prices_ok:
                 self._hl_cache["prices"] = prices
             if orders_ok:
