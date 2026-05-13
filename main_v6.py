@@ -136,6 +136,9 @@ FLIP_EMERGENCY_LOSS_PCT = float(getattr(SETTINGS, "FLIP_EMERGENCY_LOSS_PCT", 0.0
 # Trail/emergency en distance PRIX absolue (2026-05-10) — indépendant du levier
 SCALP_SL_DIST_PRICE_PCT = float(getattr(SETTINGS, "SCALP_SL_DIST_PRICE_PCT", 0.005))
 EMERGENCY_LOSS_DIST_PRICE_MULT = float(getattr(SETTINGS, "EMERGENCY_LOSS_DIST_PRICE_MULT", 2.0))
+# Breakeven auto (2026-05-13)
+SCALP_BE_TRIGGER_BUFFER_PCT = float(getattr(SETTINGS, "SCALP_BE_TRIGGER_BUFFER_PCT", 0.002))
+SCALP_BE_LOCK_BUFFER_PCT    = float(getattr(SETTINGS, "SCALP_BE_LOCK_BUFFER_PCT", 0.001))
 
 BLOCKED_HOURS_UTC = set(getattr(SETTINGS, "BLOCKED_HOURS_UTC", set()))
 SYMBOLS_PER_CYCLE = int(getattr(SETTINGS, "SYMBOLS_PER_CYCLE", 2))
@@ -1242,6 +1245,21 @@ class SalleDesMarchesV6:
                 best_price * (1.0 - sl_dist_price) if side == "buy"
                 else best_price * (1.0 + sl_dist_price)
             )
+
+            # Breakeven auto (2026-05-13) — si le best dépasse entry+trigger,
+            # on force le SL au moins à entry+lock. Évite le cas BNB 13/05 où
+            # le ratchet ne déplaçait pas le SL parce que best était trop proche
+            # de l'entry (target ratchet sous le SL initial à haut levier).
+            if side == "buy":
+                be_trigger = entry * (1.0 + SCALP_BE_TRIGGER_BUFFER_PCT)
+                if best_price >= be_trigger:
+                    be_floor = entry * (1.0 + SCALP_BE_LOCK_BUFFER_PCT)
+                    target_sl_px = max(target_sl_px, be_floor)
+            else:
+                be_trigger = entry * (1.0 - SCALP_BE_TRIGGER_BUFFER_PCT)
+                if best_price <= be_trigger:
+                    be_floor = entry * (1.0 - SCALP_BE_LOCK_BUFFER_PCT)
+                    target_sl_px = min(target_sl_px, be_floor)
 
             # Conversion en ROE équivalent (pour réutiliser _update_native_trailing_sl)
             if side == "buy":

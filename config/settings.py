@@ -85,6 +85,14 @@ SCALP_SL_DIST_PRICE_PCT = 0.005   # 0.5% prix entre best et SL ratchet
 # ROE conséquent : lev 3x → -3% emergency, lev 6x → -6%, lev 10x → -10%.
 EMERGENCY_LOSS_DIST_PRICE_MULT = 2.0
 
+# Breakeven auto (2026-05-13) — dès que best dépasse entry + TRIGGER_BUFFER,
+# le SL est forcé au-dessus de l'entry × (1 + LOCK_BUFFER). Évite le cas
+# observé sur BNB le 13/05 : position monte à +0.06% prix puis redescend,
+# SL reste à -0.5% prix sous l'entry → fermeture en perte alors qu'on aurait
+# pu locker au moins le breakeven.
+SCALP_BE_TRIGGER_BUFFER_PCT = 0.002   # déclenche BE quand best ≥ entry × 1.002
+SCALP_BE_LOCK_BUFFER_PCT    = 0.001   # SL minimum à entry × 1.001 (couvre fees+spread)
+
 # ── Sécurité capital (in-process, hard rules) ───────────────────────────────
 # Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme
 # de force par ordre market reduce_only. Garde-fou contre :
