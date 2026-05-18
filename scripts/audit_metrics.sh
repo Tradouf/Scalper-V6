@@ -68,8 +68,9 @@ cnt_signal=$(count "external_exit\|EMERGENCY")
 # État courant des positions ouvertes (dernier Stats cycle)
 last_stats=$(echo "$WINDOW" | grep "Stats cycle" | tail -1 | sed 's/.*Stats cycle: //' || true)
 
-# Dernier ROE par symbole observé en TRAIL
-roe_table=$(echo "$WINDOW" | grep -E "TRAIL (SELL|BUY) " | awk '
+# Dernier ROE par symbole observé en TRAIL — `|| true` car pipefail+set-e
+# tue le script si grep n'a aucun match (fenêtre sans trade).
+roe_table=$(echo "$WINDOW" | grep -E "TRAIL (SELL|BUY) " 2>/dev/null | awk '
 {
     for (i=1; i<=NF; i++) {
         if ($i == "SELL" || $i == "BUY") { side=$i; sym=$(i+1); }
@@ -79,7 +80,7 @@ roe_table=$(echo "$WINDOW" | grep -E "TRAIL (SELL|BUY) " | awk '
 }
 END {
     for (s in last) print "  " s ": " last[s]
-}' | sort)
+}' | sort || true)
 
 cat <<EOF
 ## Métriques agrégées sur les ${HOURS}h écoulées
@@ -114,5 +115,5 @@ EOF
 # pour donner un échantillon textuel à Claude — limite stricte vs tout le log.
 echo "## Échantillon des derniers événements (max 30 lignes pertinentes)"
 echo '```'
-echo "$WINDOW" | grep -vE "TRAIL (SELL|BUY) |FEATURE_ENGINE|REGIME_ENGINE|TECH FEATURES|ORDERBOOK FEATURES|FEATURE PIPELINE|REGIME PIPELINE" | tail -30
+echo "$WINDOW" | grep -vE "TRAIL (SELL|BUY) |FEATURE_ENGINE|REGIME_ENGINE|TECH FEATURES|ORDERBOOK FEATURES|FEATURE PIPELINE|REGIME PIPELINE" | tail -30 || true
 echo '```'
