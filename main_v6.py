@@ -426,10 +426,48 @@ class SalleDesMarchesV6:
             time.sleep(60)
 
     def _health_check_positions(self) -> None:
-        """Détecte et corrige les positions orphelines (sans protection)."""
+        """Détecte et corrige les positions orphelines (sans protection)
+        ET les ordres trigger orphelins (sans position parente)."""
         if self.simulation:
             return
         open_pos = self._get_open_positions()
+
+        # Cleanup orphan triggers (sans position parente) — observé 2026-05-18 :
+        # un SL natif BNB 'buy@675.44 tpsl=sl reduceOnly' a survécu à la
+        # fermeture du short BNB. Reduce_only ne peut pas s'exécuter sans
+        # position du bon côté, mais pollue l'UI et peut interférer si une
+        # nouvelle position s'ouvre.
+        try:
+            with self._hl_cache_lock:
+                cached_orders = list(self._hl_cache.get("open_orders", []))
+            for o in cached_orders:
+                if not isinstance(o, dict):
+                    continue
+                if not bool(o.get("reduceOnly", False)):
+                    continue
+                tpsl = str(o.get("tpsl", "")).lower()
+                is_trigger = bool(o.get("isTrigger", False)) or tpsl in ("tp", "sl")
+                if not is_trigger:
+                    continue
+                coin = str(o.get("coin", "")).upper().split("-")[0]
+                if not coin or coin in open_pos:
+                    continue  # position existe → trigger valide
+                # Pas de position pour ce symbole → trigger orphelin
+                oid = o.get("oid")
+                if oid is None:
+                    continue
+                try:
+                    ok = self.exchange.cancel_order(str(oid))
+                    if getattr(ok, "ok", False) or ok is True:
+                        logger.warning(
+                            "[HEALTH_CHECK] trigger orphelin annulé : %s oid=%s side=%s tpsl=%s",
+                            coin, oid, o.get("side"), tpsl,
+                        )
+                except Exception as e:
+                    logger.warning("[HEALTH_CHECK] cancel orphan trigger %s oid=%s: %r", coin, oid, e)
+        except Exception as e:
+            logger.warning("[HEALTH_CHECK] orphan triggers sweep: %r", e)
+
         if not open_pos:
             return
 
