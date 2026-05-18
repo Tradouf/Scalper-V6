@@ -58,6 +58,7 @@ from agents.agent_trader import AgentTrader
 from agents.feature_engine import FeatureEngine
 from agents.regime_engine import RegimeEngine
 from agents.multi_tf import StrategistH1, TacticalM15, ExecutionM1, strate_gate
+from agents.xgb_gate import get_xgb_gate
 from agents.grid_manager import GridManager
 
 
@@ -191,6 +192,8 @@ DEFENSIVE_CUT_FLAT_PNL_MAX = float(getattr(SETTINGS, "DEFENSIVE_CUT_FLAT_PNL_MAX
 GRID_ENABLED = bool(getattr(SETTINGS, "GRID_ENABLED", False))
 SCALP_ENABLED = bool(getattr(SETTINGS, "SCALP_ENABLED", True))
 MULTI_TF_GATE_ENABLED = bool(getattr(SETTINGS, "MULTI_TF_GATE_ENABLED", True))
+XGB_GATE_ENABLED      = bool(getattr(SETTINGS, "XGB_GATE_ENABLED", False))
+XGB_GATE_THRESHOLD    = float(getattr(SETTINGS, "XGB_GATE_THRESHOLD", 0.55))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
 GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
@@ -2665,6 +2668,25 @@ class SalleDesMarchesV6:
                             stats["skipped"] += 1
                             logger.info("SKIP %s — strate gate veto=%s", symbol, gate.get("veto"))
                             continue
+
+                    # XGB Gate (2026-05-18) — filtre prédictif top-quantile
+                    # entraîné sur 848 trades historiques (AUC 0.627). Rejette
+                    # les trades sous le seuil pour ne garder que les top-quantiles
+                    # de probabilité de gain.
+                    if XGB_GATE_ENABLED and gate.get("side") in ("buy", "sell"):
+                        xgb_res = get_xgb_gate().evaluate(
+                            self.exchange._client, symbol, gate["side"])
+                        if xgb_res and xgb_res.get("features_ok"):
+                            proba = xgb_res["proba_win"]
+                            logger.info(
+                                "XGB GATE %s side=%s proba_win=%.3f threshold=%.2f → %s",
+                                symbol, gate["side"], proba, XGB_GATE_THRESHOLD,
+                                "PASS" if proba >= XGB_GATE_THRESHOLD else "VETO",
+                            )
+                            if proba < XGB_GATE_THRESHOLD:
+                                stats["skipped"] += 1
+                                logger.info("SKIP %s — XGB gate veto (proba=%.3f)", symbol, proba)
+                                continue
 
                     bull = self.bull.analyze(symbol, symbol_regime, tech)
                     bear = self.bear.analyze(symbol, symbol_regime, tech)

@@ -80,7 +80,7 @@ SCALP_TP_PNL_PCT = 2 * SCALP_SL_PNL_PCT  # 2026-05-08 : TP = 2 × SL (RR 2:1, ra
 # (lev 10x → 0.13% prix = sortie sur le moindre frémissement). L'agent qui
 # choisit le levier max le fait pour amplifier un setup, le SL doit lui laisser
 # la marge en prix correspondante. Le risque ROE varie maintenant avec le levier.
-SCALP_SL_DIST_PRICE_PCT = 0.005   # 0.5% prix entre best et SL ratchet
+SCALP_SL_DIST_PRICE_PCT = 0.008   # 0.5%→0.8% (2026-05-18 backtest α) : donne plus d'espace aux wins, WR 58.5% directionnel rogné par trail trop serré
 # Emergency = 2× la distance trail, en prix absolu également.
 # ROE conséquent : lev 3x → -3% emergency, lev 6x → -6%, lev 10x → -10%.
 EMERGENCY_LOSS_DIST_PRICE_MULT = 2.0
@@ -90,8 +90,8 @@ EMERGENCY_LOSS_DIST_PRICE_MULT = 2.0
 # observé sur BNB le 13/05 : position monte à +0.06% prix puis redescend,
 # SL reste à -0.5% prix sous l'entry → fermeture en perte alors qu'on aurait
 # pu locker au moins le breakeven.
-SCALP_BE_TRIGGER_BUFFER_PCT = 0.002   # déclenche BE quand best ≥ entry × 1.002
-SCALP_BE_LOCK_BUFFER_PCT    = 0.001   # SL minimum à entry × 1.001 (couvre fees+spread)
+SCALP_BE_TRIGGER_BUFFER_PCT = 0.003   # 0.2%→0.3% : BE déclenche un peu plus tard (réduit faux-positifs sur petit frémissement)
+SCALP_BE_LOCK_BUFFER_PCT    = 0.002   # 0.1%→0.2% : SL minimum à entry × 1.002 (couvre 2× les fees aller-retour)
 
 # ── Sécurité capital (in-process, hard rules) ───────────────────────────────
 # Si une position dépasse ce multiple du SL_PCT en perte (ROE), on la ferme
@@ -192,6 +192,12 @@ SCALP_ENABLED = True  # bull/bear/consensus → entrées dirigées via scalper (
 # Si True : on exige que les 3 strates LLM s'accordent AVANT de déclencher le
 # pipeline bull/bear/scalper. Sinon le gate est transparent (comportement V6).
 MULTI_TF_GATE_ENABLED = True
+
+# XGBoost gate (2026-05-18 backtest α) — filtre prédictif top-quantile.
+# Modèle entraîné sur 848 trades historiques (AUC 0.627). Reject les trades
+# en-dessous du threshold pour ne garder que les top-quantiles probables.
+XGB_GATE_ENABLED   = True
+XGB_GATE_THRESHOLD = 0.55   # 0.50 = neutre, 0.55 = top ~50%, 0.62 = top ~25%
 
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
