@@ -57,14 +57,21 @@ def _read_shared() -> Dict:
 
 
 def _hl_state() -> Dict:
-    out = {"positions": [], "account_value": 0.0, "ok": False}
+    out = {
+        "positions": [],
+        "perp_value": 0.0,
+        "spot_usdc": 0.0,
+        "account_value": 0.0,   # perp + spot (vue totale)
+        "ok": False,
+    }
     if not HL_ADDR:
         return out
     try:
+        # 1) Compte perp
         r = requests.post(
             HL_API, json={"type": "clearinghouseState", "user": HL_ADDR}, timeout=4
         ).json()
-        out["account_value"] = float(r.get("marginSummary", {}).get("accountValue", 0) or 0)
+        out["perp_value"] = float(r.get("marginSummary", {}).get("accountValue", 0) or 0)
         for p in r.get("assetPositions", []):
             pp = p.get("position", {})
             szi = float(pp.get("szi", 0) or 0)
@@ -82,6 +89,16 @@ def _hl_state() -> Dict:
                 "roe": float(pp.get("returnOnEquity", 0) or 0) * 100,
                 "leverage": lev.get("value", 0),
             })
+
+        # 2) Compte spot (les fonds non transférés en perp restent ici)
+        rs = requests.post(
+            HL_API, json={"type": "spotClearinghouseState", "user": HL_ADDR}, timeout=4
+        ).json()
+        for b in rs.get("balances", []) or []:
+            if str(b.get("coin", "")).upper() == "USDC":
+                out["spot_usdc"] = float(b.get("total", 0) or 0)
+
+        out["account_value"] = out["perp_value"] + out["spot_usdc"]
         out["ok"] = True
     except Exception as e:
         out["error"] = str(e)[:120]
@@ -247,7 +264,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="card">
     <h2>Account &amp; Régime</h2>
     <div class="row">
-      <div><div class="lbl">Account</div><div class="big" id="acct">…</div></div>
+      <div><div class="lbl">Total</div><div class="big" id="acct">…</div><div class="mono" id="acctbk"></div></div>
       <div><div class="lbl">Régime</div><div class="big" id="regime">…</div></div>
     </div>
     <div class="row">
@@ -319,6 +336,8 @@ async function refresh() {
 
     // Account
     document.getElementById('acct').innerHTML = '$' + fmt(s.hl.account_value, 2);
+    document.getElementById('acctbk').innerHTML =
+      `perp $${fmt(s.hl.perp_value,2)} · spot $${fmt(s.hl.spot_usdc,2)}`;
     const rg = s.regime || {};
     document.getElementById('regime').innerHTML = '<span class="badge">'+(rg.trend||'?')+'</span> <span class="badge">'+(rg.volatility||'?')+'</span>';
 
