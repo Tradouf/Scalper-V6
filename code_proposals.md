@@ -121,6 +121,44 @@ def main() -> None:
 
 ---
 
+## 2026-05-19 06:00 — [CRITICAL] Filtre ATR plafond : unité incohérente, brique 100% des entrées
+
+**Severity** : critical
+**Files** : `main_v6.py:2655-2659` (filtre `SCALP_MAX_ATR_PCT`), `agents/agent_technical.py:49` (calcul `atr_pct`), `config/settings.py:207` (valeur 0.0065)
+**Pattern** : Depuis commit b908b6f (2026-05-19 05:52, ~10 min avant audit), 100% des cycles loggent `SKIP <SYM> — ATR trop élevé (X > 0.0065)` avec X ∈ {0.5900, 0.5964, 0.8622, 0.9948, 1.4439, ...}. Fenêtre 6h : ENTER=0, CONSENSUS=0, skip_conf=0 — tout est filtré en amont. Aucun trade possible tant que ce filtre est actif.
+**Diagnostic** : Mismatch d'unité entre producteur et consommateur.
+- `agents/agent_technical.py:49` produit `result["atr_pct"] = atr / price * 100` → valeur exprimée en **pourcentage** (ex. 0.59 pour 0.59%).
+- `main_v6.py:2656` compare `atr_pct_now > SCALP_MAX_ATR_PCT` avec `SCALP_MAX_ATR_PCT=0.0065`, qui est une **fraction** (0.65%).
+- Conséquence : la comparaison `0.59 > 0.0065` est toujours vraie pour tout actif avec ATR > 0.0065% (=tous). Le commentaire du settings dit "rejette les trades si atr_pct > 0.65%" — l'intention était 0.65 (en pourcentage), pas 0.0065 (en fraction).
+
+**Proposed fix** : Une seule des deux options (la plus simple = settings).
+
+Option A (settings.py uniquement, 1 ligne) :
+```python
+# Before — config/settings.py:207
+SCALP_MAX_ATR_PCT     = 0.0065   # rejette les trades si atr_pct > 0.65%
+
+# After — aligner sur l'unité percentage de agent_technical.py:49
+SCALP_MAX_ATR_PCT     = 0.65     # rejette si atr_pct > 0.65% (atr_pct en %)
+```
+
+Option B (normaliser côté agent en fraction, cohérent avec le reste du code qui utilise des fractions partout) :
+```python
+# Before — agents/agent_technical.py:49
+result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price * 100
+
+# After — atr_pct en fraction (ex. 0.0059 pour 0.59%)
+result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price
+```
+⚠ Option B impacte tous les autres consommateurs de `atr_pct` (logs, mémoire partagée, RSI directionnel, XGB features) — auditer avant.
+
+**Recommandation** : Option A est correctrice avec un blast radius minimal (1 valeur de settings, pas de risque de régression sur d'autres consommateurs). Je ne peux pas l'appliquer moi-même (SCALP_MAX_ATR_PCT hors des bornes autorisées de l'audit autonome).
+
+**Risk si non corrigé** : Bot 100% flat tant que ce commit est en place. Aucun trade possible, perte d'opportunité totale. Critique car ne se manifeste par AUCUN compteur d'erreur (LLM=0, sync_err=0, recovery_fallback=0 — tous nominaux) — seul un humain qui lit les logs `SKIP ATR trop élevé` peut diagnostiquer. L'audit autonome détecte aujourd'hui mais ne peut pas corriger.
+**Status** : pending
+
+---
+
 ## 2026-05-11 06:00 — [INFO] Compteur `Stats cycle open=N` désynchronisé du recensement exchange
 
 **Severity** : info
