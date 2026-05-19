@@ -42,8 +42,12 @@ TRAIL_STEP_ROE = 0.0015
 TRAIL_BREAKEVEN_ROE = 0.000  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au lieu de breakeven, élimine les sorties "TRAIL BREAKEVEN" à -0.05%
 
 # ── Watchlist scalping ───────────────────────────────────────────────────────
+# Top-30 par dayNtlVlm HL au 2026-05-19. Mettre à jour périodiquement
+# (snapshot via : .venv/bin/python scripts/refresh_watchlist.py).
 SCALP_WATCHLIST = [
-    "BTC", "ETH", "SOL", "BNB", "LINK", "HYPE", "ZEC", "APE", "DOGE", "XRP", "TAO", "AAVE","PENDLE",
+    "BTC", "ETH", "HYPE", "ZEC", "SOL", "TON", "XRP", "DOGE", "SUI", "VVV",
+    "ONDO", "NEAR", "FARTCOIN", "LIT", "BNB", "PUMP", "kPEPE", "MON", "PAXG", "TAO",
+    "BIO", "LINK", "BCH", "PENGU", "AAVE", "GOAT", "WLD", "ENA", "ADA", "VIRTUAL",
 ]
 
 SYMBOLS = SCALP_WATCHLIST

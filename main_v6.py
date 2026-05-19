@@ -272,7 +272,9 @@ class SalleDesMarchesV6:
         self.orderbook = AgentOrderbook(self.exchange)
         self.scalper = AgentScalper(self.memory)
         self.learner = AgentLearner(self.memory)
-        self.symbol_selector = AgentSymbolSelector(self.memory)
+        self.symbol_selector = AgentSymbolSelector(
+            self.memory, max_active=30, max_explore=30,
+        )
         self.trader = AgentTrader(self.memory, self.exchange)
         self.featureengine = FeatureEngine(self.memory, self.exchange)
         self.regimeengine = RegimeEngine(self.memory)
