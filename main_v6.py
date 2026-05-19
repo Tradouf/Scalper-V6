@@ -194,6 +194,10 @@ SCALP_ENABLED = bool(getattr(SETTINGS, "SCALP_ENABLED", True))
 MULTI_TF_GATE_ENABLED = bool(getattr(SETTINGS, "MULTI_TF_GATE_ENABLED", True))
 XGB_GATE_ENABLED      = bool(getattr(SETTINGS, "XGB_GATE_ENABLED", False))
 XGB_GATE_THRESHOLD    = float(getattr(SETTINGS, "XGB_GATE_THRESHOLD", 0.55))
+# Filtres statistiques pré-LLM (2026-05-19)
+SCALP_MAX_ATR_PCT     = float(getattr(SETTINGS, "SCALP_MAX_ATR_PCT", 0.0065))
+SCALP_RSI_LONG_MAX    = float(getattr(SETTINGS, "SCALP_RSI_LONG_MAX", 65.0))
+SCALP_RSI_SHORT_MIN   = float(getattr(SETTINGS, "SCALP_RSI_SHORT_MIN", 35.0))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
 GRID_FORCE_SYMBOLS = list(getattr(SETTINGS, "GRID_FORCE_SYMBOLS", []))
 
@@ -2644,6 +2648,17 @@ class SalleDesMarchesV6:
                         stats["skipped"] += 1
                         continue
 
+                    # FILTRE 1 — ATR PLAFOND (2026-05-19) — analyse stat n=121
+                    # Wins avg atr_pct=0.50% / losses=0.69% (p=0.000). Trader en
+                    # haute volatilité dégrade fortement la WR. Skip AVANT les
+                    # LLM calls coûteuses pour économiser.
+                    atr_pct_now = float(tech.get("atr_pct", 0) or 0)
+                    if atr_pct_now > SCALP_MAX_ATR_PCT:
+                        stats["skipped"] += 1
+                        logger.info("SKIP %s — ATR trop élevé (%.4f > %.4f)",
+                                    symbol, atr_pct_now, SCALP_MAX_ATR_PCT)
+                        continue
+
                     # Multi-timeframe gate (trading floor : H1 + M15 + M1, veto strict).
                     # Court-circuite le pipeline si les 3 strates ne s'accordent pas
                     # AVANT même de payer les LLM bull/bear/scalper. Désactivable via
@@ -2668,6 +2683,23 @@ class SalleDesMarchesV6:
                             stats["skipped"] += 1
                             logger.info("SKIP %s — strate gate veto=%s", symbol, gate.get("veto"))
                             continue
+
+                    # FILTRE 2 — RSI DIRECTIONNEL (2026-05-19) — analyse stat n=121
+                    # Wins entrent à RSI 64 / losses à RSI 68 (p=0.014). N'entre
+                    # pas LONG avec RSI déjà overbought (= acheter le top), ni
+                    # SHORT avec RSI déjà oversold (= vendre le creux).
+                    rsi_now = float(tech.get("rsi", 50) or 50)
+                    side_planned = gate.get("side")
+                    if side_planned == "buy" and rsi_now > SCALP_RSI_LONG_MAX:
+                        stats["skipped"] += 1
+                        logger.info("SKIP %s BUY — RSI overbought (%.1f > %.1f)",
+                                    symbol, rsi_now, SCALP_RSI_LONG_MAX)
+                        continue
+                    if side_planned == "sell" and rsi_now < SCALP_RSI_SHORT_MIN:
+                        stats["skipped"] += 1
+                        logger.info("SKIP %s SELL — RSI oversold (%.1f < %.1f)",
+                                    symbol, rsi_now, SCALP_RSI_SHORT_MIN)
+                        continue
 
                     # XGB Gate (2026-05-18) — filtre prédictif top-quantile
                     # entraîné sur 848 trades historiques (AUC 0.627). Rejette

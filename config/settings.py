@@ -118,7 +118,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.70         # 0.72→0.70 (audit 2026-05-06 12:00): 0 ENTER en 6h, confs réelles 0.68-0.71 systématiquement sous seuil 0.72
+MIN_CONFIDENCE = 0.55         # 0.72→0.70 (audit 2026-05-06 12:00): 0 ENTER en 6h, confs réelles 0.68-0.71 systématiquement sous seuil 0.72
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -198,6 +198,15 @@ MULTI_TF_GATE_ENABLED = True
 # en-dessous du threshold pour ne garder que les top-quantiles probables.
 XGB_GATE_ENABLED   = True
 XGB_GATE_THRESHOLD = 0.55   # 0.50 = neutre, 0.55 = top ~50%, 0.62 = top ~25%
+
+# Filtres pré-LLM basés sur analyse statistique 2026-05-19 (n=121 trades) :
+# - ATR plafond : wins avg=0.50% / losses avg=0.69% (p=0.000, très significatif).
+#   Trader en haute volatilité dégrade fortement la WR.
+# - RSI directionnel : wins entrent à RSI 64 / losses à RSI 68 (p=0.014).
+#   Acheter quand RSI déjà haut = top, vendre quand RSI bas = bottom.
+SCALP_MAX_ATR_PCT     = 0.0065   # rejette les trades si atr_pct > 0.65%
+SCALP_RSI_LONG_MAX    = 65.0     # n'entre pas LONG si RSI > 65 (overbought)
+SCALP_RSI_SHORT_MIN   = 35.0     # n'entre pas SHORT si RSI < 35 (oversold)
 
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
