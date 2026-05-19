@@ -195,7 +195,7 @@ MULTI_TF_GATE_ENABLED = bool(getattr(SETTINGS, "MULTI_TF_GATE_ENABLED", True))
 XGB_GATE_ENABLED      = bool(getattr(SETTINGS, "XGB_GATE_ENABLED", False))
 XGB_GATE_THRESHOLD    = float(getattr(SETTINGS, "XGB_GATE_THRESHOLD", 0.55))
 # Filtres statistiques pré-LLM (2026-05-19)
-SCALP_MAX_ATR_PCT     = float(getattr(SETTINGS, "SCALP_MAX_ATR_PCT", 0.0065))
+SCALP_MAX_ATR_PCT     = float(getattr(SETTINGS, "SCALP_MAX_ATR_PCT", 0.65))   # unité = pourcent (tech["atr_pct"] est x100)
 SCALP_RSI_LONG_MAX    = float(getattr(SETTINGS, "SCALP_RSI_LONG_MAX", 65.0))
 SCALP_RSI_SHORT_MIN   = float(getattr(SETTINGS, "SCALP_RSI_SHORT_MIN", 35.0))
 GRID_MAX_SYMBOLS = int(getattr(SETTINGS, "GRID_MAX_SYMBOLS", 2))
@@ -307,6 +307,10 @@ class SalleDesMarchesV6:
             "open_orders": [],
         }
         self._hl_cache_ts: float = 0.0
+        # Streak de réponses HL vides — voir _hl_sync_once. Évite que le
+        # garde-fou anti-fantôme bloque le cache éternellement quand la
+        # position est vraiment fermée (cas ZEC 2026-05-19).
+        self._hl_empty_streak: int = 0
 
         # Lancer le thread de sync HL en mode live
         if not self.simulation:
@@ -677,16 +681,33 @@ class SalleDesMarchesV6:
                 # assetPositions=[] alors qu'on avait des positions connues, on
                 # ignore et on garde l'ancien cache. Évite le "Stats cycle open=0
                 # alors qu'il y a des positions" + désynchro des guards.
+                # Streak de tolérance (2026-05-19) : après N empties consécutives
+                # on accepte que la position est vraiment fermée — sinon le cache
+                # reste figé indéfiniment (cas ZEC : trail+orphan boucle infinie).
+                HL_EMPTY_STREAK_TOLERANCE = 3   # ≈6s à 2s sync
                 old_positions = dict(self._hl_cache.get("positions", {}) or {})
                 if not positions and old_positions:
-                    logger.warning(
-                        "HL sync: assetPositions vide mais cache avait %d position(s) (%s) "
-                        "→ on conserve l'ancien cache (réponse API suspecte)",
-                        len(old_positions), ",".join(old_positions.keys()),
-                    )
+                    self._hl_empty_streak += 1
+                    if self._hl_empty_streak >= HL_EMPTY_STREAK_TOLERANCE:
+                        logger.warning(
+                            "HL sync: assetPositions vide pour la %d-ième fois — "
+                            "on accepte la fermeture des positions (%s)",
+                            self._hl_empty_streak, ",".join(old_positions.keys()),
+                        )
+                        self._hl_cache["positions"] = positions
+                        self._hl_cache["account_value_usdt"] = account_value
+                        self._hl_empty_streak = 0
+                    else:
+                        logger.warning(
+                            "HL sync: assetPositions vide (streak=%d/%d) mais cache avait %d position(s) (%s) "
+                            "→ on conserve l'ancien cache (réponse API suspecte)",
+                            self._hl_empty_streak, HL_EMPTY_STREAK_TOLERANCE,
+                            len(old_positions), ",".join(old_positions.keys()),
+                        )
                 else:
                     self._hl_cache["positions"] = positions
                     self._hl_cache["account_value_usdt"] = account_value
+                    self._hl_empty_streak = 0
             if prices_ok:
                 self._hl_cache["prices"] = prices
             if orders_ok:
@@ -2655,7 +2676,7 @@ class SalleDesMarchesV6:
                     atr_pct_now = float(tech.get("atr_pct", 0) or 0)
                     if atr_pct_now > SCALP_MAX_ATR_PCT:
                         stats["skipped"] += 1
-                        logger.info("SKIP %s — ATR trop élevé (%.4f > %.4f)",
+                        logger.info("SKIP %s — ATR trop élevé (%.3f%% > %.3f%%)",
                                     symbol, atr_pct_now, SCALP_MAX_ATR_PCT)
                         continue
 

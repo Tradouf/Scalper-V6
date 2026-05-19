@@ -204,7 +204,7 @@ XGB_GATE_THRESHOLD = 0.55   # 0.50 = neutre, 0.55 = top ~50%, 0.62 = top ~25%
 #   Trader en haute volatilité dégrade fortement la WR.
 # - RSI directionnel : wins entrent à RSI 64 / losses à RSI 68 (p=0.014).
 #   Acheter quand RSI déjà haut = top, vendre quand RSI bas = bottom.
-SCALP_MAX_ATR_PCT     = 0.0065   # rejette les trades si atr_pct > 0.65%
+SCALP_MAX_ATR_PCT     = 0.65     # rejette si atr_pct > 0.65% (unité = pourcent, comme tech["atr_pct"] dans agent_technical.py)
 SCALP_RSI_LONG_MAX    = 65.0     # n'entre pas LONG si RSI > 65 (overbought)
 SCALP_RSI_SHORT_MIN   = 35.0     # n'entre pas SHORT si RSI < 35 (oversold)
 
