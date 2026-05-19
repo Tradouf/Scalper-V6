@@ -155,7 +155,7 @@ result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price
 **Recommandation** : Option A est correctrice avec un blast radius minimal (1 valeur de settings, pas de risque de régression sur d'autres consommateurs). Je ne peux pas l'appliquer moi-même (SCALP_MAX_ATR_PCT hors des bornes autorisées de l'audit autonome).
 
 **Risk si non corrigé** : Bot 100% flat tant que ce commit est en place. Aucun trade possible, perte d'opportunité totale. Critique car ne se manifeste par AUCUN compteur d'erreur (LLM=0, sync_err=0, recovery_fallback=0 — tous nominaux) — seul un humain qui lit les logs `SKIP ATR trop élevé` peut diagnostiquer. L'audit autonome détecte aujourd'hui mais ne peut pas corriger.
-**Status** : pending
+**Status** : applied 2026-05-19 (Option A) — `config/settings.py:211` désormais `SCALP_MAX_ATR_PCT = 0.65` (unité = pourcent, alignée sur `agent_technical.py:49`). Logs audit 12:00 confirment comparaisons cohérentes `X.XX% > 0.650%` ; filtre opérationnel. Position ZEC SELL ouverte (preuve qu'au moins certains symboles passent désormais).
 
 ---
 
