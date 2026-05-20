@@ -46,8 +46,10 @@ TRAIL_BREAKEVEN_ROE = 0.000  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au l
 # (snapshot via : .venv/bin/python scripts/refresh_watchlist.py).
 SCALP_WATCHLIST = [
     "BTC", "ETH", "HYPE", "ZEC", "SOL", "TON", "XRP", "DOGE", "SUI", "VVV",
-    "ONDO", "NEAR", "FARTCOIN", "LIT", "BNB", "PUMP", "kPEPE", "MON", "PAXG", "TAO",
+    "ONDO", "NEAR", "FARTCOIN", "LIT", "BNB", "PUMP", "MON", "PAXG", "TAO",
     "BIO", "LINK", "BCH", "PENGU", "AAVE", "GOAT", "WLD", "ENA", "ADA", "VIRTUAL",
+    # NOTE: kPEPE/kSHIB/etc retirés — bot uppercase tout (KPEPE) mais HL API
+    # est case-sensitive (kPEPE) → 500 errors. À fixer proprement plus tard.
 ]
 
 SYMBOLS = SCALP_WATCHLIST
@@ -200,7 +202,7 @@ MULTI_TF_GATE_ENABLED = True
 # XGBoost gate (2026-05-18 backtest α) — filtre prédictif top-quantile.
 # Modèle entraîné sur 848 trades historiques (AUC 0.627). Reject les trades
 # en-dessous du threshold pour ne garder que les top-quantiles probables.
-XGB_GATE_ENABLED   = True
+XGB_GATE_ENABLED   = False   # 2026-05-20 : désactivé temporairement — modèle entraîné sur données pré-fixes bugs, calibration suspecte
 XGB_GATE_THRESHOLD = 0.55   # 0.50 = neutre, 0.55 = top ~50%, 0.62 = top ~25%
 
 # Filtres pré-LLM basés sur analyse statistique 2026-05-19 (n=121 trades) :
@@ -208,16 +210,16 @@ XGB_GATE_THRESHOLD = 0.55   # 0.50 = neutre, 0.55 = top ~50%, 0.62 = top ~25%
 #   Trader en haute volatilité dégrade fortement la WR.
 # - RSI directionnel : wins entrent à RSI 64 / losses à RSI 68 (p=0.014).
 #   Acheter quand RSI déjà haut = top, vendre quand RSI bas = bottom.
-SCALP_MAX_ATR_PCT     = 0.65     # rejette si atr_pct > 0.65% (unité = pourcent, comme tech["atr_pct"] dans agent_technical.py)
+SCALP_MAX_ATR_PCT     = 1.5      # 2026-05-20 : 0.65→1.5 — l'ancien seuil rejetait 85% du top-30 (mean ATR 1.07%). On laisse passer le mid-range pour observer les vrais setups.
 SCALP_RSI_LONG_MAX    = 65.0     # n'entre pas LONG si RSI > 65 (overbought)
 SCALP_RSI_SHORT_MIN   = 35.0     # n'entre pas SHORT si RSI < 35 (oversold)
 
 # ── Grid bot (range markets) ─────────────────────────────────────────────────
 # Actif quand regime.trend == "range". 1 unité par symbole : buy limit sous le
 # marché → quand rempli, sell limit (TP) au-dessus. Cycle auto-renouvelant.
-GRID_ENABLED = False
-GRID_ATR_FACTOR = 0.7       # spacing = ATR × factor (0.5 = demi-ATR par côté)
-GRID_LEVELS = 3              # grille active tant que price dans ±(LEVELS+1)×spacing
+GRID_ENABLED = True
+GRID_ATR_FACTOR = 0.5       # spacing = ATR × factor (0.5 = demi-ATR par côté)
+GRID_LEVELS = 5              # grille active tant que price dans ±(LEVELS+1)×spacing
 GRID_NOTIONAL = 15.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
 GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
