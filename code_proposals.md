@@ -178,3 +178,30 @@ result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price
 **Status** : pending
 
 ---
+
+## 2026-05-20 06:00 — [INFO] Order PUMP rejeté qty=0 : entry et sl collapsent au même tick (sub-cent asset)
+
+**Severity** : info
+**Files** : `main_v6.py:2042-2081` (`_compute_position_size`), `main_v6.py:2160-2180` (`_send_live_order`), pipeline d'arrondi prix entre scalper et live order (à localiser).
+**Pattern** : Log fenêtre 05:39:24-25 — `SCALPER NORM PUMP BUY entry=0.001679 sl=0.001664 tp=0.001704` puis immédiatement `LIVE PUMP: taille calculée nulle (entry=0.0020 sl=0.0020)`. Le format `%.4f` afficherait `0.0017` si entry valait toujours 0.001679 → la valeur réellement passée à `_send_live_order` a été remontée à ~0.002 et **sl identique à entry** → `diff=abs(entry-sl)=0` → retour `0.0` par `_compute_position_size:2049-2050` → ordre annulé. ATR plafond relevé à 1.5% par humain entre audits a libéré l'entrée de PUMP — pour la première fois post-fix ATR le pipeline pousse jusqu'à `_send_live_order`, et c'est cette première entrée qui révèle le bug.
+**Diagnostic** : Entre la sortie du scalper (`agent_scalper.py:131-133`, arrondi à 8 décimales 0.001679 / 0.001664) et l'appel à `_send_live_order`, un mécanisme d'ajustement (tick size HL, recalibration fill price, smart limit override ?) ramène entry et sl à la même valeur quand le prix est < $0.01. Pour PUMP @ ~$0.00168, la distance scalpée (0.000015 = 0.89%) est inférieure à la granularité d'arrondi appliquée, donc entry et sl convergent vers le même tick. Conséquence : tous les actifs sub-cent (PUMP, BIO peut-être) ne pourront jamais ouvrir un scalp.
+**Proposed fix** :
+```python
+# Investigation requise — pistes (l'audit ne touche pas au code) :
+# 1) Localiser la transformation entry/sl entre SCALPER ENTER log et _send_live_order
+#    (rechercher `def _open_position`, `_smart_entry`, application tick size via
+#    hl_client). Vérifier si un round(x, 4) ou format("%.4f") est utilisé là où un
+#    arrondi au tick size de l'actif (variable selon prix) devrait s'appliquer.
+# 2) Si la cause est un arrondi tick size HL pour sub-cent assets, court-circuiter
+#    en utilisant l'arrondi natif HL (hl_client.price_to_wire(symbol, price) ou
+#    équivalent — à vérifier dans hyperliquid_client.py) plutôt qu'un round arbitraire.
+# 3) En attendant le fix, garde explicite dans _send_live_order avant qty :
+#    if abs(entry - sl) / entry < 0.001:  # 0.1% min entry/sl
+#        logger.warning("LIVE %s: distance entry/sl sub-tick (%.6f/%.6f) — skip", symbol, entry, sl)
+#        return None
+#    (au moins l'erreur devient explicite, pas masquée derrière "taille calculée nulle")
+```
+**Risk si non corrigé** : Tous les actifs sub-cent (PUMP, BIO et autres mèmes-coins du top-30) sont structurellement inopérables côté scalp même quand toutes les autres conditions sont réunies (ATR OK, strate gate OK, confiance OK, scalper LLM ENTER). Avec le filtre ATR relâché à 1.5%, la part de la watchlist éligible augmente mais une fraction non-négligeable retombe sur cette impasse silencieuse (un seul WARNING log). Perte d'opportunités proportionnelle au nombre d'actifs sub-cent dans la watchlist active.
+**Status** : pending
+
+---
