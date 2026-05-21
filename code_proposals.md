@@ -205,3 +205,55 @@ result["atr_pct"]   = float(ind.get("atr", 0) or 0) / price
 **Status** : pending
 
 ---
+
+## 2026-05-22 00:00 — [WARNING] GRID ETH : boucle infinie place_tp `Reduce only order would increase position`
+
+**Severity** : warning
+**Files** : `agents/grid_bot/` (logique `place_tp` après fill d'un niveau, à localiser — probablement `grid_bot/manager.py` ou équivalent ; rechercher la fonction qui pose un ordre TP avec `reduce_only=True` après remplissage)
+**Pattern** : Sur la fenêtre 6h (échantillon log 23:59:15→23:59:56 cité dans le prompt audit), warning toutes les ~3-4 secondes reproductible identiquement :
+```
+[WARNING] sdm.grid — GRID ETH place_limit buy@2137.4500: HyperliquidClientError('Erreur ordre: Reduce only order would increase position. asset=1')
+[WARNING] sdm.grid — GRID ETH: place_tp buy@2137.4500 échoué pour niveau sell@2145.3571 — reste en filled
+```
+Estimation grossière : ~5000+ occurrences sur 6h (≥0.25 Hz). Aucune autre action grid ETH n'apparaît (pas de nouveau cycle, pas de cancel). Le niveau reste bloqué en `filled` indéfiniment.
+
+**Diagnostic** : Le grid a un niveau `sell@2145.3571` rempli (donc il a ouvert un SHORT sur ETH à 2145.36). Il tente le TP en posant un `buy@2137.45` (prix sous l'entrée, cohérent pour un SHORT) avec `reduce_only=True`. Hyperliquid rejette : `Reduce only order would increase position` → cela signifie **que la position courante n'est pas SHORT** (elle est flat, ou LONG). Hypothèses :
+1. La position SHORT initiale du grid a été fermée par un autre mécanisme (scalp flip, external_exit SL, fermeture manuelle) sans que le grid_bot mette à jour son state local "niveau filled".
+2. Race condition : le grid considère le niveau filled mais l'ordre limit n'a en réalité jamais été exécuté côté exchange.
+3. Position LONG est apparue (scalp ou autre grid) qui annule le SHORT du grid en netting unifié HL.
+
+Le grid_bot retry mécaniquement à chaque tick sans vérifier l'état réel de la position avant de poser le TP, ce qui produit un log spam permanent + niveau bloqué en `filled`.
+
+**Proposed fix** :
+```python
+# Avant place_tp d'un niveau filled, vérifier l'état exchange réel de la position
+# Pseudo-code, à localiser dans la classe grid manager :
+
+def place_tp_for_level(self, symbol, level):
+    pos = self.hl_client.get_position(symbol)
+    expected_side = "short" if level.side == "sell" else "long"
+    pos_size = pos.get("size", 0.0) if pos else 0.0
+    pos_side = pos.get("side") if pos and pos_size != 0 else None
+
+    if pos_side != expected_side or pos_size == 0:
+        # Position n'existe plus côté exchange — niveau filled obsolète
+        logger.warning(
+            "GRID %s: niveau %s@%s filled mais position exchange=%s size=%s — "
+            "réinit niveau (filled→empty), abandon TP",
+            symbol, level.side, level.price, pos_side, pos_size,
+        )
+        level.state = "empty"  # ou level.reset() selon API interne
+        return None
+    # ... place TP normalement ...
+```
+Alternative minimale (mitigation seulement) : ajouter un backoff exponentiel sur les échecs `Reduce only ... would increase` et marquer le niveau `error` après N échecs consécutifs (3-5) pour éviter le spam.
+
+**Risk si non corrigé** :
+1. **Log spam permanent** : ~5000 warnings/6h pollue `logs/sdm.log`, analyse manuelle d'autres erreurs plus difficile + rotation log accélérée.
+2. **Niveau grid bloqué** : le niveau `sell@2145.3571` reste indéfiniment en `filled` sans pouvoir cycler — perte d'efficacité de la grille ETH.
+3. **API HL hit rate** : ~0.25 Hz d'ordre rejeté = pression inutile sur l'endpoint exchange, risque de rate-limit collatéral sur les autres opérations légitimes (place_order scalp, get_positions sync loop).
+4. **Détection de pannes obfusquée** : un opérateur lisant les logs voit une erreur récurrente sans gravité apparente et risque de la normaliser ; un futur bug grid réel pourrait passer inaperçu dans le bruit.
+
+**Status** : pending
+
+---

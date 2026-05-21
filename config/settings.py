@@ -36,8 +36,8 @@ HL_SYNC_SEC = 2.0
 # main_v6.py attend TP_ARM_PCT par défaut à 0.0060 (0.60% brut),
 # puis un trailing par crans de ROE.
 TRAIL_CHECK_SEC = 2
-TP_ARM_PCT = 0.005          # 0.8%→0.5% : arme le trail plus tôt, réduit les sorties breakeven
-TRAIL_DROP_PCT = 0.0025
+TP_ARM_PCT = 0.007          # 2026-05-21 : 0.5%→0.7%, arme le trail plus tard pour laisser respirer les wins (R/R effectif amélioré)
+TRAIL_DROP_PCT = 0.004      # 2026-05-21 : 0.25%→0.40%, trail plus large = wins gardent plus de marge avant cut
 TRAIL_STEP_ROE = 0.0015
 TRAIL_BREAKEVEN_ROE = 0.000  # 0.10%→0.30% : SL post-arm reste +0.30% ROE au lieu de breakeven, élimine les sorties "TRAIL BREAKEVEN" à -0.05%
 
@@ -79,7 +79,7 @@ SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
 SCALP_MAX_DURATION_MIN = 30
 SCALP_SL_PNL_PCT = 0.013
-SCALP_TP_PNL_PCT = 2 * SCALP_SL_PNL_PCT  # 2026-05-08 : TP = 2 × SL (RR 2:1, ratchet trail)
+SCALP_TP_PNL_PCT = 2.5 * SCALP_SL_PNL_PCT  # 2026-05-21 : 2x→2.5x, R/R nominal 2.5:1 pour compenser le ratchet trail qui mord tôt (TP_ARM=0.5%)
 
 # 2026-05-10 — Trail ratchet en distance prix ABSOLUE (indépendante du levier).
 # Avant : sl_dist_price = SL_PNL_PCT / leverage → trail ultra-serré à haut levier
@@ -124,7 +124,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.55         # 0.72→0.70 (audit 2026-05-06 12:00): 0 ENTER en 6h, confs réelles 0.68-0.71 systématiquement sous seuil 0.72
+MIN_CONFIDENCE = 0.65         # 2026-05-21 : 0.55→0.65, filtre entrée plus strict pour réduire le bleed (951 trades / WR 56.5% / NET -23.71 USDC sur 30j : trop de trades vs edge)
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -222,7 +222,7 @@ GRID_ATR_FACTOR = 0.5       # spacing = ATR × factor (0.5 = demi-ATR par côté
 GRID_LEVELS = 5              # grille active tant que price dans ±(LEVELS+1)×spacing
 GRID_NOTIONAL = 15.0         # USDT par unité de grille (20→30 : +50% profit par cycle)
 GRID_LEVERAGE = 3            # levier grille (indépendant du scalp)
-GRID_MAX_SYMBOLS = 5         # 3→5 : avec ATR fix, plus de symboles en range éligibles simultanément
+GRID_MAX_SYMBOLS = 3         # 2026-05-21 : 0→3 sortie du mode test isolé, grid s'active sur 3 symboles qualifiés (range + ATR OK)
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
 GRID_GRACE_SEC = 8.0         # délai avant 1er tick (laisse le cache HL confirmer l'ordre)
 GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore régime + position)
@@ -231,7 +231,7 @@ GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore
 # Réduit les frais en visant le côté maker (~+0.01%) au lieu du taker (+0.045%).
 # Fallback market si l'ordre limit n'est pas rempli dans le timeout.
 LIMIT_FILL_TIMEOUT_SEC = 30       # Délai max d'attente d'un fill limit avant fallback
-LIMIT_USE_MIN_CONFIDENCE = 0.70   # Conf min pour tenter limit (sinon market direct)
+LIMIT_USE_MIN_CONFIDENCE = 0.55   # 2026-05-21 : 0.72→0.55, plus de trades en maker (fees 3× plus faibles vs taker) — NET HL était -29.6 USDC dont -15.4 de fees
 LIMIT_MAX_SPREAD_PCT = 0.0020     # Spread max pour tenter limit (20 bps — couvre BTC/SOL)
 LIMIT_OK_VOLATILITY = ("low", "medium")  # Régimes vol où limit est tenté
 LIMIT_POLL_INTERVAL_SEC = 0.5     # Fréquence de check de fill pendant l'attente
