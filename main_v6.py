@@ -42,6 +42,12 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from memory.shared_memory import SharedMemory
+from memory.order_registry import (
+    SOURCE_RECOVERY,
+    SOURCE_SCALP_SL,
+    SOURCE_SCALP_TP,
+    get_order_registry,
+)
 from exchanges.base import OrderRequest
 from exchanges.hyperliquid import HyperliquidExchangeClient
 from agents.agent_orchestrator import AgentOrchestrator
@@ -293,6 +299,26 @@ class SalleDesMarchesV6:
         self._emergency_closing: Dict[str, float] = {}
         self._emergency_lock = threading.Lock()
         self.grid_manager = GridManager(self.exchange)
+
+        # Agent mean reversion (déterministe, H1, standalone)
+        from agents.agent_mean_reversion import AgentMeanReversion
+        self.mean_rev = AgentMeanReversion(
+            exchange=self.exchange,
+            memory=self.memory,
+            config={
+                "window": int(getattr(SETTINGS, "MR_WINDOW", 50)),
+                "entry_z": float(getattr(SETTINGS, "MR_ENTRY_Z", 2.0)),
+                "exit_z": float(getattr(SETTINGS, "MR_EXIT_Z", 0.4)),
+                "hl_min": float(getattr(SETTINGS, "MR_HL_MIN", 5.0)),
+                "hl_max": float(getattr(SETTINGS, "MR_HL_MAX", 48.0)),
+                "interval": str(getattr(SETTINGS, "MR_INTERVAL", "1h")),
+                "symbols": list(getattr(SETTINGS, "MR_SYMBOLS", ["ETH", "SOL", "LINK"])),
+                "cooldown_sec": int(getattr(SETTINGS, "MR_COOLDOWN_SEC", 1800)),
+                "max_positions": int(getattr(SETTINGS, "MR_MAX_POSITIONS", 2)),
+            },
+        )
+        # Suivi des positions ouvertes par MR (clé symbol → entry info)
+        self._mr_positions: Dict[str, Dict] = {}
         self._tick_decimals: Dict[str, int] = {}
         self._prev_open_positions: Dict[str, Dict] = {}
         self._exit_cooldowns: Dict[str, float] = {}
@@ -337,6 +363,7 @@ class SalleDesMarchesV6:
             )
             self._trail_thread.start()
             logger.info("Trail monitor thread démarré (intervalle=%ds)", TRAIL_CHECK_SEC)
+            self._reconcile_order_registry_at_boot()
             self._recover_trail_guards()
 
             if GRID_ENABLED:
@@ -358,6 +385,18 @@ class SalleDesMarchesV6:
             )
             self._health_check_thread.start()
             logger.info("Health check thread démarré (intervalle=60s)")
+
+            # Mean reversion thread (H1, déterministe)
+            if bool(getattr(SETTINGS, "MR_ENABLED", True)):
+                self._mr_thread = threading.Thread(
+                    target=self._mean_reversion_loop,
+                    daemon=True,
+                    name="mean-reversion",
+                )
+                self._mr_thread.start()
+                logger.info("Mean reversion thread démarré (intervalle=%ds, syms=%s)",
+                            int(getattr(SETTINGS, "MR_CHECK_INTERVAL_SEC", 300)),
+                            getattr(SETTINGS, "MR_SYMBOLS", []))
 
         if self.simulation and RESET_SIM_POSITIONS:
             self._reset_sim_positions()
@@ -417,6 +456,203 @@ class SalleDesMarchesV6:
             except Exception as e:
                 logger.warning("trail loop error: %r", e)
             time.sleep(TRAIL_CHECK_SEC)
+
+    def _mean_reversion_loop(self) -> None:
+        """Thread démon : agent mean-reversion (H1, déterministe).
+
+        Toutes les MR_CHECK_INTERVAL_SEC, évalue le z-score de chaque symbole de
+        la whitelist MR. Ouvre/ferme des positions en fonction du signal.
+        Skip les symboles gérés par le grid (Lot 3) ou avec une position scalp.
+        """
+        interval = int(getattr(SETTINGS, "MR_CHECK_INTERVAL_SEC", 300))
+        time.sleep(max(15.0, HL_SYNC_SEC * 7))  # boot delay
+        while True:
+            try:
+                self._mean_reversion_tick()
+            except Exception as e:
+                logger.warning("mean_reversion loop error: %r", e)
+            time.sleep(interval)
+
+    def _mean_reversion_tick(self) -> None:
+        if self.simulation:
+            return
+        regime = self.memory.get_regime() or {}
+        open_pos = self._get_open_positions() or {}
+        try:
+            grid_syms = set(self.grid_manager.active_symbols())
+        except Exception:
+            grid_syms = set()
+
+        # Sync interne : si une position MR a disparu (closed via SL natif ou autre),
+        # purge le tracking pour éviter les fuites mémoire.
+        for sym in list(self._mr_positions.keys()):
+            if sym not in open_pos:
+                logger.info("[MR] %s position fermée (hors evaluate) — tracking nettoyé", sym)
+                self._mr_positions.pop(sym, None)
+
+        mr_open_count = len(self._mr_positions)
+        max_pos = int(getattr(SETTINGS, "MR_MAX_POSITIONS", 2))
+
+        for sym in self.mean_rev.symbols:
+            try:
+                pos = open_pos.get(sym)
+                position_open_mr = sym in self._mr_positions
+                # Position scalp ou autre (pas MR) sur ce symbole : skip
+                if pos and not position_open_mr:
+                    logger.info("[MR] %s SKIP — position existante (non-MR) side=%s entry=%s",
+                                sym, pos.get("side"), pos.get("entry"))
+                    continue
+
+                sig = self.mean_rev.evaluate(
+                    symbol=sym, regime=regime,
+                    position_open=position_open_mr,
+                    grid_active=(sym in grid_syms),
+                )
+                z = sig.get("z")
+                hl = sig.get("hl")
+                logger.info(
+                    "[MR] %s signal=%s z=%s hl=%s reason=%s",
+                    sym, sig.get("signal"),
+                    f"{z:.2f}" if z is not None else "?",
+                    f"{hl:.1f}" if hl is not None else "?",
+                    sig.get("reason"),
+                )
+
+                if sig["signal"] == "LONG" and mr_open_count < max_pos:
+                    if self._mr_open_position(sym, "buy", sig):
+                        mr_open_count += 1
+                elif sig["signal"] == "SHORT" and mr_open_count < max_pos:
+                    if self._mr_open_position(sym, "sell", sig):
+                        mr_open_count += 1
+                elif sig["signal"] == "CLOSE" and position_open_mr:
+                    self._mr_close_position(sym, reason=sig.get("reason", "reverted"))
+            except Exception as e:
+                logger.warning("[MR] %s tick error: %r", sym, e)
+
+        # Persiste l'état pour le dashboard (carte "Mean Reversion")
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            snapshot = {
+                "ts": time.time(),
+                "symbols": self.mean_rev.symbols,
+                "metrics": self.mean_rev.get_last_metrics(),
+                "open_positions": {
+                    sym: {
+                        "side": info.get("side"), "entry": info.get("entry"),
+                        "qty": info.get("qty"), "sl_price": info.get("sl_price"),
+                        "z_at_entry": info.get("z_at_entry"),
+                        "hl_at_entry": info.get("hl_at_entry"),
+                        "opened_ts": info.get("ts"),
+                    } for sym, info in self._mr_positions.items()
+                },
+            }
+            mr_path = _Path(__file__).parent / "memory" / "mr_state.json"
+            mr_path.write_text(_json.dumps(snapshot, indent=2, default=str))
+        except Exception as e:
+            logger.debug("[MR] persist state: %r", e)
+
+    def _mr_open_position(self, symbol: str, side: str, sig: Dict) -> bool:
+        """Ouvre une position MR. Pose un SL natif HL fixe au prix z = ±3.5σ.
+        N'enregistre PAS de trail guard (les positions MR sont gérées par
+        evaluate() — pas de ratchet, fermeture sur retour à la moyenne)."""
+        try:
+            mean = float(sig.get("mean") or 0)
+            std = float(sig.get("std") or 0)
+            size_factor = float(sig.get("size_factor", 1.0))
+            notional = float(getattr(SETTINGS, "MR_NOTIONAL_USDC", 30.0)) * size_factor
+            leverage = int(getattr(SETTINGS, "MR_LEVERAGE", 3))
+
+            mark = self._get_current_price(symbol, mean)
+            if mark <= 0 or notional <= 0 or std <= 0:
+                logger.warning("[MR] %s open skip: mark/notional/std invalides", symbol)
+                return False
+
+            qty = round(notional / mark, 6)
+            # SL au seuil z = ±3.5 (divergence anormale)
+            sl_z = 3.5
+            sl_price = self._round_px(symbol, mean + sl_z * std) if side == "sell" else \
+                       self._round_px(symbol, mean - sl_z * std)
+
+            req = OrderRequest(
+                symbol=symbol, side=side, qty=qty,
+                order_type="market", price=0,
+                leverage=leverage, reduce_only=False, client_id=None,
+            )
+            result = self._exchange_place_order_safe(req)
+            if not result:
+                logger.warning("[MR] %s open ÉCHEC place_order", symbol)
+                return False
+
+            # Pose SL natif (pas de TP — le close se fait via evaluate signal CLOSE)
+            try:
+                res = self.exchange.place_tpsl_native(
+                    symbol=symbol, side=side, qty=qty, entry=mark,
+                    tp=None, sl=sl_price,
+                )
+                sl_oid = res.get("sl_oid") if isinstance(res, dict) else None
+                if sl_oid:
+                    try:
+                        get_order_registry().register(
+                            oid=int(sl_oid),
+                            source=SOURCE_RECOVERY,  # tag MR via meta
+                            symbol=symbol, intent="sl",
+                            side=("sell" if side == "buy" else "buy"),
+                            is_trigger=True, reduce_only=True,
+                            qty=qty, price=float(sl_price),
+                            meta={"placed_at": "mean_reversion"},
+                        )
+                    except Exception:
+                        pass
+                logger.info(
+                    "[MR] %s OPEN %s qty=%.6f mark=%.4f sl=%.4f (z=%.2f hl=%.1f sf=%.2f)",
+                    symbol, side.upper(), qty, mark, sl_price,
+                    float(sig.get("z") or 0), float(sig.get("hl") or 0), size_factor,
+                )
+            except Exception as e:
+                logger.warning("[MR] %s SL natif échec: %r", symbol, e)
+
+            self._mr_positions[symbol] = {
+                "side": side, "entry": mark, "qty": qty, "leverage": leverage,
+                "ts": time.time(), "sl_price": sl_price,
+                "z_at_entry": sig.get("z"), "hl_at_entry": sig.get("hl"),
+            }
+            return True
+        except Exception as e:
+            logger.error("[MR] %s open error: %r", symbol, e)
+            return False
+
+    def _mr_close_position(self, symbol: str, reason: str = "") -> bool:
+        """Ferme une position MR via market reduce_only."""
+        try:
+            info = self._mr_positions.get(symbol)
+            if not info:
+                return False
+            close_side = "sell" if info["side"] == "buy" else "buy"
+            req = OrderRequest(
+                symbol=symbol, side=close_side, qty=info["qty"],
+                order_type="market", price=0,
+                leverage=info["leverage"], reduce_only=True, client_id=None,
+            )
+            result = self._exchange_place_order_safe(req)
+            if result:
+                logger.info("[MR] %s CLOSE %s qty=%.6f (%s)",
+                            symbol, close_side.upper(), info["qty"], reason)
+                self._mr_positions.pop(symbol, None)
+                return True
+            logger.warning("[MR] %s close ÉCHEC", symbol)
+            return False
+        except Exception as e:
+            logger.error("[MR] %s close error: %r", symbol, e)
+            return False
+
+    def _exchange_place_order_safe(self, req: "OrderRequest") -> Optional[object]:
+        """Wrapper safe pour place_order (catch exceptions, retourne result ou None)."""
+        try:
+            return self.exchange.place_order(req)
+        except Exception as e:
+            logger.warning("place_order safe wrapper: %r", e)
+            return None
 
     def _health_check_loop(self) -> None:
         """Thread démon : scan périodique de toutes les positions pour détecter
@@ -500,8 +736,18 @@ class SalleDesMarchesV6:
                 except (ValueError, TypeError):
                     pass
 
+        # Symboles gérés par le grid : pas de SL trail posé par le health check.
+        # Le grid utilise des limit reduce_only (TP) et son breakout guard ;
+        # l'emergency exit dans _monitor_trailing reste actif comme filet.
+        try:
+            grid_syms = set(self.grid_manager.active_symbols())
+        except Exception:
+            grid_syms = set()
+
         for symbol, pos in open_pos.items():
             try:
+                if symbol in grid_syms:
+                    continue  # grid en charge, pas de protection scalp posée
                 side = str(pos.get("side", "")).lower()
                 entry = float(pos.get("entry", 0) or 0)
                 qty = abs(float(pos.get("qty", 0) or 0))
@@ -586,6 +832,7 @@ class SalleDesMarchesV6:
         with self._hl_cache_lock:
             open_orders = list(self._hl_cache.get("open_orders", []))
             prices = dict(self._hl_cache.get("prices", {}))
+            positions_cache = dict(self._hl_cache.get("positions", {}))
 
         open_oids: set = set()
         for o in open_orders:
@@ -594,10 +841,20 @@ class SalleDesMarchesV6:
             except (ValueError, TypeError):
                 pass
 
+        # szi signé par symbole pour le grid (G2 : check avant TP)
+        position_szi: Dict[str, float] = {}
+        for sym, pos in positions_cache.items():
+            try:
+                qty = float(pos.get("qty", 0) or 0)
+                side = str(pos.get("side", "")).lower()
+                position_szi[sym] = qty if side == "buy" else -qty
+            except Exception:
+                pass
+
         for symbol in self.grid_manager.active_symbols():
             price = float(prices.get(symbol, 0) or 0)
             if price > 0:
-                self.grid_manager.on_tick(symbol, open_oids, price)
+                self.grid_manager.on_tick(symbol, open_oids, price, position_szi.get(symbol, 0.0))
 
     def _hl_sync_once(self) -> None:
         """Lit positions, prix, equity et ordres ouverts depuis l'API HL."""
@@ -825,22 +1082,41 @@ class SalleDesMarchesV6:
                 tp_initial = entry * (1 - SCALP_TP_PNL_PCT / max(1.0, leverage))
             tol = entry * 0.003
 
+            # PnL réel pour départager profit/loss
+            if side == "buy":
+                pnl_real = exit_px - entry
+            else:
+                pnl_real = entry - exit_px
+
             if abs(exit_px - tp_initial) < tol:
                 cause = "tp_natif_hit"
-            elif (side == "buy" and exit_px > entry) or (side == "sell" and exit_px < entry):
+            elif pnl_real > 0 and (
+                (side == "buy" and exit_px > entry) or (side == "sell" and exit_px < entry)
+            ):
                 # Sortie en gain mais avant le TP → trail SL a monté et hit
                 cause = "trail_hit_profit"
             elif abs(exit_px - sl_initial) < tol:
                 cause = "sl_natif_hit_loss"
-            elif (side == "buy" and exit_px < entry) or (side == "sell" and exit_px > entry):
-                # Perte mais pas exactement au SL initial : trail trop tôt
-                # ou close manuel. Le ratchet rendrait ce cas rare.
+            elif pnl_real <= 0:
+                # Toute perte (que le SL initial soit touché précisément ou non).
+                # Ex: liquidation, fermeture manuelle en perte, SL trail trop tôt.
                 cause = "sl_natif_hit_loss"
 
         mem.record_exit(trade_id, exit_px, cause)
         # Calcul approximatif du PnL pour le log
         if entry > 0:
             pnl_pct = ((exit_px - entry) / entry) if side == "buy" else ((entry - exit_px) / entry)
+            # Mirror dans shared_memory.trade_history (consommé par AgentLearner + freeze)
+            try:
+                self.memory.add_trade({
+                    "symbol": symbol, "side": side,
+                    "entry": entry, "exit": exit_px,
+                    "pnl_pct": round(pnl_pct * 100, 4),
+                    "cause": cause, "trade_id": trade_id,
+                    "leverage": leverage,
+                })
+            except Exception as _e:
+                logger.warning("[SCALP_MEM] mirror add_trade failed: %r", _e)
             logger.info("[SCALP_MEM] exit %s %s pnl=%+.3f%% cause=%s",
                         symbol, trade_id, pnl_pct * 100, cause)
         else:
@@ -1131,6 +1407,17 @@ class SalleDesMarchesV6:
                                 "TRAIL NATIVE SL %s %s: SL manquant → placé @ %.4f oid=%s",
                                 symbol, side, target_sl_px, new_oid,
                             )
+                            try:
+                                get_order_registry().register(
+                                    oid=int(new_oid),
+                                    source=SOURCE_SCALP_SL,
+                                    symbol=symbol, intent="sl", side=side_close,
+                                    is_trigger=True, reduce_only=True,
+                                    qty=qty, price=float(target_sl_px),
+                                    meta={"placed_at": "trail_fallback"},
+                                )
+                            except Exception as reg_e:
+                                logger.debug("trail SL fallback registry: %r", reg_e)
                         else:
                             logger.warning("TRAIL NATIVE SL %s %s: SL placé mais oid non résolu (res=%s)", symbol, side, res)
                     except Exception as e:
@@ -1196,7 +1483,22 @@ class SalleDesMarchesV6:
                 for s in expired:
                     self._emergency_closing.pop(s, None)
 
+        # Symboles gérés par le grid : le scalp ne pose pas de trail SL dessus
+        # (cf. Lot 3 — séparation grid/scalp). Le breakout guard du grid + le
+        # filet emergency exit ci-après restent actifs pour ces symboles.
+        try:
+            grid_syms = set(self.grid_manager.active_symbols())
+        except Exception:
+            grid_syms = set()
+
         for symbol, guard in list(self._trail_guards.items()):
+            if symbol in grid_syms:
+                # Grid en charge : retire les guards scalp accumulés sur ce symbole
+                # pour éviter qu'ils tentent de modifier des SL qui n'existent pas.
+                logger.debug("[TRAIL] %s géré par le grid, guard scalp retiré", symbol)
+                self._trail_guards.pop(symbol, None)
+                continue
+
             if symbol not in open_pos:
                 # FIX #4: Période de grâce avant suppression
                 age = time.time() - float(guard.get("created_at", 0))
@@ -1672,6 +1974,17 @@ class SalleDesMarchesV6:
             new_oid = result.get("sl_oid")
             if new_oid is not None:
                 logger.info("[RECOVERY] %s: nouveau SL PLACÉ oid=%s sl=%.4f", symbol, new_oid, sl_to_place)
+                try:
+                    get_order_registry().register(
+                        oid=int(new_oid),
+                        source=SOURCE_RECOVERY,
+                        symbol=symbol, intent="sl", side=close_side,
+                        is_trigger=True, reduce_only=True,
+                        qty=qty, price=float(sl_to_place),
+                        meta={"placed_at": "recovery"},
+                    )
+                except Exception as reg_e:
+                    logger.debug("_recover_or_place_sl registry: %r", reg_e)
                 return str(new_oid)
             logger.warning("[RECOVERY] %s: SL placé mais OID non résolu — trail inactif", symbol)
             return None
@@ -1679,6 +1992,27 @@ class SalleDesMarchesV6:
         except Exception as e:
             logger.error("[RECOVERY] %s: placement nouveau SL ÉCHOUÉ: %r", symbol, e)
             return None
+
+    def _reconcile_order_registry_at_boot(self) -> None:
+        """Au démarrage : purge les ghosts (registre mais plus côté HL), absorbe
+        les orphelins (HL mais pas dans le registre) en source=UNKNOWN.
+        """
+        try:
+            live_orders = self.exchange._client.get_open_orders() or []
+        except Exception as e:
+            logger.warning("[BOOT_RECONCILE] échec lecture open_orders: %r", e)
+            return
+        try:
+            live_oids = {int(o.get("oid")) for o in live_orders if isinstance(o, dict) and o.get("oid") is not None}
+        except Exception:
+            live_oids = set()
+        reg = get_order_registry()
+        purged = reg.purge_ghosts(live_oids)
+        absorbed = reg.absorb_orphans(live_orders)
+        logger.info(
+            "[BOOT_RECONCILE] live=%d purged=%d absorbed=%d | registry=%s",
+            len(live_oids), purged, absorbed, reg.stats(),
+        )
 
     def _recover_trail_guards(self) -> None:
         """
@@ -2110,6 +2444,31 @@ class SalleDesMarchesV6:
                             result["sl_oid"] = str(oid)
         except Exception as e:
             logger.warning("[LIVE] TP/SL ECHEC %s: %r", symbol, e)
+
+        # Enregistre les OIDs dans le registre (close_side selon side du long/short)
+        close_side = "sell" if str(side).lower() == "buy" else "buy"
+        try:
+            reg = get_order_registry()
+            if result.get("sl_oid"):
+                reg.register(
+                    oid=int(result["sl_oid"]),
+                    source=SOURCE_SCALP_SL,
+                    symbol=symbol, intent="sl", side=close_side,
+                    is_trigger=True, reduce_only=True,
+                    qty=qty, price=float(sl),
+                    meta={"placed_at": "scalp_enter"},
+                )
+            if result.get("tp_oid"):
+                reg.register(
+                    oid=int(result["tp_oid"]),
+                    source=SOURCE_SCALP_TP,
+                    symbol=symbol, intent="tp", side=close_side,
+                    is_trigger=True, reduce_only=True,
+                    qty=qty, price=float(tp),
+                    meta={"placed_at": "scalp_enter"},
+                )
+        except Exception as e:
+            logger.debug("_place_tpsl registry: %r", e)
 
         return result
 
@@ -2670,6 +3029,17 @@ class SalleDesMarchesV6:
                     if not SCALP_ENABLED:
                         stats["skipped"] += 1
                         continue
+
+                    # Séparation grid/scalp (Lot 3) : si le grid est actif sur ce symbole,
+                    # le scalp n'y rentre pas. Évite les SL trail orphelins et les conflits
+                    # d'OIDs déjà observés (cf. PUMP non-protégée 2026-05-21).
+                    try:
+                        if self.grid_manager.is_active(symbol):
+                            stats["skipped"] += 1
+                            logger.info("SKIP %s — grid actif (séparation grid/scalp)", symbol)
+                            continue
+                    except Exception:
+                        pass
 
                     # FILTRE 1 — ATR PLAFOND (2026-05-19) — analyse stat n=121
                     # Wins avg atr_pct=0.50% / losses=0.69% (p=0.000). Trader en

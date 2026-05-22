@@ -610,6 +610,279 @@ class HyperliquidClient:
     def cancel(self, coin: str, oid: int) -> bool:
         return self.cancel_order(coin, oid)
 
+    # ── Smart entry: limit Alo (post-only) avec fallback market ────────────
+
+    def get_spread(self, coin: str) -> tuple[float, float, float]:
+        """Retourne (best_bid, best_ask, spread_pct) depuis le L2 snapshot.
+        En cas d'erreur retourne (0.0, 0.0, 1.0) — un spread énorme qui force market."""
+        try:
+            book = self.get_l2_snapshot(coin) or {}
+            levels = book.get("levels", [])
+            if len(levels) < 2 or not levels[0] or not levels[1]:
+                return 0.0, 0.0, 1.0
+            best_bid = float(levels[0][0].get("px", 0) or 0)
+            best_ask = float(levels[1][0].get("px", 0) or 0)
+            if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
+                return 0.0, 0.0, 1.0
+            spread = (best_ask - best_bid) / best_bid
+            return best_bid, best_ask, spread
+        except Exception as e:
+            logger.warning("get_spread(%s): %r", coin, e)
+            return 0.0, 0.0, 1.0
+
+    def wait_for_fill(
+        self,
+        coin: str,
+        oid: int,
+        timeout_sec: float = 8.0,
+        poll_interval: float = 0.5,
+        limit_px: float = 0.0,
+        stale_pct: float = 0.0,
+    ) -> dict | None:
+        """
+        Attend qu'un ordre limit soit rempli ou expire.
+
+        Si limit_px > 0 et stale_pct > 0 : annule l'ordre et retourne None dès que
+        le mid price s'éloigne de plus de stale_pct du prix posé (signal périmé).
+
+        Retourne {"fill_price": float, "fill_qty": float, "fee": float, "oid": int}
+        si rempli, None si timeout/stale/cancel.
+        """
+        deadline = time.time() + max(0.5, float(timeout_sec))
+        oid_int = int(oid)
+
+        while time.time() < deadline:
+            # ── Garde de staleness : mid trop loin du prix posé → cancel immédiat ──
+            if limit_px > 0 and stale_pct > 0:
+                try:
+                    mids = self.get_all_mids() or {}
+                    mid = float(mids.get(coin, 0) or 0)
+                    if mid > 0 and abs(mid - limit_px) / limit_px > stale_pct:
+                        logger.info(
+                            "wait_for_fill %s oid=%d: mid=%.6f trop loin du limit=%.6f "
+                            "(%.3f%% > %.3f%%) → cancel stale",
+                            coin, oid_int, mid, limit_px,
+                            abs(mid - limit_px) / limit_px * 100, stale_pct * 100,
+                        )
+                        try:
+                            self.cancel_order(coin=coin, oid=oid_int)
+                        except Exception:
+                            pass
+                        return None
+                except Exception:
+                    pass
+
+            try:
+                orders = self.get_open_orders(coin=coin) or []
+            except Exception as e:
+                logger.warning("wait_for_fill(%s, %d) get_open_orders: %r", coin, oid_int, e)
+                time.sleep(poll_interval)
+                continue
+
+            still_open = False
+            for o in orders:
+                if not isinstance(o, dict):
+                    continue
+                try:
+                    if int(o.get("oid", 0) or 0) == oid_int:
+                        still_open = True
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+            if not still_open:
+                # L'ordre a disparu — soit rempli, soit annulé. On vérifie via user_fills.
+                try:
+                    fills = self.get_user_fills(coin=coin, limit=20) or []
+                    for f in fills:
+                        try:
+                            if f.get("oid") is not None and int(f.get("oid")) == oid_int:
+                                return {
+                                    "fill_price": float(f.get("px", 0) or 0),
+                                    "fill_qty": float(f.get("sz", 0) or 0),
+                                    "fee": float(f.get("fee", 0) or 0),
+                                    "oid": oid_int,
+                                }
+                        except (ValueError, TypeError):
+                            continue
+                except Exception as e:
+                    logger.warning("wait_for_fill(%s, %d) user_fills: %r", coin, oid_int, e)
+                return None  # disparu mais pas dans les fills → annulé
+
+            time.sleep(poll_interval)
+
+        return None  # timeout
+
+    def place_order_smart(
+        self,
+        coin: str,
+        is_buy: bool,
+        sz: float,
+        confidence: float,
+        regime: dict | None = None,
+        timeout_sec: float = 8.0,
+        min_confidence: float = 0.80,
+        max_spread_pct: float = 0.0005,
+        ok_volatilities: tuple = ("low", "medium"),
+        poll_interval: float = 0.5,
+        stale_pct: float = 0.003,
+    ) -> dict:
+        """
+        Stratégie hybride limit Alo (post-only) → fallback market.
+
+        Limit tenté si conf ≥ min_confidence ET vol ∈ ok_volatilities ET spread < max_spread_pct.
+        Le limit est posé au best_bid (buy) ou best_ask (sell) avec tif="Alo" → garantie maker.
+
+        Retourne :
+            {
+              "fill_price": float, "fill_qty": float,
+              "order_type": "limit"|"market"|"failed",
+              "spread_pct": float, "slippage_pct": float,
+              "best_bid": float, "best_ask": float,
+              "oid": int|None, "fee": float|None
+            }
+        """
+        regime = regime or {}
+        vol = str(regime.get("volatility", "")).lower()
+
+        best_bid, best_ask, spread_pct = self.get_spread(coin)
+        if best_bid <= 0 or best_ask <= 0:
+            try:
+                mid = float((self.get_all_mids() or {}).get(coin, 0) or 0)
+            except Exception:
+                mid = 0.0
+            best_bid = best_ask = mid
+
+        ref_price = best_ask if is_buy else best_bid
+
+        use_limit = (
+            confidence >= float(min_confidence)
+            and vol in tuple(ok_volatilities)
+            and 0 < spread_pct < float(max_spread_pct)
+            and best_bid > 0
+        )
+
+        fill_dict: dict | None = None
+        order_type_used = "market"
+        used_oid: int | None = None
+        used_fee: float | None = None
+
+        if use_limit:
+            limit_px = best_bid if is_buy else best_ask
+            logger.info(
+                "SMART %s %s: tentative LIMIT Alo @ %.6f (spread=%.4f%% conf=%.2f vol=%s timeout=%.1fs)",
+                "BUY" if is_buy else "SELL", coin, limit_px,
+                spread_pct * 100, confidence, vol, timeout_sec,
+            )
+            try:
+                res = self.place_order(
+                    coin=coin,
+                    is_buy=is_buy,
+                    sz=sz,
+                    limit_px=limit_px,
+                    order_type="limit",
+                    reduce_only=False,
+                    tif="Alo",
+                )
+                oid = res.get("oid")
+                if res.get("filled"):
+                    # Improbable avec Alo (post-only), mais possible si rempli avant le retour
+                    fill_dict = {
+                        "fill_price": float(res.get("avg_px") or limit_px),
+                        "fill_qty": float(res.get("total_sz") or sz),
+                        "fee": 0.0,
+                        "oid": None,
+                    }
+                    order_type_used = "limit"
+                elif oid is not None:
+                    fill_dict = self.wait_for_fill(
+                        coin, int(oid),
+                        timeout_sec=timeout_sec,
+                        poll_interval=poll_interval,
+                        limit_px=limit_px,
+                        stale_pct=stale_pct,
+                    )
+                    if fill_dict is not None:
+                        order_type_used = "limit"
+                        used_oid = fill_dict.get("oid")
+                        used_fee = fill_dict.get("fee")
+                    else:
+                        # Timeout — cancel + fallback market
+                        logger.info("SMART %s: LIMIT timeout → cancel oid=%s + fallback MARKET", coin, oid)
+                        cancelled = self.cancel_order(coin=coin, oid=int(oid))
+                        if not cancelled:
+                            # Cancel a échoué → l'ordre s'est peut-être rempli entretemps
+                            time.sleep(0.5)
+                            try:
+                                fills = self.get_user_fills(coin=coin, limit=10) or []
+                                for f in fills:
+                                    if f.get("oid") is not None and int(f.get("oid")) == int(oid):
+                                        fill_dict = {
+                                            "fill_price": float(f.get("px", 0) or 0),
+                                            "fill_qty": float(f.get("sz", 0) or 0),
+                                            "fee": float(f.get("fee", 0) or 0),
+                                            "oid": int(oid),
+                                        }
+                                        order_type_used = "limit"
+                                        used_oid = int(oid)
+                                        used_fee = fill_dict["fee"]
+                                        logger.info("SMART %s: cancel race → fill récupéré @ %.6f", coin, fill_dict["fill_price"])
+                                        break
+                            except Exception as e:
+                                logger.warning("SMART %s: re-check fills après cancel échoué: %r", coin, e)
+                else:
+                    logger.info("SMART %s: limit posé sans oid retourné, fallback market", coin)
+            except HyperliquidClientError as e:
+                # Alo peut être rejeté si le prix croiserait le book — fallback market
+                logger.info("SMART %s: limit Alo rejeté (%s) → fallback MARKET", coin, e)
+            except Exception as e:
+                logger.warning("SMART %s: limit échec inattendu (%r) → fallback MARKET", coin, e)
+
+        # Fallback ou market direct
+        if fill_dict is None:
+            try:
+                res = self.place_order(
+                    coin=coin,
+                    is_buy=is_buy,
+                    sz=sz,
+                    limit_px=ref_price if ref_price > 0 else best_bid or best_ask,
+                    order_type="market",
+                    reduce_only=False,
+                )
+                fill_dict = {
+                    "fill_price": float(res.get("avg_px") or ref_price or 0),
+                    "fill_qty": float(res.get("total_sz") or sz),
+                    "fee": 0.0,
+                    "oid": None,
+                }
+                order_type_used = "market"
+            except Exception as e:
+                logger.warning("SMART %s: market échec final: %r", coin, e)
+                return {
+                    "fill_price": 0.0, "fill_qty": 0.0, "order_type": "failed",
+                    "spread_pct": spread_pct, "slippage_pct": 0.0,
+                    "best_bid": best_bid, "best_ask": best_ask,
+                    "oid": None, "fee": None,
+                }
+
+        fill_price = float(fill_dict.get("fill_price") or 0)
+        if ref_price > 0 and fill_price > 0:
+            slippage_pct = (fill_price - ref_price) / ref_price if is_buy else (ref_price - fill_price) / ref_price
+        else:
+            slippage_pct = 0.0
+
+        return {
+            "fill_price": fill_price,
+            "fill_qty": float(fill_dict.get("fill_qty") or 0),
+            "order_type": order_type_used,
+            "spread_pct": spread_pct,
+            "slippage_pct": slippage_pct,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "oid": used_oid,
+            "fee": used_fee,
+        }
+
     def _parse_modify_response(self, response, oid: int, coin: str) -> tuple[bool, int | None]:
         """
         Parse la réponse batchModify de Hyperliquid.
@@ -784,7 +1057,12 @@ class HyperliquidClient:
         try:
             state = self.info.user_state(self._wallet_address)
             summary = state.get("marginSummary", {})
-            return float(summary.get("accountValue", 0))
+            value = float(summary.get("accountValue", 0))
+            spot_state = self.info.spot_user_state(self._wallet_address)
+            for bal in spot_state.get("balances", []):
+                if str(bal.get("coin", "")).upper() in ("USDC", "USDT"):
+                    value += float(bal.get("total", 0.0) or 0.0)
+            return value
         except Exception as e:
             raise HyperliquidClientError(f"Erreur get_account_value: {e}") from e
 

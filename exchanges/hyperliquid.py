@@ -269,6 +269,40 @@ class HyperliquidExchangeClient(ExchangeClient):
             raw=result,
         )
 
+    def place_order_smart(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        confidence: float,
+        regime: dict | None = None,
+        leverage: int | None = None,
+        timeout_sec: float = 30.0,
+        min_confidence: float = 0.70,
+        max_spread_pct: float = 0.002,
+        ok_volatilities: tuple = ("low", "medium"),
+        stale_pct: float = 0.003,
+    ) -> dict:
+        """Wrapper exposant la stratégie limit Alo → fallback market du client HL."""
+        if leverage and leverage > 0:
+            try:
+                self._client.update_leverage(coin=symbol, leverage=int(leverage), is_cross=False)
+            except Exception as e:
+                logger.warning("update_leverage %s x%s: %s", symbol, leverage, e)
+
+        return self._client.place_order_smart(
+            coin=symbol,
+            is_buy=(side.lower() == "buy"),
+            sz=float(qty),
+            confidence=float(confidence),
+            regime=regime,
+            timeout_sec=timeout_sec,
+            min_confidence=min_confidence,
+            max_spread_pct=max_spread_pct,
+            ok_volatilities=ok_volatilities,
+            stale_pct=stale_pct,
+        )
+
     def cancel_order(self, order_id: str) -> CancelResult:
         try:
             open_orders = self._client.get_open_orders(coin=None)
@@ -337,6 +371,12 @@ class HyperliquidExchangeClient(ExchangeClient):
                     float(qty),
                     float(trigger_price),
                 )
+                # HL cancel+recreate : propage le nouveau OID au registre
+                try:
+                    from memory.order_registry import get_order_registry
+                    get_order_registry().update_oid(oid_int, int(new_oid))
+                except Exception as e:
+                    logger.debug("modify_stop_trigger_order: registry.update_oid: %r", e)
             else:
                 logger.warning(
                     "modify_stop_trigger_order NOK %s %s oid=%s qty=%.6f trigger=%.8f",

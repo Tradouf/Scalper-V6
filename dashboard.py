@@ -19,7 +19,7 @@ import re
 import time
 from collections import Counter, deque
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import requests
 from fastapi import FastAPI
@@ -28,6 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 REPO = Path(__file__).parent
 SCALP_MEM = REPO / "memory" / "scalp_memory.json"
 SHARED_MEM = REPO / "memory" / "shared_memory.json"
+MR_STATE = REPO / "memory" / "mr_state.json"
 LOG_FILE = REPO / "logs" / "sdm.log"
 
 # Charger .env pour HL_ACCOUNT_ADDRESS
@@ -38,6 +39,10 @@ for line in (REPO / ".env").read_text().splitlines():
 
 HL_API = "https://api.hyperliquid.xyz/info"
 HL_ADDR = os.environ.get("HL_ACCOUNT_ADDRESS", "")
+
+# Cache user_fills 60s : pas la peine de re-tirer 2000 fills à chaque refresh (5s)
+_FILLS_CACHE: Dict[str, Any] = {"ts": 0.0, "fills": []}
+_FILLS_TTL_SEC = 60.0
 
 app = FastAPI(title="SalleDesMarches Dashboard")
 
@@ -59,19 +64,23 @@ def _read_shared() -> Dict:
 def _hl_state() -> Dict:
     out = {
         "positions": [],
-        "perp_value": 0.0,
+        "open_orders": [],
         "spot_usdc": 0.0,
-        "account_value": 0.0,   # perp + spot (vue totale)
+        "upnl_total": 0.0,
+        "margin_used": 0.0,
+        "account_value": 0.0,   # spot + uPnL (unified account, perp accountValue déjà inclus dans spot)
         "ok": False,
     }
     if not HL_ADDR:
         return out
     try:
-        # 1) Compte perp
+        # 1) Compte perp (positions + uPnL)
         r = requests.post(
             HL_API, json={"type": "clearinghouseState", "user": HL_ADDR}, timeout=4
         ).json()
-        out["perp_value"] = float(r.get("marginSummary", {}).get("accountValue", 0) or 0)
+        ms = r.get("marginSummary", {})
+        out["margin_used"] = float(ms.get("totalMarginUsed", 0) or 0)
+        total_upnl = 0.0
         for p in r.get("assetPositions", []):
             pp = p.get("position", {})
             szi = float(pp.get("szi", 0) or 0)
@@ -79,6 +88,7 @@ def _hl_state() -> Dict:
                 continue
             entry = float(pp.get("entryPx", 0) or 0)
             upnl = float(pp.get("unrealizedPnl", 0) or 0)
+            total_upnl += upnl
             lev = pp.get("leverage", {}) or {}
             out["positions"].append({
                 "coin": pp.get("coin"),
@@ -89,8 +99,10 @@ def _hl_state() -> Dict:
                 "roe": float(pp.get("returnOnEquity", 0) or 0) * 100,
                 "leverage": lev.get("value", 0),
             })
+        out["upnl_total"] = total_upnl
 
-        # 2) Compte spot (les fonds non transférés en perp restent ici)
+        # 2) Compte spot — sur unified, c'est le collatéral. Le perp accountValue
+        # est déjà adossé au spot (pas un solde indépendant) → ne pas additionner.
         rs = requests.post(
             HL_API, json={"type": "spotClearinghouseState", "user": HL_ADDR}, timeout=4
         ).json()
@@ -98,7 +110,39 @@ def _hl_state() -> Dict:
             if str(b.get("coin", "")).upper() == "USDC":
                 out["spot_usdc"] = float(b.get("total", 0) or 0)
 
-        out["account_value"] = out["perp_value"] + out["spot_usdc"]
+        out["account_value"] = out["spot_usdc"] + total_upnl
+
+        # 3) Open orders avec lookup registre pour la source
+        try:
+            from memory.order_registry import get_order_registry
+            reg = get_order_registry()
+        except Exception:
+            reg = None
+        try:
+            ro = requests.post(
+                HL_API, json={"type": "frontendOpenOrders", "user": HL_ADDR}, timeout=4
+            ).json()
+            for o in (ro or []):
+                try:
+                    oid = int(o.get("oid"))
+                except Exception:
+                    continue
+                rec = reg.lookup(oid) if reg else None
+                out["open_orders"].append({
+                    "oid": oid,
+                    "coin": str(o.get("coin", "")),
+                    "side": "buy" if str(o.get("side", "")).upper() in ("B", "BUY") else "sell",
+                    "price": float(o.get("triggerPx") or o.get("limitPx") or 0),
+                    "sz": float(o.get("sz") or 0),
+                    "trigger": bool(o.get("isTrigger")),
+                    "tpsl": str(o.get("tpsl") or ""),
+                    "reduce_only": bool(o.get("reduceOnly", False)),
+                    "source": rec.source if rec else "unknown",
+                    "intent": rec.intent if rec else "?",
+                })
+        except Exception:
+            pass
+
         out["ok"] = True
     except Exception as e:
         out["error"] = str(e)[:120]
@@ -184,6 +228,113 @@ def _pnl_curve(trades: List[Dict]) -> List[Dict]:
     ]
 
 
+def _hl_fills() -> List[Dict]:
+    """Cache 60s des derniers fills HL (max 2000)."""
+    now = time.time()
+    if now - _FILLS_CACHE["ts"] < _FILLS_TTL_SEC and _FILLS_CACHE["fills"]:
+        return _FILLS_CACHE["fills"]
+    if not HL_ADDR:
+        return []
+    try:
+        r = requests.post(
+            HL_API, json={"type": "userFills", "user": HL_ADDR}, timeout=6
+        ).json()
+        if isinstance(r, list):
+            _FILLS_CACHE["fills"] = r
+            _FILLS_CACHE["ts"] = now
+            return r
+    except Exception:
+        pass
+    return _FILLS_CACHE.get("fills") or []
+
+
+def _pnl_curve_hl(fills: List[Dict]) -> List[Dict]:
+    """Courbe cumulative (closedPnl - fee) à partir des fills HL.
+
+    Vérité absolue : prend en compte les fees, les trades grid, et le levier
+    réel HL. Source corrige le biais de scalp_memory (qui surestimait +35
+    USDC alors que le NET HL réel est ~-30 USDC sur la même période).
+    """
+    if not fills:
+        return []
+    by_time = sorted(fills, key=lambda f: int(f.get("time", 0)))
+    pts: List[Dict] = []
+    cum = 0.0
+    for f in by_time:
+        delta = float(f.get("closedPnl", 0) or 0) - float(f.get("fee", 0) or 0)
+        if delta == 0.0 and not pts:
+            continue  # skip open-only fills jusqu'au premier mouvement
+        cum += delta
+        pts.append({"ts": int(int(f.get("time", 0)) / 1000), "pnl_cum": round(cum, 4)})
+    return pts
+
+
+def _wr_hl(fills: List[Dict], since_ms: int) -> Dict:
+    """Win Rate calculé sur les vrais fills HL (closedPnl != 0 = trade close)."""
+    closes = [f for f in fills if float(f.get("closedPnl", 0) or 0) != 0 and int(f.get("time", 0)) >= since_ms]
+    if not closes:
+        return {"n": 0, "wr": 0.0, "pnl_usdt_sum": 0.0}
+    nets = [float(f.get("closedPnl", 0) or 0) - float(f.get("fee", 0) or 0) for f in closes]
+    wins = sum(1 for n in nets if n > 0)
+    return {
+        "n": len(nets),
+        "wr": round(wins / len(nets) * 100, 1),
+        "pnl_usdt_sum": round(sum(nets), 2),
+    }
+
+
+def _mr_state() -> Dict:
+    """Lit l'état mean-reversion persisté par le bot. None-safe."""
+    out = {"ts": 0, "symbols": [], "metrics": {}, "open_positions": {}, "age_sec": None}
+    try:
+        if not MR_STATE.exists():
+            return out
+        d = json.loads(MR_STATE.read_text())
+        out.update(d)
+        out["age_sec"] = max(0, int(time.time() - float(d.get("ts", 0) or 0)))
+    except Exception:
+        pass
+    return out
+
+
+def _grid_view(hl_state: Dict) -> List[Dict]:
+    """Construit la vue grid par symbole depuis open_orders + sources registry.
+
+    Pour chaque symbole grid actif, regroupe les niveaux pending (limit non-reduce)
+    et TPs (limit reduce_only), trie par prix et marque les fills (présents dans
+    le registry mais plus côté HL ne sont pas listés ; absents = fills passés).
+    """
+    by_sym: Dict[str, Dict] = {}
+    for o in hl_state.get("open_orders", []) or []:
+        if o.get("source") not in ("grid_pending", "grid_tp"):
+            continue
+        sym = o.get("coin")
+        if sym not in by_sym:
+            by_sym[sym] = {"symbol": sym, "levels": []}
+        by_sym[sym]["levels"].append({
+            "oid": o["oid"], "side": o["side"], "price": o["price"],
+            "qty": o["sz"], "kind": "pending" if o["source"] == "grid_pending" else "tp",
+        })
+    # Tri par prix (ladder propre)
+    for sym in by_sym:
+        by_sym[sym]["levels"].sort(key=lambda x: -x["price"])
+    return list(by_sym.values())
+
+
+def _regime_status(shared: Dict) -> Dict:
+    """Indique si le régime est en mode fallback (orchestrator sans features) ou live."""
+    rg = shared.get("regime", {}) or {}
+    # Le orchestrator log persistence=0.0 nsymbols=0 → fallback. On vérifie via shared_memory
+    # advanced_features dont les champs requis (slope_alignment, etc.) sont None.
+    af = shared.get("advanced_features", {}) or {}
+    sample = next(iter(af.values()), {}) if af else {}
+    has_signals = any(sample.get(k) for k in ("slope_alignment", "vol_state", "markov_state"))
+    return {
+        **rg,
+        "source": "live" if has_signals else "fallback_default",
+    }
+
+
 @app.get("/api/state")
 def api_state() -> JSONResponse:
     scalp = _read_scalp()
@@ -198,13 +349,20 @@ def api_state() -> JSONResponse:
         key=lambda t: t.get("exit_ts", 0), reverse=True,
     )[:20]
 
+    hl = _hl_state()
+    fills = _hl_fills()
+    now_ms = int(now * 1000)
+
     return JSONResponse({
         "now": int(now),
-        "hl": _hl_state(),
-        "regime": shared.get("regime", {}),
-        "wr_7d": _wr(trades, cut7),
-        "wr_30d": _wr(trades, cut30),
-        "wr_all": _wr(trades, 0),
+        "hl": hl,
+        "regime": _regime_status(shared),
+        "grid": _grid_view(hl),
+        "mr": _mr_state(),
+        # WR + PnL : source HL (closedPnl − fees), pas scalp_memory (biaisé)
+        "wr_7d": _wr_hl(fills, now_ms - 7 * 86400_000),
+        "wr_30d": _wr_hl(fills, now_ms - 30 * 86400_000),
+        "wr_all": _wr_hl(fills, 0),
         "last_trades": [{
             "ts": int(t.get("exit_ts") or 0),
             "symbol": t.get("symbol"),
@@ -216,7 +374,7 @@ def api_state() -> JSONResponse:
             "cause": t.get("cause"),
             "dur_min": int(float(t.get("duration_sec") or 0) / 60),
         } for t in last],
-        "pnl_curve": _pnl_curve(trades),
+        "pnl_curve": _pnl_curve_hl(fills),
         **_tail_logs(),
     })
 
@@ -318,6 +476,29 @@ INDEX_HTML = r"""<!doctype html>
       <tbody></tbody>
     </table>
   </div>
+
+  <div class="card" style="grid-column: 1/-1;">
+    <h2>Mean Reversion (Z-score H1)</h2>
+    <div id="mrmeta" class="mono" style="color:#7a8595;margin-bottom:6px"></div>
+    <table id="mrtbl">
+      <thead><tr><th>Sym</th><th>Signal</th><th>Z</th><th>Half-life</th><th>Mean</th><th>Std</th><th>Size×</th><th>Reason</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="mrpos" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card" style="grid-column: 1/-1;">
+    <h2>Grid actifs (ladder par symbole)</h2>
+    <div id="gridview"></div>
+  </div>
+
+  <div class="card" style="grid-column: 1/-1;">
+    <h2>Open Orders (HL + source registry)</h2>
+    <table id="ordtbl">
+      <thead><tr><th>Coin</th><th>Side</th><th>Px</th><th>Qty</th><th>Source</th><th>Intent</th><th>Trigger</th><th>RO</th><th class="mono">OID</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -334,12 +515,14 @@ async function refresh() {
     document.getElementById('lastrf').textContent = new Date().toLocaleTimeString();
     document.getElementById('server').textContent = 'data ts=' + dt(s.now);
 
-    // Account
+    // Account (unified : total = spot + uPnL, perp value n'est pas un solde indépendant)
     document.getElementById('acct').innerHTML = '$' + fmt(s.hl.account_value, 2);
+    const upnl = s.hl.upnl_total || 0;
     document.getElementById('acctbk').innerHTML =
-      `perp $${fmt(s.hl.perp_value,2)} · spot $${fmt(s.hl.spot_usdc,2)}`;
+      `spot $${fmt(s.hl.spot_usdc,2)} · uPnL <span class="${cls(upnl)}">${fmt(upnl,2)}$</span> · margin used $${fmt(s.hl.margin_used,2)}`;
     const rg = s.regime || {};
-    document.getElementById('regime').innerHTML = '<span class="badge">'+(rg.trend||'?')+'</span> <span class="badge">'+(rg.volatility||'?')+'</span>';
+    const src = rg.source === 'live' ? '' : ' <span class="badge" style="background:#3a2b1c;color:#f5a623">fallback</span>';
+    document.getElementById('regime').innerHTML = '<span class="badge">'+(rg.trend||'?')+'</span> <span class="badge">'+(rg.volatility||'?')+'</span>'+src;
 
     // Cycle
     const st = s.last_stats;
@@ -399,6 +582,83 @@ async function refresh() {
       tr.innerHTML = `<td>${sk.ts}</td><td>${sk.symbol}</td><td><span class="badge">${sk.cat}</span></td><td>${sk.reason}</td>`;
       tb4.appendChild(tr);
     });
+
+    // Mean Reversion
+    const mr = s.mr || {};
+    const mrTb = document.querySelector('#mrtbl tbody');
+    mrTb.innerHTML = '';
+    const ageTxt = mr.age_sec != null ? (mr.age_sec < 60 ? `${mr.age_sec}s` : `${Math.floor(mr.age_sec/60)}min`) : '–';
+    const ageColor = (mr.age_sec != null && mr.age_sec > 600) ? 'red' : '';
+    document.getElementById('mrmeta').innerHTML =
+      `symbols=${(mr.symbols||[]).join(',')} · last_tick <span class="${ageColor}">${ageTxt} ago</span>`;
+    const sigColor = sig => {
+      if (sig === 'LONG') return 'grn';
+      if (sig === 'SHORT') return 'red';
+      if (sig === 'CLOSE') return 'acc';
+      return 'mut';
+    };
+    Object.entries(mr.metrics || {}).forEach(([sym, m]) => {
+      const tr = document.createElement('tr');
+      const zCls = (m.z != null && Math.abs(m.z) >= 2.0) ? cls(m.z >= 0 ? -1 : 1) : '';
+      tr.innerHTML = `<td>${sym}</td>
+        <td class="${sigColor(m.signal)}"><span class="badge">${m.signal||'?'}</span></td>
+        <td class="${zCls}">${fmt(m.z, 2)}</td>
+        <td>${fmt(m.hl, 1)}</td>
+        <td>${fmt(m.mean, 4)}</td>
+        <td>${fmt(m.std, 4)}</td>
+        <td>${fmt(m.size_factor, 2)}</td>
+        <td style="color:#7a8595;font-size:11px">${m.reason||''}</td>`;
+      mrTb.appendChild(tr);
+    });
+    if (Object.keys(mr.metrics||{}).length === 0) {
+      mrTb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#7a8595">aucun tick MR encore (intervalle 5min)</td></tr>';
+    }
+    // Positions MR ouvertes
+    const mrPosDiv = document.getElementById('mrpos');
+    const mrPos = mr.open_positions || {};
+    if (Object.keys(mrPos).length === 0) {
+      mrPosDiv.innerHTML = '<span style="color:#7a8595">aucune position MR active</span>';
+    } else {
+      mrPosDiv.innerHTML = '<div class="lbl" style="margin-bottom:4px">Positions MR ouvertes</div>' +
+        Object.entries(mrPos).map(([sym, p]) =>
+          `<div class="mono" style="font-size:11px"><span class="badge">${sym}</span> ${p.side} qty=${fmt(p.qty,4)} entry=${fmt(p.entry,4)} SL=${fmt(p.sl_price,4)} z@entry=${fmt(p.z_at_entry,2)} hl@entry=${fmt(p.hl_at_entry,1)}</div>`
+        ).join('');
+    }
+
+    // Grid view (ladder par symbole)
+    const gv = document.getElementById('gridview');
+    gv.innerHTML = '';
+    if (!s.grid || s.grid.length === 0) {
+      gv.innerHTML = '<div style="color:#7a8595;text-align:center;padding:8px">aucun grid actif</div>';
+    } else {
+      s.grid.forEach(g => {
+        const div = document.createElement('div');
+        div.style.cssText = 'margin-bottom:10px';
+        const rows = g.levels.map(l => {
+          const sideClass = l.side === 'buy' ? 'grn' : 'red';
+          const kindLbl = l.kind === 'tp' ? '<span class="badge" style="background:#1c3a2b;color:#3fb950">TP</span>' : '';
+          return `<tr><td class="${sideClass}">${l.side}</td><td>${fmt(l.price,4)}</td><td>${fmt(l.qty,4)}</td><td>${kindLbl}</td><td class="mono" style="color:#7a8595">${l.oid}</td></tr>`;
+        }).join('');
+        div.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${g.symbol} <span class="badge">${g.levels.length} niveaux</span></div>
+          <table><thead><tr><th>Side</th><th>Prix</th><th>Qty</th><th>Type</th><th>OID</th></tr></thead><tbody>${rows}</tbody></table>`;
+        gv.appendChild(div);
+      });
+    }
+
+    // Open orders table
+    const tbo = document.querySelector('#ordtbl tbody');
+    tbo.innerHTML = '';
+    (s.hl.open_orders || []).forEach(o => {
+      const tr = document.createElement('tr');
+      const sourceClass = o.source === 'unknown' ? 'red' : (o.source.startsWith('grid') ? 'acc' : '');
+      tr.innerHTML = `<td>${o.coin}</td><td class="${o.side==='buy'?'grn':'red'}">${o.side}</td>
+        <td>${fmt(o.price,4)}</td><td>${fmt(o.sz,4)}</td>
+        <td class="${sourceClass}">${o.source}</td><td>${o.intent}</td>
+        <td>${o.trigger?'✓':''}</td><td>${o.reduce_only?'RO':''}</td>
+        <td class="mono" style="color:#7a8595">${o.oid}</td>`;
+      tbo.appendChild(tr);
+    });
+    if ((s.hl.open_orders||[]).length === 0) tbo.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#7a8595">aucun ordre ouvert</td></tr>';
 
     // Chart
     const pts = s.pnl_curve || [];

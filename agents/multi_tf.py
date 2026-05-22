@@ -197,36 +197,23 @@ class StrategistH1(_MultiTFAgent):
         super().__init__("strategist_h1", memory, exchange_client)
 
     def analyze(self, symbol: str) -> Dict:
+        # Deterministe (2026-05-20) : le LLM qwen2.5-7b ignorait sa propre règle
+        # et retournait WAIT sur slope -8% / +18%. Règle simple :
+        #   slope_7d ≥ +2% → buy ; ≤ -2% → sell ; sinon wait.
         ind = self._fetch_indicators(symbol)
         if ind is None:
             return {"signal": "wait", "confidence": 0.0, "reason": "no_data", "tf": "H1"}
-
-        system = (
-            "Tu es portfolio manager senior. Tu analyses sur base H1 pour donner "
-            "un BIAIS directionnel macro. Le SIGNAL DOMINANT est le slope LONG "
-            "(7j) : si le marché a fait +5% en 7j, le bias est BULL même si les "
-            "dernières heures pull-back. WAIT seulement si slope long < ±2%."
-        )
-        hist = _history_snippet(symbol)
-        user = (
-            f"H1 indicators on {symbol}:\n"
-            f"  Price={ind['price']:.4f}\n"
-            f"  RSI(14)={ind['rsi']:.1f}\n"
-            f"  EMA20={ind['ema_fast']:.4f} EMA50={ind['ema_slow']:.4f} ({ind['ema_cross']} cross)\n"
-            f"  ATR%={ind['atr_pct']*100:.2f}%\n"
-            f"  Slope court ({ind['slope_short_n']}h)={ind['slope_short']*100:+.2f}%  ← lecture récente\n"
-            f"  Slope long  ({ind['slope_long_n']}h)={ind['slope_long']*100:+.2f}%   ← TREND DOMINANT\n"
-            + (f"\n{hist}\n" if hist else "")
-            + f"\nQuel BIAIS macro pour les 4-12 prochaines heures ?\n"
-            f"Règle : si |slope long| > 2% → BUY/SELL aligné, sinon WAIT.\n"
-            f"Si l'historique récent montre un pattern perdant (ex: trail_hit_profit dominant en perte), "
-            f"sois plus exigeant ou WAIT.\n"
-            'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
-        )
-        out = self._llm_call(system, user)
-        out["tf"] = "H1"
-        out["indicators"] = ind
-        return out
+        slope = float(ind["slope_long"])     # fraction (slope sur 7j)
+        slope_pct = slope * 100
+        if slope >= 0.02:
+            sig, reason = "buy", f"slope_7d={slope_pct:+.2f}%"
+        elif slope <= -0.02:
+            sig, reason = "sell", f"slope_7d={slope_pct:+.2f}%"
+        else:
+            sig, reason = "wait", f"flat slope_7d={slope_pct:+.2f}%"
+        conf = min(0.9, abs(slope) * 10) if sig != "wait" else 0.5
+        return {"signal": sig, "confidence": conf, "reason": reason,
+                "tf": "H1", "indicators": ind}
 
 
 # ── 2) TACTICAL M15 (proxy M10) ───────────────────────────────────────────────
@@ -245,37 +232,39 @@ class TacticalM15(_MultiTFAgent):
         super().__init__("tactical_m15", memory, exchange_client)
 
     def analyze(self, symbol: str, h1_bias: Optional[str] = None) -> Dict:
+        # Deterministe (2026-05-20) : confirme le biais H1 avec slope_24h + ema_cross.
+        # Si pas de biais H1 imposé, agit comme un mini-stratège M15 (slope_24h).
         ind = self._fetch_indicators(symbol)
         if ind is None:
             return {"signal": "wait", "confidence": 0.0, "reason": "no_data", "tf": "M15"}
+        slope = float(ind["slope_long"])      # fraction sur 24h
+        slope_pct = slope * 100
+        ema_bull = bool(ind.get("ema_cross", 0))   # ema_fast > ema_slow → 1
+        h1 = (h1_bias or "").lower()
 
-        bias_hint = f"\nBIAIS H1 imposé par le stratège : {h1_bias.upper()}" if h1_bias else ""
-        system = (
-            "Tu es trader tactique intraday. Tu analyses sur base M15 (24h) "
-            "pour valider un setup d'entrée court terme : pullback, breakout, "
-            "retest. Tu confirmes le biais H1 si conditions présentes, sinon WAIT."
-        )
-        sh_h = ind['slope_short_n'] * 0.25   # M15 : 1 bougie = 0.25h
-        lg_h = ind['slope_long_n']  * 0.25
-        hist = _history_snippet(symbol)
-        user = (
-            f"M15 indicators on {symbol}:\n"
-            f"  Price={ind['price']:.4f}\n"
-            f"  RSI(9)={ind['rsi']:.1f}\n"
-            f"  EMA9={ind['ema_fast']:.4f} EMA21={ind['ema_slow']:.4f} ({ind['ema_cross']})\n"
-            f"  ATR%={ind['atr_pct']*100:.2f}%\n"
-            f"  Slope court ({sh_h:.0f}h)={ind['slope_short']*100:+.2f}%\n"
-            f"  Slope long  ({lg_h:.0f}h)={ind['slope_long']*100:+.2f}%\n"
-            f"  Volume relatif={ind['vol_ratio']:.2f}x"
-            f"{bias_hint}\n"
-            + (f"{hist}\n" if hist else "")
-            + f"\nLe setup intraday valide-t-il une entrée alignée avec le biais H1 ? (sinon WAIT)\n"
-            'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
-        )
-        out = self._llm_call(system, user)
-        out["tf"] = "M15"
-        out["indicators"] = ind
-        return out
+        if h1 == "buy":
+            # Confirme si trend M15 ne contredit pas (slope ≥ -0.5% ET ema bull OU slope ≥ 1%)
+            if slope >= 0.01 or (ema_bull and slope >= -0.005):
+                sig = "buy"; reason = f"align H1 slope_24h={slope_pct:+.2f}% emaBull={ema_bull}"
+            else:
+                sig = "wait"; reason = f"M15 contredit H1 slope_24h={slope_pct:+.2f}%"
+        elif h1 == "sell":
+            if slope <= -0.01 or (not ema_bull and slope <= 0.005):
+                sig = "sell"; reason = f"align H1 slope_24h={slope_pct:+.2f}% emaBull={ema_bull}"
+            else:
+                sig = "wait"; reason = f"M15 contredit H1 slope_24h={slope_pct:+.2f}%"
+        else:
+            # Pas de biais H1 fourni — règle standalone
+            if slope >= 0.015:
+                sig = "buy"; reason = f"slope_24h={slope_pct:+.2f}%"
+            elif slope <= -0.015:
+                sig = "sell"; reason = f"slope_24h={slope_pct:+.2f}%"
+            else:
+                sig = "wait"; reason = f"flat slope_24h={slope_pct:+.2f}%"
+
+        conf = min(0.9, abs(slope) * 15) if sig != "wait" else 0.5
+        return {"signal": sig, "confidence": conf, "reason": reason,
+                "tf": "M15", "indicators": ind}
 
 
 # ── 3) EXECUTION M1 ───────────────────────────────────────────────────────────
@@ -295,40 +284,40 @@ class ExecutionM1(_MultiTFAgent):
 
     def analyze(self, symbol: str, h1_bias: Optional[str] = None,
                 m15_signal: Optional[str] = None) -> Dict:
+        # Deterministe (2026-05-20) : valide le timing M1 = pas de contre-momentum.
+        # Confirme si rsi + ema_cross + slope_10m alignés avec h1/m15.
         ind = self._fetch_indicators(symbol)
         if ind is None:
             return {"signal": "wait", "confidence": 0.0, "reason": "no_data", "tf": "M1"}
+        rsi = float(ind.get("rsi", 50) or 50)
+        slope_short = float(ind.get("slope_short", 0))   # 10 min
+        slope_short_pct = slope_short * 100
+        ema_bull = bool(ind.get("ema_cross", 0))
+        intent = (m15_signal or h1_bias or "").lower()
 
-        ctx = ""
-        if h1_bias:
-            ctx += f"\n  H1 bias = {h1_bias.upper()}"
-        if m15_signal:
-            ctx += f"\n  M15 signal = {m15_signal.upper()}"
+        if intent == "buy":
+            # Timing OK si pas de contre-tendance forte sur M1 (slope_10m > -0.3%)
+            if slope_short >= -0.003 and rsi >= 40:
+                sig = "buy"
+                reason = f"slope_10m={slope_short_pct:+.2f}% rsi={rsi:.0f} emaBull={ema_bull}"
+            else:
+                sig = "wait"
+                reason = f"M1 contre-momentum slope_10m={slope_short_pct:+.2f}% rsi={rsi:.0f}"
+        elif intent == "sell":
+            if slope_short <= 0.003 and rsi <= 60:
+                sig = "sell"
+                reason = f"slope_10m={slope_short_pct:+.2f}% rsi={rsi:.0f} emaBull={ema_bull}"
+            else:
+                sig = "wait"
+                reason = f"M1 contre-momentum slope_10m={slope_short_pct:+.2f}% rsi={rsi:.0f}"
+        else:
+            # Pas de biais reçu, M1 reste passif
+            sig = "wait"
+            reason = "no_upstream_bias"
 
-        system = (
-            "Tu es scalper d'exécution. Tu valides le TIMING d'entrée sur base "
-            "M1 (2h). Tu cherches : momentum tick frais, vol burst, pas de "
-            "divergence M1. Si momentum baisse ou divergence avec H1/M15 → WAIT."
-        )
-        hist = _history_snippet(symbol)
-        user = (
-            f"M1 indicators on {symbol}:\n"
-            f"  Price={ind['price']:.4f}\n"
-            f"  RSI(7)={ind['rsi']:.1f}\n"
-            f"  EMA5={ind['ema_fast']:.4f} EMA13={ind['ema_slow']:.4f} ({ind['ema_cross']})\n"
-            f"  ATR%={ind['atr_pct']*100:.3f}%\n"
-            f"  Slope court ({ind['slope_short_n']}m)={ind['slope_short']*100:+.3f}%\n"
-            f"  Slope long  ({ind['slope_long_n']}m)={ind['slope_long']*100:+.3f}%\n"
-            f"  Volume relatif={ind['vol_ratio']:.2f}x"
-            f"{ctx}\n"
-            + (f"{hist}\n" if hist else "")
-            + f"\nLe timing intra-minute est-il favorable pour entrer dans le sens H1+M15 ?\n"
-            'JSON: {"signal":"buy"|"sell"|"wait","confidence":0.0-1.0,"reason":"max 10 mots"}'
-        )
-        out = self._llm_call(system, user)
-        out["tf"] = "M1"
-        out["indicators"] = ind
-        return out
+        conf = 0.7 if sig != "wait" else 0.4
+        return {"signal": sig, "confidence": conf, "reason": reason,
+                "tf": "M1", "indicators": ind}
 
 
 # ── GATE : VETO STRICT ────────────────────────────────────────────────────────

@@ -117,9 +117,17 @@ class AgentSymbolSelector:
         - universe_meta: liste d'objets meta (un par marché), typiquement récupérés via
           client.info({"type": "meta"})["universe"]
         """
+        from config.settings import SCALP_WATCHLIST
+
+        watchlist_set = {s.upper() for s in SCALP_WATCHLIST}
+
         learner_profiles = self._get_learner_profiles()
 
-        tradeable = [m for m in universe_meta if self._is_tradeable_meta(m)]
+        tradeable = [
+            m for m in universe_meta
+            if self._is_tradeable_meta(m)
+            and str(m.get("name") or m.get("symbol") or "").upper() in watchlist_set
+        ]
 
         confirmed: List[str] = []
         candidates_new: List[Dict[str, Any]] = []

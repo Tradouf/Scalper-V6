@@ -227,6 +227,23 @@ GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivat
 GRID_GRACE_SEC = 8.0         # délai avant 1er tick (laisse le cache HL confirmer l'ordre)
 GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore régime + position)
 
+# ── Mean Reversion (déterministe, H1) ────────────────────────────────────────
+# Stratégie standalone : entrée sur z-score extrême, sortie sur retour à la
+# moyenne. Actif uniquement en régime range, sur symboles whitelistés.
+MR_ENABLED = True
+MR_INTERVAL = "1h"             # timeframe de calcul (closes H1)
+MR_WINDOW = 50                  # bougies pour z-score
+MR_ENTRY_Z = 2.0                # |z| ≥ 2.0 → entrée
+MR_EXIT_Z = 0.4                 # |z| < 0.4 → close (retour à la moyenne)
+MR_HL_MIN = 5.0                 # half-life min (en périodes H1)
+MR_HL_MAX = 48.0                # half-life max (au-delà = non stationnaire)
+MR_SYMBOLS = ["ETH", "SOL", "LINK"]  # whitelist majors à comportement range
+MR_COOLDOWN_SEC = 1800          # 30 min anti-retrigger après signal
+MR_MAX_POSITIONS = 2            # cap concurrent (sur 3 symboles whitelist)
+MR_LEVERAGE = 3                 # levier modéré (mean-rev peut diverger)
+MR_NOTIONAL_USDC = 30.0         # taille de base par trade (×size_factor)
+MR_CHECK_INTERVAL_SEC = 300     # poll tous les 5 min (suffisant pour H1)
+
 # ── Smart entry (limit Alo post-only avec fallback market) ──────────────────
 # Réduit les frais en visant le côté maker (~+0.01%) au lieu du taker (+0.045%).
 # Fallback market si l'ordre limit n'est pas rempli dans le timeout.
