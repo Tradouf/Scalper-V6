@@ -128,13 +128,25 @@ def _hl_state() -> Dict:
                 except Exception:
                     continue
                 rec = reg.lookup(oid) if reg else None
+                # HL renvoie limitPx ET triggerPx comme strings ("0.0" pour les
+                # champs non utilisés). Le `or` court-circuite sur la string
+                # non-vide "0.0" → toujours 0 si on lit triggerPx en premier.
+                # Fix : sélectionner le bon champ via isTrigger.
+                is_trigger = bool(o.get("isTrigger", False))
+                try:
+                    if is_trigger:
+                        price = float(o.get("triggerPx") or 0)
+                    else:
+                        price = float(o.get("limitPx") or 0)
+                except (ValueError, TypeError):
+                    price = 0.0
                 out["open_orders"].append({
                     "oid": oid,
                     "coin": str(o.get("coin", "")),
                     "side": "buy" if str(o.get("side", "")).upper() in ("B", "BUY") else "sell",
-                    "price": float(o.get("triggerPx") or o.get("limitPx") or 0),
+                    "price": price,
                     "sz": float(o.get("sz") or 0),
-                    "trigger": bool(o.get("isTrigger")),
+                    "trigger": is_trigger,
                     "tpsl": str(o.get("tpsl") or ""),
                     "reduce_only": bool(o.get("reduceOnly", False)),
                     "source": rec.source if rec else "unknown",
