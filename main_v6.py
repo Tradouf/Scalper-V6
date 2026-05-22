@@ -569,10 +569,23 @@ class SalleDesMarchesV6:
                 return False
 
             qty = round(notional / mark, 6)
-            # SL au seuil z = ±3.5 (divergence anormale)
+            # SL : distance fixe en std DEPUIS LE MARK (pas depuis le mean).
+            #
+            # Bug observé (22/05) : avec polling MR 5 min, l'entrée peut arriver
+            # à |z|=3.5+, soit en dessous du sl_z=3.5 prévu. Si on calcule
+            # sl=mean−sl_z·std pour un BUY alors que mark=mean−|z|·std avec
+            # |z|>sl_z, on obtient sl > mark → SL au-dessus du prix pour un
+            # LONG (cas ETH 20:46:41 : mark=2092.15 sl=2094.78 z=-3.76).
+            #
+            # Fix : ancrer le SL au mark et garantir un buffer minimal en std.
+            z_entry = abs(float(sig.get("z") or 0))
             sl_z = 3.5
-            sl_price = self._round_px(symbol, mean + sl_z * std) if side == "sell" else \
-                       self._round_px(symbol, mean - sl_z * std)
+            min_sl_buffer_std = 1.5
+            sl_buffer = max(sl_z - z_entry, min_sl_buffer_std) * std
+            sl_price = self._round_px(
+                symbol,
+                mark - sl_buffer if side == "buy" else mark + sl_buffer,
+            )
 
             req = OrderRequest(
                 symbol=symbol, side=side, qty=qty,
@@ -2545,6 +2558,32 @@ class SalleDesMarchesV6:
         if not math.isfinite(entry) or entry <= 0:
             logger.warning("LIVE %s: entry invalide %s", symbol, entry)
             return None
+
+        # Sub-cent safety (bug 20-06:00) : sur les assets à tick large (PUMP
+        # @ $0.0029 px_dec=4 tick=0.0001), entry et sl peuvent collapse sur le
+        # même tick après arrondi → diff=0 → qty=0. On force au moins 1 tick
+        # d'écart dans la bonne direction (mieux vaut un SL légèrement plus
+        # large que pas de position du tout).
+        tick = 10 ** -self._get_tick_decimals(symbol)
+        side_norm = side.lower() if isinstance(side, str) else ""
+        if side_norm == "buy":
+            if sl >= entry:
+                sl = self._round_px(symbol, entry - tick)
+                logger.info(
+                    "LIVE %s sub-cent: SL collapsed entry, pushed à %.6f (tick=%.6f)",
+                    symbol, sl, tick,
+                )
+            if tp <= entry:
+                tp = self._round_px(symbol, entry + tick)
+        elif side_norm == "sell":
+            if sl <= entry:
+                sl = self._round_px(symbol, entry + tick)
+                logger.info(
+                    "LIVE %s sub-cent: SL collapsed entry, pushed à %.6f (tick=%.6f)",
+                    symbol, sl, tick,
+                )
+            if tp >= entry:
+                tp = self._round_px(symbol, entry - tick)
 
         leverage = min(float(leverage), MAX_LEVERAGE)
         qty = self._compute_position_size(symbol, entry, sl, confidence=confidence)

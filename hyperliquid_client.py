@@ -1204,13 +1204,17 @@ class HyperliquidClient:
                     "OID manquant après place_position_tpsl %s (tp=%s sl=%s), résolution via fallback...",
                     coin, parsed.get("tp_oid"), parsed.get("sl_oid")
                 )
+                # Fenêtre élargie (22/05) : observé 23 warnings/12h "TP/SL
+                # placé SANS OID récupéré" malgré une résolution post-fix par
+                # le health check → HL indexe parfois > 6s. On passe à ~15s
+                # pour absorber la latence sans casser le flow.
                 resolved = self._resolve_trigger_oids(
                     coin=coin,
                     is_long=is_long,
                     tp_price=tp_price_fmt,
                     sl_price=sl_price,
-                    max_retries=12,
-                    retry_delay=0.5,
+                    max_retries=20,
+                    retry_delay=0.75,
                 )
                 # Merger les OIDs résolus avec ce qu'on a déjà
                 if parsed.get("tp_oid") is None and resolved.get("tp_oid") is not None:
