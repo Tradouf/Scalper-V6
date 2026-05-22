@@ -2013,6 +2013,20 @@ class SalleDesMarchesV6:
             "[BOOT_RECONCILE] live=%d purged=%d absorbed=%d | registry=%s",
             len(live_oids), purged, absorbed, reg.stats(),
         )
+        # Anti-superposition grid (2026-05-22) : au boot, GridManager._grids est
+        # toujours vide mais le registre contient les ordres grid_pending/grid_tp
+        # de la session précédente. Sans cleanup, la prochaine activate() en
+        # crée par-dessus → grilles cumulées (bug ETH 22/05 : spacing 7.9 vs 4.7
+        # superposés, recovery SL coincé entre 2 niveaux, trous d'espacement).
+        try:
+            cancelled = self.grid_manager.cleanup_dangling_orders(symbol=None)
+            if cancelled:
+                logger.warning(
+                    "[BOOT_RECONCILE] %d grid orders orphelins annulés (session précédente)",
+                    cancelled,
+                )
+        except Exception as e:
+            logger.warning("[BOOT_RECONCILE] grid cleanup error: %r", e)
 
     def _recover_trail_guards(self) -> None:
         """

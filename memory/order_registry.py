@@ -232,7 +232,15 @@ class OrderRegistry:
                     intent = "limit"
                 side_raw = str(o.get("side", "")).upper()
                 side = "buy" if side_raw in ("B", "BUY") else ("sell" if side_raw in ("A", "SELL") else "?")
-                price = float(o.get("triggerPx") or o.get("limitPx") or 0)
+                # Le wrapper get_open_orders() normalise limitPx → limit_px (snake_case).
+                # On accepte les deux pour ne pas écrire price=0 quand l'ordre est en fait
+                # un limit normal sans triggerPx.
+                price = float(
+                    o.get("triggerPx")
+                    or o.get("limitPx")
+                    or o.get("limit_px")
+                    or 0
+                )
                 qty = float(o.get("sz") or 0)
                 self._records[oid] = OrderRecord(
                     oid=oid,

@@ -90,6 +90,14 @@ class GridManager:
         if not self.can_activate(symbol):
             return False
 
+        # Anti-superposition (2026-05-22) : annule tout reliquat d'une activation
+        # précédente encore présent en registre (cas observé sur ETH : ancienne
+        # grille spacing=7.9 cumulée avec la nouvelle spacing=4.7).
+        try:
+            self.cleanup_dangling_orders(symbol=symbol)
+        except Exception as e:
+            logger.warning("GRID %s cleanup_dangling pré-activation: %r", symbol, e)
+
         from config.settings import (
             GRID_ATR_FACTOR, GRID_LEVELS, GRID_NOTIONAL, GRID_LEVERAGE,
         )
@@ -214,6 +222,60 @@ class GridManager:
     def deactivate_all(self) -> None:
         for sym in list(self._grids.keys()):
             self.deactivate(sym, cancel=True)
+
+    def cleanup_dangling_orders(self, symbol: Optional[str] = None) -> int:
+        """Annule + dé-enregistre les ordres tagués grid_pending / grid_tp dont
+        l'état n'est plus géré par un GridState en mémoire.
+
+        Cas typiques :
+          - Restart bot : `_grids` est vide mais le registre persiste sur disque,
+            donc les anciens ordres restent vivants sur HL sans superviseur.
+          - Réactivation grid : la deactivate précédente a échoué partiellement
+            (cancel KO sur 1 OID), un reliquat traîne au tour d'après.
+
+        Appelé depuis activate() (symbol ciblé) et depuis le boot reconciler
+        (symbol=None → tous les symbols).
+
+        Returns: nombre d'ordres réellement annulés.
+        """
+        reg = get_order_registry()
+        targets = [
+            r for r in reg.all()
+            if r.source in (SOURCE_GRID_PENDING, SOURCE_GRID_TP)
+            and (symbol is None or r.symbol == str(symbol).upper())
+        ]
+        # Ne pas toucher aux OIDs encore référencés par un GridState actif
+        # (sécurité au cas où cette méthode serait appelée pendant un cycle).
+        tracked: Set[int] = set()
+        for g in self._grids.values():
+            for lvl in g.levels:
+                if lvl.pending_oid is not None:
+                    tracked.add(int(lvl.pending_oid))
+                if lvl.tp_oid is not None:
+                    tracked.add(int(lvl.tp_oid))
+        cancelled = 0
+        for r in targets:
+            if r.oid in tracked:
+                continue
+            try:
+                self._exchange.cancel_order(str(r.oid))
+                cancelled += 1
+            except Exception as e:
+                logger.warning(
+                    "GRID cleanup_dangling cancel oid=%d %s (%s@%.4f): %r",
+                    r.oid, r.symbol, r.side, r.price, e,
+                )
+            finally:
+                try:
+                    reg.unregister(r.oid)
+                except Exception:
+                    pass
+        if targets:
+            logger.info(
+                "GRID cleanup_dangling %s: %d candidats, %d annulés (tracked=%d)",
+                symbol or "ALL", len(targets), cancelled, len(tracked),
+            )
+        return cancelled
 
     # ─── FSM par niveau ───────────────────────────────────────────────────────
 
