@@ -1559,14 +1559,20 @@ class SalleDesMarchesV6:
             pnl_pct = pnl_brut * leverage
 
             # ── EMERGENCY HARD EXIT ──────────────────────────────────────
-            # Garde-fou capital : si la perte dépasse EMERGENCY_LOSS_ROE_MULT × SL_PCT,
-            # ferme la position de force, indépendamment de armed/sl_oid.
-            # Couvre : SL natif perdu, recovery abandonnée, cache stale, flip bloqué.
-            # Emergency = 2× distance trail en PRIX, converti en ROE selon le levier
-            # courant. À lev 10x le seuil ROE = -10%, à lev 3x = -3%. Le filet ne
-            # déclenche que si le SL natif a vraiment échoué (sinon le trail tape avant).
+            # Filet capital à 2 niveaux (fix 23/05) :
+            #   (A) ROE-based : -EMERGENCY_LOSS_ROE_MULT × SCALP_SL_PNL_PCT
+            #       Indépendant du levier. Avec 2.0 × 0.013 = -2.6% ROE.
+            #   (B) Price-distance backstop : −SL_DIST × LOSS_MULT × levier
+            #       Avec 0.008 × 2 × 3 = -4.8% ROE (lev 3x).
+            # On trigger sur le PREMIER seuil atteint (le plus serré). Avant ce
+            # fix le bot ne lisait que (B) (constante EMERGENCY_LOSS_ROE_MULT
+            # définie mais jamais utilisée), laissant filer les positions jusqu'à
+            # -4.8% au lieu de -2.6% comme documenté (cas AAVE -2.947% audit 37,
+            # WLD -4.85% à 21:32).
             emergency_dist_price = SCALP_SL_DIST_PRICE_PCT * EMERGENCY_LOSS_DIST_PRICE_MULT
-            emergency_threshold = -emergency_dist_price * max(1.0, leverage)
+            thr_price_dist = -emergency_dist_price * max(1.0, leverage)
+            thr_roe = -EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT
+            emergency_threshold = max(thr_price_dist, thr_roe)  # le moins négatif = plus serré
             if pnl_pct <= emergency_threshold:
                 # Anti-double-fire : skippe si fermeture déjà en vol (TTL 30s).
                 now_ts = time.time()
@@ -1691,7 +1697,9 @@ class SalleDesMarchesV6:
         # Couvre les positions ouvertes par le grid_manager qui ne passent pas
         # par _register_trail_guard. Sans ce filet, un grid breakout violent
         # n'a aucune protection (ni SL natif, ni trail).
+        # Même filet à 2 niveaux que la boucle scalp ci-dessus (cf. commentaire).
         emergency_dist_price_grid = SCALP_SL_DIST_PRICE_PCT * EMERGENCY_LOSS_DIST_PRICE_MULT
+        thr_roe_grid = -EMERGENCY_LOSS_ROE_MULT * SCALP_SL_PNL_PCT
         for symbol, pos in list(open_pos.items()):
             if symbol in self._trail_guards:
                 continue  # déjà couvert par la boucle précédente
@@ -1708,7 +1716,8 @@ class SalleDesMarchesV6:
                     continue
                 pnl_brut = (price - entry) / entry if side == "buy" else (entry - price) / entry
                 pnl_pct = pnl_brut * leverage
-                emergency_threshold = -emergency_dist_price_grid * max(1.0, leverage)
+                thr_price_dist = -emergency_dist_price_grid * max(1.0, leverage)
+                emergency_threshold = max(thr_price_dist, thr_roe_grid)
                 if pnl_pct <= emergency_threshold:
                     now_ts = time.time()
                     with self._emergency_lock:
