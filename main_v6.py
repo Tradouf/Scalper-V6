@@ -1446,7 +1446,24 @@ class SalleDesMarchesV6:
             )
 
             if new_sl_oid is None:
-                logger.warning("TRAIL NATIVE SL MODIFY FAILED %s %s oid=%s qty=%.6f target=%.4f", side.upper(), symbol, sl_oid, qty, target_sl_px)
+                # 5-strikes (fix 23/05) : si modify échoue 5× consécutifs sur le
+                # même OID, c'est que l'OID est périmé côté HL (cancelled,
+                # filled, ou inexistant). Le retry à 2s ne corrige rien — on
+                # drop le guard pour laisser _check_orphan_positions (60s)
+                # poser un nouveau SL frais via _recover_or_place_sl.
+                # Observé : 20 fails/47s sur SOL post-restart, ETH 11/53s.
+                fails = int(guard.get("modify_failures", 0)) + 1
+                guard["modify_failures"] = fails
+                logger.warning(
+                    "TRAIL NATIVE SL MODIFY FAILED %s %s oid=%s qty=%.6f target=%.4f (strike %d/5)",
+                    side.upper(), symbol, sl_oid, qty, target_sl_px, fails,
+                )
+                if fails >= 5:
+                    logger.warning(
+                        "TRAIL %s: OID %s périmé après 5 fails — drop guard, health_check (60s) reprendra",
+                        symbol, sl_oid,
+                    )
+                    self._trail_guards.pop(symbol, None)
                 return
 
             # HL cancel+recreate : le nouvel OID est retourné directement par modify_order.
@@ -1454,6 +1471,7 @@ class SalleDesMarchesV6:
             guard["sl_oid"] = int(new_sl_oid)
             guard["native_sl_price"] = float(target_sl_px)
             guard["last_protected_roe"] = float(prot)
+            guard["modify_failures"] = 0  # reset compteur après succès
 
             logger.info(
                 "TRAIL NATIVE SL MODIFY %s %s qty=%.6f protected=%.3f%% -> SL=%.4f (oid=%s→%s | entry=%.4f cur=%.4f lev=%.2f)",
