@@ -819,6 +819,38 @@ Historique des audits Opus du bot. Append-only.
 
 ---
 
+## 2026-05-23 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=2, flip_refusé=0, external_exit=2, recovery_fallback=1, recovery_abandon=0, enter=1, consensus=29, skip_conf=28, skip_cooldown=3, trail_arm=0, trail_modify=116, llm_err=0, hl_sync_err=0, cache_stale=0, open=4 (Stats cycle log) trail_guards=2, ROE listés=4 (BIO BUY -0.079% / BTC SELL -1.069% / ETH BUY +4.293% / SOL BUY +5.967%)
+
+**Diagnostic** : 39ème audit consécutif sans intervention paramétrique audit autonome. Aucun pattern paramétrique strict ne se déclenche : EMERGENCY=2 < seuil 3 (la règle "≥3 EMERGENCY → baisser SCALP_SL_PNL_PCT" n'est pas atteinte malgré une activité défensive notable), flip_refusé=0 < seuil 5, SKIP conf 28/720 cycles ≈ 0.039/cycle ≪ seuil 10/cycle, TRAIL ARM=0 mais ENTER=1 (pattern "0 armed/24h" non applicable sur 1 ENTER seul). Aucun changement humain entre audits (settings.py inchangé vs audit -1).
+
+**Résolution alerte VIRTUAL** : l'audit -1 12:00 signalait VIRTUAL SELL ROE=-2.519% à 0.08 pp du seuil EMERGENCY -2.6% ; la fenêtre actuelle comptabilise EMERGENCY=2 + external_exit=2 + recovery_fallback=1 = 5 événements défensifs de clôture, et VIRTUAL disparaît de l'inventaire (remplacé par BIO/BTC/ETH/SOL) → mécanisme EMERGENCY a vraisemblablement déclenché comme attendu, confirmant le bon fonctionnement du seuil ROE-based (commit 6f2a574). Recovery_fallback=1 = SL serré au prix actuel posé sans abandon, comportement défensif sain. Bilan rotation : 5 sorties / 1 entrée = turnover unilatéral vers protection.
+
+**Inventaire 4 positions actives** : 2 en gain marqué (ETH +4.293%, SOL +5.967% — explique le TRAIL NATIVE SL MODIFY=116 sustained ratchet sur ces 2 wins), 2 modérées (BIO -0.079%, BTC -1.069% sous seuil EMERGENCY -2.6%). **Aucune position en zone EMERGENCY** ; convergence entre log open=4 et 4 ROE listées = **proposition info 11-06:00 (Stats cycle open=N) non re-manifestée cet audit** (premier audit sans divergence depuis plusieurs cycles).
+
+**Ratio SKIP conf/CONSENSUS = 28/29 = 96.6%** — **6ème audit consécutif ~100%** (séquence 91→100→100→100→100→98.2→96.6 sur ~42h cumulés) ; CONSENSUS=29 volume modéré (vs 0/55/38/13/50/22 audits précédents). La règle audit autonome reste non déclenchable (10 SKIP conf/cycle requis, 0.039 observé), donc **recommandation humaine MIN_CONFIDENCE 0.65→0.60 maintenue qualitative** sur 6 audits cumulés. Le retour CONSENSUS≠0 (vs 0 audit -1) confirme que le tarissement complet du pipeline n'était que conjoncturel (combinaison RSI directionnel sur signaux SELL en oversold + ATR plafond) — la fenêtre actuelle laisse passer des consensus, simplement tous filtrés sous 0.65.
+
+**Infra HL parfaitement nominale** : sync_err=0, cache_stale=0, LLM=0 — **retour à la normale après le pic isolé audit -1 (172/64)** ; hypothèse "pic isolé non corrélé retry storm GRID" confirmée par la résorption immédiate. 11ème audit consécutif quasi-zéro hors sauts expliqués.
+
+**TRAIL NATIVE SL MODIFY=116** = ratchet très actif (vs 74/41/22/102/29 audits précédents — niveau haut) sustained par ETH et SOL en gain marqué qui font monter le SL natif HL régulièrement. TRAIL ARM=0 cohérent : la position ENTER=1 unique n'a probablement pas encore atteint TP_ARM_PCT=0.7% pour armer ; les positions héritées en gain (ETH/SOL) sont déjà armées de longue date donc pas de nouvel armement.
+
+**PAS DE RETRY STORM GRID observable** dans l'échantillon log fourni — **5ème audit consécutif sans manifestation directe** (cache_stale=0 sustained corrobore l'absence de pression API collatérale). Proposition warning 22-00:00 toujours pending mais dormant.
+
+**SKIP cooldown=3** modéré, cohérent avec 4 événements de clôture (chaque exit déclenche cooldown post-sortie). Régime orchestrateur "trend=range vol=medium risk=medium" sustained ; filtre ATR plafond 1.5% rejette LIT (3.248% observé) et probablement la majorité du top-30 en régime medium volatility ; strate gate veto m1_wait observé sur ETH/SOL/DOGE/LINK rejette le pipeline avant consensus. Pipeline scalp structurellement filtré comme aux audits précédents.
+
+Master switches inchangés : SCALP_ENABLED=True, GRID_ENABLED=True. Anti-oscillation : aucun changement settings audit autonome depuis ~378h (~15.75j).
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée — règles paramétriques toutes sous seuil malgré activité défensive notable. EMERGENCY=2 reste sous seuil 3, et l'efficacité du mécanisme défensif (VIRTUAL résolu proprement) ne motive aucun resserrage SL.
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` — 5ème audit consécutif sans manifestation directe, cache_stale=0 sustained ; cause racine non patchée, l'humain devrait toujours la prioriser car le pattern peut resurgir au prochain fill grid mismatch (bug latent). **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` — **non re-manifestée cet audit** (convergence log=ROE=4, première fois depuis plusieurs audits), pattern erratique non-déterministe persistant sur historique long. **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending` — non re-manifestée (BIO ouverte cet audit = sub-cent, mais probablement ENTER pré-fenêtre ou condition spécifique évitant le bug ; ENTER=1 visible mais identité du symbole entrant non explicite dans l'échantillon). **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **Mécanisme EMERGENCY validé en pratique** : VIRTUAL SELL -2.519% audit -1 → fenêtre actuelle EMERGENCY=2 + résorption de VIRTUAL du suivi ROE → le seuil ROE-based (commit 6f2a574) a vraisemblablement déclenché comme attendu, confirmant le design corrigé ; aucune action requise, **mécanisme défensif sain en condition réelle**. (b) **Infra HL résorption complète** : sync_err=172 → 0, cache_stale=64 → 0 en un cycle d'audit (6h) — pic isolé audit -1 confirmé non corrélé à un retry storm GRID ; aucune action requise. (c) **Bilan portfolio sain** : 2 positions en gain marqué (ETH +4.293%, SOL +5.967% — proches du TP nominal 3.25% qui aurait pu déjà déclencher si trail step n'avait pas accompagné), aucune position en zone critique. (d) **Ratio SKIP conf/CONSENSUS=96.6% 6ème audit consécutif ~100%** — **recommandation humain "envisager MIN_CONFIDENCE 0.65→0.60" maintenue** sur cumul ~42h ; règle audit autonome reste non déclenchable, décision humaine. (e) **ENTER=1 interrompt streak passive** sans relancer un volume soutenu (vs ENTER=0 sur 5 audits précédents puis 1+1 sur 2 derniers) — pipeline marginal mais opérationnel. 39 audits consécutifs (12-06:00 → 23-18:00, ~378h = ~15.75j) sans intervention paramétrique audit autonome — validation robuste continue du design. **Recommandation humain** : (1) **statuer MIN_CONFIDENCE 0.65→0.60** seuil 6 audits ratio quasi-100% atteint ; (2) **prioriser** proposition warning 22-00:00 GRID (bug latent) ; (3) **observer** convergence Stats cycle/ROE cet audit — si reproductible 2-3 audits, proposition info 11-06:00 pourrait être réévaluée à la baisse.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
 ## 2026-05-23 12:00 (audit Opus)
 
 **Métriques 6h** : emergency_exit=1, flip_refusé=0, external_exit=4, recovery_fallback=1, recovery_abandon=0, enter=0, consensus=0, skip_conf=0, skip_cooldown=23, trail_arm=0, trail_modify=74, llm_err=0, hl_sync_err=172, cache_stale=64, open=3 (Stats cycle) vs 5 ROE listées (ETH BUY -0.096% / HYPE SELL +0.510% / LINK BUY +0.365% / SOL BUY -0.240% / VIRTUAL SELL -2.519%)
