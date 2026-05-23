@@ -851,6 +851,34 @@ Master switches inchangés : SCALP_ENABLED=True, GRID_ENABLED=True. Anti-oscilla
 
 ---
 
+## 2026-05-24 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=6, flip_refusé=0, external_exit=5, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=23, skip_conf=23, skip_cooldown=11, trail_arm=0, trail_modify=59, llm_err=0, hl_sync_err=0, cache_stale=0, open=6 (Stats cycle log) vs 5 ROE listées (AAVE SELL +3.013% / ADA BUY +0.743% / ETH SELL +4.160% / GOAT BUY +9.855% / PAXG SELL -0.342%)
+
+**Diagnostic** : 40ème audit consécutif sans intervention paramétrique audit autonome. **EMERGENCY=6 (record fenêtre 6h)** dépasse numériquement le seuil 3 de la règle "≥3 EMERGENCY EXIT → Baisser SCALP_SL_PNL_PCT de 0.002". **MAIS application mécanique COUNTER-PRODUCTIVE** sous l'architecture actuelle : depuis le commit 2026-05-10, le trail SL utilise `SCALP_SL_DIST_PRICE_PCT=0.008` (price-based, indépendant du levier) et NON plus `SCALP_SL_PNL_PCT`. Désormais `SCALP_SL_PNL_PCT=0.013` ne pilote QUE (a) le seuil EMERGENCY via `EMERGENCY_LOSS_ROE_MULT=2.0 × 0.013 = -2.6% ROE` et (b) le TP via formule `SCALP_TP_PNL_PCT = 2.5 × SL = 0.0325`. Baisser SCALP_SL_PNL_PCT à 0.011 réduirait le seuil EMERGENCY à -2.2% ROE (DÉCLENCHE PLUS d'EMERGENCY, pas moins) ET réduirait le TP à 0.0275 (PROFIT cible plus bas). Application mécanique aggraverait la métrique. **Garde-fou "✅ En cas de doute → ne rien changer" appliqué**.
+
+**Contextualisation EMERGENCY=6** : ENTER=0 + external_exit=5 + EMERGENCY=6 = 11 clôtures défensives sans nouvelle entrée scalp (turnover entrant unilatéral via grid/MR probablement, vu 5 ROE listés ≠ symboles scalp typiques BTC/ETH). **Portfolio sain post-rotation** : 4 positions en gain marqué (AAVE +3.013%, ADA +0.743%, ETH +4.160%, GOAT +9.855%) + 1 modérée (PAXG -0.342% bien sous seuil EMERGENCY -2.6%) → mécanisme EMERGENCY a vraisemblablement nettoyé 6 positions adverses durant la fenêtre, ce qui a permis au portfolio résiduel d'être globalement profitable. **Le mécanisme défensif fonctionne comme attendu**, EMERGENCY=6 n'est pas un signe de défaillance mais d'activité défensive intense. Hypothèse : régime range medium volatility génère des entrées qui partent rapidement en perte (rotation autour du mean), le trail price-based à 0.8% ne capture pas l'oscillation avant que le ROE atteigne -2.6% sur positions à fort levier.
+
+**Ratio SKIP conf/CONSENSUS = 23/23 = 100%** — **7ème audit consécutif quasi-100%** (séquence 91-100-100-100-100-98.2-96.6-100 sur ~48h cumulés). CONSENSUS=23 (vs 29/0/55/38/13/50/22 audits précédents) — volume modéré. Règle audit autonome "≥10 SKIP conf/cycle" reste non déclenchée (23/720 ≈ 0.032/cycle ≪ 10/cycle). **Recommandation humain MIN_CONFIDENCE 0.65→0.60 maintenue** sur cumul ~48h désormais.
+
+**TRAIL NATIVE SL MODIFY=59** ratchet modéré (vs 116/74/41/22/102 audits précédents — niveau moyen) cohérent avec 4 positions en gain qui font monter le SL natif HL. **TRAIL ARM=0** cohérent ENTER=0 (pas de nouvelle position scalp à armer ; positions GOAT/ETH/AAVE héritées probablement armées de longue date).
+
+**Infra HL parfaitement nominale** : sync_err=0, cache_stale=0, LLM=0 — 12ème audit consécutif quasi-zéro hors sauts expliqués. **AUCUN RETRY STORM GRID observable** 6ème consécutif sans manifestation directe. Proposition warning 22-00:00 reste dormante.
+
+**Stats cycle log open=6 vs 5 ROE listées** = écart 1 unité = **proposition info 11-06:00 (Stats cycle open=N) re-manifestée** après absence audit -1. Pattern non-déterministe persistant.
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. **Anti-oscillation** : aucun changement settings audit autonome depuis ~384h (~16j).
+
+**Changes** : aucun, application mécanique de la règle "≥3 EMERGENCY → baisser SCALP_SL_PNL_PCT" serait counter-productive sous architecture actuelle (rule premise obsolete depuis trail price-based 2026-05-10) ; mécanisme défensif fonctionnel ; portfolio sain post-rotation.
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` — 6ème audit consécutif sans manifestation directe. **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` — re-manifestée cet audit (écart 1 unité). **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending` — non re-manifestée (ENTER=0 7ème audit consécutif). **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **EMERGENCY=6 record fenêtre 6h** mais NON ACTIONNABLE paramétriquement : règle table audit "≥3 EMERGENCY → baisser SCALP_SL_PNL_PCT" est **obsolete** depuis l'introduction trail price-based (SCALP_SL_DIST_PRICE_PCT=0.008, commit 2026-05-10). Application mécanique resserrerait le seuil EMERGENCY (effet inverse) et abaisserait le TP. **Recommandation humain : mettre à jour la table de règles** pour cibler SCALP_SL_DIST_PRICE_PCT (vrai paramètre trail) ou EMERGENCY_LOSS_ROE_MULT (vrai paramètre seuil EMERGENCY) au lieu de SCALP_SL_PNL_PCT obsolete. (b) **Portfolio résiduel sain** : 4 positions en gain marqué + 1 modérée, aucune zone EMERGENCY. (c) **Mécanisme défensif validé en charge** : 11 clôtures défensives durant fenêtre laissent portfolio profitable. (d) **Ratio SKIP conf 100% 7ème consécutif** — recommandation MIN_CONFIDENCE 0.65→0.60 maintenue cumul ~48h. (e) 40 audits consécutifs (12-06:00 → 24-00:00, ~384h = ~16j) sans intervention paramétrique audit autonome. **Recommandation humain prioritaire** : (1) **mettre à jour règle table audit** EMERGENCY → cibler SCALP_SL_DIST_PRICE_PCT ou EMERGENCY_LOSS_ROE_MULT au lieu de SCALP_SL_PNL_PCT obsolete ; (2) **statuer MIN_CONFIDENCE 0.65→0.60** seuil 7 audits ratio quasi-100% atteint ; (3) **prioriser** proposition warning 22-00:00 GRID (bug latent).
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
 ## 2026-05-23 12:00 (audit Opus)
 
 **Métriques 6h** : emergency_exit=1, flip_refusé=0, external_exit=4, recovery_fallback=1, recovery_abandon=0, enter=0, consensus=0, skip_conf=0, skip_cooldown=23, trail_arm=0, trail_modify=74, llm_err=0, hl_sync_err=172, cache_stale=64, open=3 (Stats cycle) vs 5 ROE listées (ETH BUY -0.096% / HYPE SELL +0.510% / LINK BUY +0.365% / SOL BUY -0.240% / VIRTUAL SELL -2.519%)
