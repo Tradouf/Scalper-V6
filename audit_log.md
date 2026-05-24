@@ -851,6 +851,30 @@ Master switches inchangés : SCALP_ENABLED=True, GRID_ENABLED=True. Anti-oscilla
 
 ---
 
+## 2026-05-24 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=1, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=5, skip_conf=5, skip_cooldown=1, trail_arm=0, trail_modify=17, llm_err=0, hl_sync_err=1, **cache_stale=737 (NIVEAU RETRY STORM)**, open=4 (Stats cycle) vs 3 ROE listées (AAVE SELL +8.658% / GOAT BUY +4.307% / PAXG SELL -1.719%)
+
+**Diagnostic** : 41ème audit consécutif sans intervention paramétrique audit autonome. **Aucun pattern de la table de réaction ne se déclenche** : EMERGENCY=0 (vs ≥3 requis), flip_refusé=0 (vs ≥5 requis), SKIP conf=5/720 cycles ≈ 0.007/cycle (≪ 10/cycle), TRAIL ARM=0 mais positions héritées (AAVE/GOAT en gain marqué) sont vraisemblablement armées de longue date. **Activité scalp quasi-nulle** : CONSENSUS=5 très faible (vs 23/0/29 audits récents), SKIP conf 5/5=100% pipeline 8ème audit consécutif quasi-100% (séquence 91-100-100-100-100-98.2-96.6-100-100 sur ~54h cumulés) → règle audit autonome non déclenchable mais **recommandation humain MIN_CONFIDENCE 0.65→0.60 maintenue** sur cumul ~54h désormais.
+
+**ALERTE INFRA HL cache_stale=737** : 1ère métrique élevée significative depuis audit -3 (cache_stale=64 le 23-12:00). Niveau **737 quasi-record retry storm GRID historique 794** (proposition warning 22-00:00) à 7 unités près. Échantillon log montre **warnings "HL cache périmé (10.0s > 10.0s)" toutes les ~10-12s sustainé** dans la fenêtre 05:57-05:59 = pression API constante mais pas de log GRID retry visible dans l'échantillon (proposition warning 22-00:00 pourrait être en train de se manifester latente, ou autre cause : saturation sync_loop, pic load HL). hl_sync_err=1 seul = pas de cascade d'erreurs côté sync principal, donc dégradation porte sur la fraîcheur cache plutôt que la connectivité brute. **Pas d'action paramétrique** (pas de paramètre cache_stale dans bornes autorisées), monitorer prochain audit pour confirmer/infirmer aggravation.
+
+**Portfolio résiduel** : 3 positions toutes en zone gérable : AAVE +8.658% (très profitable), GOAT +4.307% (profitable), PAXG -1.719% (modérément négatif, sous seuil EMERGENCY -2.6% à 0.88 pp). Stats cycle log open=4 vs 3 ROE listées = écart 1 unité = **proposition info 11-06:00 (Stats cycle open=N) re-manifestée** pour 2ème audit consécutif. TRAIL NATIVE SL MODIFY=17 modeste (vs 59/116/74 audits récents) cohérent activité défensive sustained sur 3 positions gainées.
+
+**Pipeline scalp asséché structurel** : Aucun ENTER 8ème audit consécutif. Échantillon log montre **STRATE GATE veto=m15_wait** récurrent (DOGE/LINK) + **SKIP ATR plafond 1.5%** (SUI 1.583%) — combo MULTI_TF_GATE_ENABLED=True (veto strict 3 strates) + SCALP_MAX_ATR_PCT=1.5 + RSI directionnel filtres pré-LLM bloquent structurellement les entrées sous régime range medium. **Recommandation humain alternative** : revisiter ces 3 paramètres hors bornes audit autonome plutôt que MIN_CONFIDENCE (qui n'est pas le blocant — CONSENSUS=5 trop faible signifie pipeline n'atteint pas l'étape de scoring confiance).
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. **Anti-oscillation** : aucun changement settings audit autonome depuis ~390h (~16.25j).
+
+**Changes** : aucun, aucun pattern paramétrique ne se déclenche ; activité défensive sustained sans nouvelle entrée scalp ; portfolio résiduel sain ; cache_stale=737 anomalie infra non actionnable paramétriquement.
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` — cache_stale=737 quasi-record (794 historique) pourrait indiquer une re-manifestation latente non visible dans échantillon log restreint, **priorité humain confirmée**. **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` — re-manifestée 2ème audit consécutif (écart 1 unité). **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending` — non re-manifestée (ENTER=0 8ème audit consécutif, condition manifestation non atteinte). **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **cache_stale=737 anomalie infra HL** quasi-record (794 historique retry storm 22-06:00) — surveillance critique prochain audit, potentielle re-manifestation latente proposition warning 22-00:00 GRID retry storm ; (b) **ratio SKIP conf 100% 8ème consécutif** sur cumul ~54h — recommandation humain MIN_CONFIDENCE 0.65→0.60 maintenue mais **CONSENSUS=5 trop faible montre que MIN_CONFIDENCE n'est pas le blocant principal** — pipeline filtré en amont par STRATE GATE m15_wait + ATR plafond + RSI directionnel ; (c) **Portfolio résiduel sain** 3 positions toutes gérables (AAVE/GOAT en gain marqué, PAXG modéré) ; (d) 41 audits consécutifs (12-06:00 → 24-06:00, ~390h = ~16.25j) sans intervention paramétrique audit autonome. **Recommandation humain prioritaire** : (1) **investiguer cause cache_stale=737** (rate-limit HL ? saturation sync_loop ? précurseur retry storm GRID ?) ; (2) **prioriser proposition warning 22-00:00 GRID** (bug latent potentiellement actif) ; (3) **revisiter trio STRATE GATE / SCALP_MAX_ATR_PCT / RSI directionnel** plutôt que MIN_CONFIDENCE pour débloquer pipeline scalp asséché 8 audits consécutifs.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
 ## 2026-05-24 00:00 (audit Opus)
 
 **Métriques 6h** : emergency_exit=6, flip_refusé=0, external_exit=5, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=23, skip_conf=23, skip_cooldown=11, trail_arm=0, trail_modify=59, llm_err=0, hl_sync_err=0, cache_stale=0, open=6 (Stats cycle log) vs 5 ROE listées (AAVE SELL +3.013% / ADA BUY +0.743% / ETH SELL +4.160% / GOAT BUY +9.855% / PAXG SELL -0.342%)
