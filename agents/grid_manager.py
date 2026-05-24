@@ -42,6 +42,11 @@ class GridLevel:
     tp_oid: Optional[int] = None             # TP reduce_only après fill
     tp_target_px: Optional[float] = None
     state: str = "pending"                   # pending|filled|tp_placed|done
+    # Anti faux-positif fill (fix 24/05) : compteur d'occurrences consécutives
+    # où l'oid est absent de open_oids. Évite de conclure "filled" sur un blip
+    # de cache HL (cache stale 60s observé pendant le storm BCH du 24/05 16:01).
+    miss_pending: int = 0                    # pour pending_oid
+    miss_tp: int = 0                         # pour tp_oid
 
 
 @dataclass
@@ -166,12 +171,17 @@ class GridManager:
     def on_tick(
         self, symbol: str, open_oids: Set[int],
         current_price: float, position_szi: float = 0.0,
+        cache_fresh: bool = True,
     ) -> None:
         """Mise à jour ladder. Appelé toutes les TRAIL_CHECK_SEC secondes depuis main_v6._grid_loop.
 
         position_szi : szi signé de la position globale du symbole (positif=long,
         négatif=short, 0=flat). Permet (G2) d'éviter de placer un TP qui serait
         refusé par HL avec "Reduce only would increase position".
+
+        cache_fresh : False si le cache HL est périmé (>10s). Bloque les
+        transitions "filled" basées sur oid manquant de open_oids — évite
+        les faux positifs qui empilent des TPs duplicat (cas BCH 24/05).
         """
         g = self._grids.get(symbol)
         if g is None:
@@ -195,7 +205,7 @@ class GridManager:
 
         # FSM par niveau
         for lvl in g.levels:
-            self._tick_level(g, lvl, open_oids, current_price, lev, position_szi)
+            self._tick_level(g, lvl, open_oids, current_price, lev, position_szi, cache_fresh)
 
     def deactivate(self, symbol: str, cancel: bool = True, close_position: bool = False) -> None:
         """
@@ -279,26 +289,44 @@ class GridManager:
 
     # ─── FSM par niveau ───────────────────────────────────────────────────────
 
+    # Confirmer "filled" demande N occurrences consécutives d'OID manquant.
+    # Avec tick=2s, MISS_THRESHOLD=2 = 4s mini avant transition. Évite les
+    # faux positifs sur blip de cache HL (cas BCH 24/05 : cache stale 60s →
+    # 8 TPs duplicats empilés au même prix).
+    _MISS_THRESHOLD = 2
+
     def _tick_level(
         self, g: GridState, lvl: GridLevel,
         open_oids: Set[int], current_price: float, lev: int,
         position_szi: float = 0.0,
+        cache_fresh: bool = True,
     ) -> None:
         if lvl.state == "pending":
             if lvl.pending_oid is not None and lvl.pending_oid not in open_oids:
-                # L'ordre a disparu de la book → filled
+                # OID manquant : pourrait être un blip cache stale.
+                # On ne conclut "filled" qu'après MISS_THRESHOLD ticks consécutifs
+                # ET avec un cache frais.
+                if not cache_fresh:
+                    return  # cache stale → ignore, on retry au prochain tick
+                lvl.miss_pending += 1
+                if lvl.miss_pending < self._MISS_THRESHOLD:
+                    return
+                # Confirmé : fill effectif
                 try:
                     get_order_registry().unregister(lvl.pending_oid)
                 except Exception:
                     pass
                 lvl.fill_px = lvl.target_px
                 lvl.pending_oid = None
+                lvl.miss_pending = 0
                 lvl.state = "filled"
                 logger.info(
                     "GRID %s level %s@%.4f filled → place TP",
                     g.symbol, lvl.side, lvl.target_px,
                 )
                 self._place_tp_for_level(g, lvl, lev, position_szi)
+            else:
+                lvl.miss_pending = 0  # OID toujours présent : reset compteur
 
         elif lvl.state == "filled":
             # Place TP si pas encore fait (retry possible)
@@ -306,7 +334,13 @@ class GridManager:
 
         elif lvl.state == "tp_placed":
             if lvl.tp_oid is not None and lvl.tp_oid not in open_oids:
-                # TP rempli → profit du step
+                # Même protection anti faux-positif que pour le pending.
+                if not cache_fresh:
+                    return
+                lvl.miss_tp += 1
+                if lvl.miss_tp < self._MISS_THRESHOLD:
+                    return
+                # TP rempli confirmé → profit du step
                 try:
                     get_order_registry().unregister(lvl.tp_oid)
                 except Exception:
@@ -323,6 +357,7 @@ class GridManager:
                 lvl.fill_px = None
                 lvl.tp_oid = None
                 lvl.tp_target_px = None
+                lvl.miss_tp = 0
                 new_oid = self._place_limit(
                     g.symbol, lvl.side, lvl.qty, lvl.target_px, lev, reduce_only=False,
                 )
@@ -335,6 +370,8 @@ class GridManager:
                     return
                 lvl.pending_oid = new_oid
                 lvl.state = "pending"
+            else:
+                lvl.miss_tp = 0  # OID TP toujours présent : reset
 
     def _place_tp_for_level(
         self, g: GridState, lvl: GridLevel, lev: int, position_szi: float = 0.0,

@@ -846,6 +846,10 @@ class SalleDesMarchesV6:
             open_orders = list(self._hl_cache.get("open_orders", []))
             prices = dict(self._hl_cache.get("prices", {}))
             positions_cache = dict(self._hl_cache.get("positions", {}))
+            cache_age = time.time() - self._hl_cache_ts
+        # Cache frais = sync récent (≤ HL_CACHE_MAX_AGE_SEC). Si stale, on passe
+        # le flag au FSM pour qu'il ne conclue pas "filled" sur un blip d'OID.
+        cache_fresh = cache_age <= HL_CACHE_MAX_AGE_SEC
 
         open_oids: set = set()
         for o in open_orders:
@@ -867,7 +871,11 @@ class SalleDesMarchesV6:
         for symbol in self.grid_manager.active_symbols():
             price = float(prices.get(symbol, 0) or 0)
             if price > 0:
-                self.grid_manager.on_tick(symbol, open_oids, price, position_szi.get(symbol, 0.0))
+                self.grid_manager.on_tick(
+                    symbol, open_oids, price,
+                    position_szi.get(symbol, 0.0),
+                    cache_fresh=cache_fresh,
+                )
 
     def _hl_sync_once(self) -> None:
         """Lit positions, prix, equity et ordres ouverts depuis l'API HL."""
