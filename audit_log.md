@@ -1034,3 +1034,28 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-25 18:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=4, flip_refusé=0, external_exit=12, recovery_fallback=0, recovery_abandon=0, enter=7, consensus=46, skip_conf=34, skip_cooldown=16, trail_arm=0, trail_modify=120, llm_err=0, hl_sync_err=1, **cache_stale=1516 (léger repli -5% vs record 1595 audit -1, reste 2ème plus haut historique)**, open=1 (Stats cycle) vs 9 ROE listées (AAVE SELL +0.569% / BNB BUY +4.239% / LINK BUY +2.549% / ONDO BUY -1.496% / PENGU BUY -2.501% / SOL BUY -2.531% / SUI BUY +2.322% / TAO BUY -2.187% / VIRTUAL BUY +0.256%)
+
+**Diagnostic** : 47ème audit consécutif mais **1ère intervention paramétrique du cycle** (depuis 12-06:00 = ~426h = ~17.75j). **Pattern de la table SE DÉCLENCHE** : EMERGENCY EXIT=4 (≥3 requis) → règle "baisser SCALP_SL_PNL_PCT de 0.002 — SL plus serré". Confluence inhabituelle : ENTER=7 (record observé, vs 4/1/0 audits récents) + emergency=4 sur même fenêtre = pipeline scalp pleinement productif mais perte de qualité dans l'edge, plusieurs trades partent jusqu'au seuil EMERGENCY. external_exit=12 (record fenêtre) confirme volume défensif élevé, trail_modify=120 nouveau record absolu cohérent activité défensive intense sur 9 positions + BNB +4.239% gain marqué (ratchet actif).
+
+**ALERTE INFRA HL cache_stale=1516** : trajectoire 0→737→1042→349→815→1473→1595→**1516** sur 8 audits = pattern oscillant à très haut niveau, léger repli -5% vs record 1595 audit -1 mais reste 2ème plus haut historique. hl_sync_err=1 marginal. Confirme état stationnaire de dégradation sustained. Échantillon log montre warnings "HL cache périmé (10.0s > 10.0s)" toutes les ~11-15s sustained dans 17:57-18:00 = pression API constante. **Présomption sustained re-manifestation latente proposition warning 22-00:00 (GRID retry storm)** maintenue.
+
+**ALERTE POSITIONS QUASI-EMERGENCY** : avec nouveau seuil EMERGENCY=2.0×0.011=2.2% ROE post-changement, **3 positions immédiatement très exposées** : SOL BUY -2.531% (déjà sous nouveau seuil), PENGU BUY -2.501% (idem sous nouveau seuil), TAO BUY -2.187% (à 0.013 pp du nouveau seuil). Sous l'ancien seuil -2.6% ces positions étaient toutes au-dessus. **Conséquence directe attendue** : 2-3 EMERGENCY EXIT supplémentaires probables au prochain cycle suite au resserrement — c'est conforme à la logique table (sortir plus tôt les pertes en cours). ONDO -1.496% reste avec marge.
+
+**Portfolio résiduel** : 9 positions (vs MAX_OPEN_POSITIONS=6 cap contractuel = dépassé, possible positions hors scalp grid/MR ou bug compteur). Distribution : 1 fort gain (BNB +4.239%), 4 modérément positives (LINK/SUI/AAVE/VIRTUAL), 4 négatives dont 3 quasi/sous-EMERGENCY (SOL/PENGU/TAO/ONDO). **Stats cycle log open=1 vs 9 ROE listées = écart 8 unités RECORD ABSOLU** (vs précédents max 4 unités) — proposition info 11-06:00 (Stats cycle open=N) **re-manifestée 7ème audit cumulé avec amplitude record**, pattern non-déterministe en aggravation marquée.
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. **Anti-oscillation rompue** : 1er changement settings audit autonome depuis ~426h (~17.75j), justifié par pattern table net (EMERGENCY=4 ≥ seuil 3).
+
+**Changes** :
+- `SCALP_SL_PNL_PCT`: 0.013 → 0.011 — pattern table déclenché (EMERGENCY EXIT=4 sur 6h ≥ seuil 3) ; SL plus serré, seuil EMERGENCY ROE passe -2.6%→-2.2% ; TP corrélé (2.5×SL) passe 3.25%→2.75%. Effet immédiat attendu : 2-3 EMERGENCY EXIT supplémentaires probables au prochain cycle sur SOL/PENGU/TAO (déjà sous nouveau seuil).
+
+**Code proposals** : aucune nouvelle (4 propositions pending toujours actives — warning 22-00:00 GRID retry storm, info 11-06:00 Stats cycle open=N avec amplitude record cet audit, info 20-06:00 bug sub-cent PUMP, critical 19-06:00 applied).
+
+**Alerts** : (a) **CHANGEMENT PARAMÉTRIQUE APPLIQUÉ** SCALP_SL_PNL_PCT 0.013→0.011 après 47 audits sans intervention ; bot redémarrera automatiquement via audit.sh. (b) **3 positions immédiatement sous nouveau seuil EMERGENCY -2.2% ROE** : SOL -2.531%, PENGU -2.501%, TAO -2.187% — EMERGENCY EXIT cluster probable au prochain cycle (effet attendu). (c) **cache_stale=1516** trajectoire 8 audits sustained = état stationnaire de dégradation confirmé. (d) **Écart Stats cycle open=1 vs ROE=9 = 8 unités RECORD ABSOLU** — proposition info 11-06:00 aggravation marquée, pattern non-déterministe critique à investiguer. (e) **9 positions vs MAX_OPEN_POSITIONS=6** : cap dépassé, cohérence compteur à vérifier. **Recommandation humain prioritaire** : (1) **vérifier post-redémarrage** l'effet du changement SCALP_SL_PNL_PCT sur cluster SOL/PENGU/TAO (EMERGENCY attendus = bon comportement) ; (2) **CRITIQUE investiguer écart open Stats=1 vs ROE=9** record 8 unités + cap MAX_OPEN_POSITIONS dépassé ; (3) **continuer surveillance cache_stale** trajectoire 8 audits + écart open record.
+
+**Suggéré** : redémarrer le bot (audit.sh s'en charge automatiquement vu commit settings).
+
+---
+

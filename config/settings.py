@@ -78,7 +78,7 @@ SCALP_BE_BUFFER_PCT = 0.008
 SCALP_TRAILING_ATR_MIN = 0.8
 SCALP_TRAILING_ATR_MAX = 1.2
 SCALP_MAX_DURATION_MIN = 30
-SCALP_SL_PNL_PCT = 0.013
+SCALP_SL_PNL_PCT = 0.011  # 2026-05-25 18:00 (audit autonome) : 0.013→0.011, pattern table déclenché EMERGENCY EXIT=4 (≥3) sur 6h → SL plus serré, seuil EMERGENCY -2.6%→-2.2% ROE pour limiter pertes maximales
 SCALP_TP_PNL_PCT = 2.5 * SCALP_SL_PNL_PCT  # 2026-05-21 : 2x→2.5x, R/R nominal 2.5:1 pour compenser le ratchet trail qui mord tôt (TP_ARM=0.5%)
 
 # 2026-05-10 — Trail ratchet en distance prix ABSOLUE (indépendante du levier).
