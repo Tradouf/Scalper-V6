@@ -1059,3 +1059,31 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-26 00:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=1, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=18, skip_conf=18, skip_cooldown=1, trail_arm=0, trail_modify=17, llm_err=0, hl_sync_err=0, **cache_stale=1 (CHUTE SPECTACULAIRE -99.9% vs 1516 audit -1)**, open=4 (Stats cycle) vs 2 ROE listées (ETH SELL +3.737% / SOL BUY -1.232%)
+
+**Diagnostic** : 48ème audit consécutif, 1ère fenêtre **post-redémarrage** suite au changement SCALP_SL_PNL_PCT 0.013→0.011 commit audit -1 (18:00). **Aucun pattern de la table de réaction ne se déclenche** : EMERGENCY=0 (vs ≥3), flip_refusé=0 (vs ≥5), SKIP conf=18/720 ≈ 0.025/cycle (≪ 10/cycle), TRAIL ARM=0 cohérent ENTER=0 + portfolio résiduel non-armé sauf ETH gain marqué (probablement armé pré-restart, non comptabilisé dans cette fenêtre). Pipeline scalp asséché côté volume (ENTER=0, CONSENSUS=18) — repli marqué vs audit -1 ENTER=7 explosif, retour calibration restrictive sustained typique régime range medium observé dans échantillon log.
+
+**ALERTE INFRA RÉSOLUTION SPECTACULAIRE HL cache_stale=1** : trajectoire 0→737→1042→349→815→1473→1595→1516→**1 (-99.9%)** sur 9 audits = **rupture nette du pattern de dégradation sustained 8 audits**. Le redémarrage automatique audit.sh (suite au commit SCALP_SL_PNL_PCT audit -1) a clairement réinitialisé un état corrompu du sync_loop client HL. hl_sync_err=0 confirme connectivité brute parfaite. **Indication probable** : la dégradation cache_stale 8 audits était un problème de fuite d'état/timer côté process longue-durée et non saturation API exchange. **Conséquence** : proposition warning 22-00:00 (GRID retry storm) reste pending mais urgence redescend significativement — à monitorer pour vérifier non-réapparition prochains audits.
+
+**ALERTE EFFET ATTENDU EMERGENCY NON OBSERVÉ** : audit -1 prédisait cluster EMERGENCY EXIT 2-3 probable post-resserrement SL sur SOL/PENGU/TAO immédiatement sous nouveau seuil -2.2% ROE. Résultat observé : EMERGENCY=0, portfolio fortement épuré (9 positions → 2 listées), external_exit=1 seulement. Hypothèses : (a) positions fermées par mécanisme autre (TP atteint, trailing, fermeture pré-restart) ; (b) état post-restart a re-chargé scalp_memory partielle, certaines positions n'ont pas été re-supervisées par pipeline ; (c) BNB +4.239% probable closed TP/trail. Bilan : pas de cluster catastrophique = bon résultat de fait, qualité du resserrement à confirmer sur ≥2 audits supplémentaires.
+
+**Portfolio résiduel sain** : 2 positions : ETH SELL +3.737% (gain marqué, TRAIL probable actif pré-restart), SOL BUY -1.232% (modérément négatif, marge 0.968 pp du nouveau seuil EMERGENCY -2.2%). Aucune position critique. trail_modify=17 modeste cohérent activité défensive faible sur 2 positions. **Stats cycle log open=4 vs 2 ROE listées = écart 2 unités** — proposition info 11-06:00 (Stats cycle open=N) **re-manifestée 8ème audit cumulé** mais amplitude redescendue (vs record 8 unités audit -1).
+
+**Échantillon log** confirme régime range medium + 4 MR SKIP (positions existantes non-MR) + STRATE GATE vetos m15_wait/h1_wait sur DOGE/SUI/LINK = combo MULTI_TF_GATE strict + filtres pré-LLM bloque pipeline structurellement (problème connu, hors bornes audit autonome).
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. Pas de signal 24h justifiant flip master switches (seulement 6h post-restart, données insuffisantes pour évaluer bilan scalp/grid net).
+
+**Anti-oscillation respectée** : pas de changement settings ce cycle, le changement audit -1 (SCALP_SL_PNL_PCT 0.013→0.011) prend effet et nécessite observation ≥2 audits avant ré-évaluation. **MIN_CONFIDENCE visible désormais 0.70** dans settings.py:127 (modification humaine récente, hors audit autonome) — note d'observation, à intégrer dans diagnostic SKIP conf futurs.
+
+**Changes** : aucun, paramétrage cohérent avec l'activité observée ; effet du resserrement SL audit -1 à observer sur 2-3 audits supplémentaires avant ré-évaluation ; cache_stale=1 résolution post-restart confirmée (effet secondaire bénéfique du commit settings).
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` mais urgence redescend significativement (cache_stale rupture pattern -99.9% post-restart suggère mécanisme lié à long-running state plutôt que pression API exchange) ; à monitorer 2-3 audits. **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` re-manifestée 8ème audit cumulé. **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending`. **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **RÉSOLUTION SPECTACULAIRE cache_stale=1** vs 1516 audit -1 (-99.9%) — redémarrage automatique audit.sh post-commit settings a réinitialisé état corrompu sync_loop ; trajectoire dégradation 8 audits rompue ; proposition warning 22-00:00 urgence redescend. (b) **Effet EMERGENCY cluster prédit NON observé** : audit -1 prédisait 2-3 EMERGENCY EXIT post-resserrement SL, observé=0 ; portfolio épuré 9→2 positions via autres mécanismes — bilan favorable de fait. (c) **Portfolio résiduel sain** : 2 positions (ETH +3.737% gain, SOL -1.232% modéré) — situation très favorable. (d) **Écart Stats cycle open=4 vs ROE=2 = 2 unités** — proposition info 11-06:00 re-manifestée 8ème audit cumulé amplitude redescendue. (e) **Pipeline scalp asséché côté volume** ENTER=0 retour calibration restrictive sustained post-oxygénation isolée audit -1, à différer pour observer effet SL change. (f) **48 audits consécutifs** (12-06:00 → 26-00:00, ~432h = ~18j), 1 seule intervention paramétrique (audit -1). **Recommandation humain prioritaire** : (1) **observer 2-3 audits suivants** pour évaluer effet durable resserrement SL 0.011 sur EMERGENCY rate et qualité scalp ; (2) **monitorer cache_stale** prochains audits pour vérifier non-réapparition pattern dégradation post-restart ; (3) **investiguer écart open Stats=4 vs ROE=2** récurrence 8 audits.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
