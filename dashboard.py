@@ -101,8 +101,12 @@ def _hl_state() -> Dict:
             })
         out["upnl_total"] = total_upnl
 
-        # 2) Compte spot — sur unified, c'est le collatéral. Le perp accountValue
-        # est déjà adossé au spot (pas un solde indépendant) → ne pas additionner.
+        # 2) Compte spot. Sur HL unified, spot_usdc.total EST l'equity totale du
+        # compte : il intègre déjà le PnL réalisé ET l'uPnL en temps réel via le
+        # mécanisme de margin partagée. Vérif numérique constante :
+        #   spot_total ≈ spot_free + perp_accountValue
+        #              = (spot_total − spot_hold) + (spot_hold + uPnL)
+        # Donc ajouter total_upnl serait un double-comptage (fix 25/05).
         rs = requests.post(
             HL_API, json={"type": "spotClearinghouseState", "user": HL_ADDR}, timeout=4
         ).json()
@@ -110,7 +114,7 @@ def _hl_state() -> Dict:
             if str(b.get("coin", "")).upper() == "USDC":
                 out["spot_usdc"] = float(b.get("total", 0) or 0)
 
-        out["account_value"] = out["spot_usdc"] + total_upnl
+        out["account_value"] = out["spot_usdc"]
 
         # 3) Open orders avec lookup registre pour la source
         try:
