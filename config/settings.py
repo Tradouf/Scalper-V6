@@ -124,7 +124,7 @@ SCALP_MIN_SR_DIST = 0.004
 MAX_SPREAD_PCT = 0.0008
 
 # ── Seuils de confiance ──────────────────────────────────────────────────────
-MIN_CONFIDENCE = 0.65         # 2026-05-21 : 0.55→0.65, filtre entrée plus strict pour réduire le bleed (951 trades / WR 56.5% / NET -23.71 USDC sur 30j : trop de trades vs edge)
+MIN_CONFIDENCE = 0.70         # 2026-05-25 : 0.65→0.70, scalp NET -$27.88 all-time (vs MR +$0.34, GRID -$2.79). Relever le seuil pour réduire le volume scalp toxique. 2026-05-21 : 0.55→0.65 post backtest 30j 951 trades NET -23.71 USDC.
 
 # ── Filtre volume ────────────────────────────────────────────────────────────
 MIN_VOLRATIO = 0.003
@@ -226,6 +226,13 @@ GRID_MAX_SYMBOLS = 3         # 2026-05-21 : 0→3 sortie du mode test isolé, gr
 GRID_COOLDOWN_SEC = 300      # délai min avant réactivation après désactivation (5 min)
 GRID_GRACE_SEC = 8.0         # délai avant 1er tick (laisse le cache HL confirmer l'ordre)
 GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore régime + position)
+# Drift guard (2026-05-25) : entre le breakout violent (±(LEVELS+1)·spacing) et la
+# zone "centre", un grid peut souffrir d'une dérive lente qui empile la position
+# sans déclencher le breakout (cas BCH 23-24/05 : -2% en 18h, 62 TPs hits mais
+# position résiduelle long 2.6 BCH avec -$3 uPnL). Le drift guard désactive
+# proprement la grille si |price-center| > DRIFT_K·spacing pendant DRIFT_WINDOW_SEC.
+GRID_DRIFT_K = 3.0           # seuil drift en multiples du spacing (3 < K < LEVELS+1)
+GRID_DRIFT_WINDOW_SEC = 3600 # 1h d'écart soutenu → désactivation soft
 
 # ── Mean Reversion (déterministe, H1) ────────────────────────────────────────
 # Stratégie standalone : entrée sur z-score extrême, sortie sur retour à la
@@ -237,9 +244,9 @@ MR_ENTRY_Z = 2.0                # |z| ≥ 2.0 → entrée
 MR_EXIT_Z = 0.4                 # |z| < 0.4 → close (retour à la moyenne)
 MR_HL_MIN = 5.0                 # half-life min (en périodes H1)
 MR_HL_MAX = 48.0                # half-life max (au-delà = non stationnaire)
-MR_SYMBOLS = ["ETH", "SOL", "LINK"]  # whitelist majors à comportement range
+MR_SYMBOLS = ["ETH", "SOL", "LINK", "BTC", "SUI", "AAVE", "BCH"]  # 2026-05-25 : extension après MR all-time NET +$0.34 (100% positif). Ajout des majors actifs et range-bound observés (BCH a démontré son range pattern via 60 TPs grid sur 24h).
 MR_COOLDOWN_SEC = 1800          # 30 min anti-retrigger après signal
-MR_MAX_POSITIONS = 2            # cap concurrent (sur 3 symboles whitelist)
+MR_MAX_POSITIONS = 2            # cap concurrent (volontairement bas — plus de candidats ≠ plus de positions, juste plus de diversité de signaux)
 MR_LEVERAGE = 3                 # levier modéré (mean-rev peut diverger)
 MR_NOTIONAL_USDC = 30.0         # taille de base par trade (×size_factor)
 MR_CHECK_INTERVAL_SEC = 300     # poll tous les 5 min (suffisant pour H1)

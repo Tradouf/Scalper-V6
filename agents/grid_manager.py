@@ -61,6 +61,9 @@ class GridState:
     last_update: float = field(default_factory=time.time)
     total_pnl_pct: float = 0.0
     trade_count: int = 0
+    # Drift guard (fix 25/05) : timestamp où le prix est sorti du seuil
+    # GRID_DRIFT_K·spacing autour du center. None = pas en dérive.
+    drift_since: Optional[float] = None
 
 
 class GridManager:
@@ -194,7 +197,7 @@ class GridManager:
         g.last_update = time.time()
         lev = int(GRID_LEVERAGE)
 
-        # Breakout guard
+        # Breakout guard : mouvement violent qui sort de la grille
         if abs(current_price - g.center) > g.breakout_limit:
             logger.info(
                 "GRID %s BREAKOUT (price=%.4f center=%.4f ±%.4f) → désactivation",
@@ -202,6 +205,35 @@ class GridManager:
             )
             self.deactivate(symbol, cancel=True)
             return
+
+        # Drift guard (fix 25/05) : dérive lente qui ne déclenche pas le breakout
+        # mais empile une position résiduelle perdante (cas BCH 23-24/05).
+        from config.settings import GRID_DRIFT_K, GRID_DRIFT_WINDOW_SEC
+        drift_threshold = float(GRID_DRIFT_K) * g.spacing
+        if abs(current_price - g.center) > drift_threshold:
+            if g.drift_since is None:
+                g.drift_since = time.time()
+                logger.info(
+                    "GRID %s DRIFT détecté (price=%.4f center=%.4f écart=%.4f > %.4f) → timer démarré (%ds avant désactivation)",
+                    symbol, current_price, g.center,
+                    abs(current_price - g.center), drift_threshold,
+                    int(GRID_DRIFT_WINDOW_SEC),
+                )
+            elif time.time() - g.drift_since > GRID_DRIFT_WINDOW_SEC:
+                elapsed = int(time.time() - g.drift_since)
+                logger.warning(
+                    "GRID %s DRIFT confirmé (>%ds soutenus, price=%.4f center=%.4f) → désactivation",
+                    symbol, elapsed, current_price, g.center,
+                )
+                self.deactivate(symbol, cancel=True)
+                return
+        else:
+            if g.drift_since is not None:
+                logger.info(
+                    "GRID %s drift terminé (price revenu dans la zone center±%.4f)",
+                    symbol, drift_threshold,
+                )
+                g.drift_since = None
 
         # FSM par niveau
         for lvl in g.levels:
