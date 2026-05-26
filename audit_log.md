@@ -1115,3 +1115,31 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-26 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=3, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=73, skip_conf=73, skip_cooldown=3, trail_arm=0, trail_modify=0, llm_err=0, hl_sync_err=0, **cache_stale=0** (RÉ-RÉSOLUTION spontanée vs 683 audit -1, -100%), open=2 (Stats cycle) vs 1 ROE listée (SOL BUY +0.540%)
+
+**Diagnostic** : 50ème audit consécutif, 3ème fenêtre post-redémarrage SCALP_SL_PNL_PCT 0.011. **Aucun pattern de la table ne se déclenche** : EMERGENCY=0 (vs ≥3), flip_refusé=0 (vs ≥5), SKIP conf=73/720 ≈ 0.10/cycle (≪ seuil 10/cycle malgré CONSENSUS=73 = 100% skip conf, signal qualitatif fort calibration restrictive sustained), TRAIL ARM=0 cohérent (ENTER=0 + SOL +0.540% sous TP_ARM_PCT=0.7%). Pipeline scalp asséché continue : ENTER=0 sur 18h cumulées post-restart, CONSENSUS=73 cet audit (vs 15 audit -1, 18 audit -2) = **explosion calculs consensus ~4× mais 100% rejet conf** — calibration MIN_CONFIDENCE=0.70 (modif humaine) + MULTI_TF_GATE strict (vetos h1_wait/m15_wait/m1_wait observés sur PUMP/MON/SOL/DOGE/SUI dans échantillon) + filtres pré-LLM (ATR plafond 1.5% trigger ZEC 1.915% + LIT 4.180%) = blocage structurel pipeline scalp hors bornes audit autonome.
+
+**ALERTE INFRA cache_stale=0 RÉ-RÉSOLUTION spontanée** : trajectoire 0→737→1042→349→815→1473→1595→1516→1→683→**0 (-100%)** sur 11 audits = **oscillation détectée**, pas de pattern monotone. Pas de redémarrage entre audit -1 (683) et cet audit (0) — résolution spontanée. Possible explication : périodes de calme exchange permettent au sync_loop de rattraper le retard accumulé ; ou compteur est artefact de mesure ponctuelle non représentatif d'un état stationnaire. **Conséquence** : urgence proposition warning 22-00:00 (GRID retry storm) redescend de nouveau, mais oscillation 0↔683 sur 12h confirme instabilité du compteur — à monitorer 2-3 audits pour caractériser le pattern oscillatoire.
+
+**Portfolio résiduel sain** : 1 position SOL BUY +0.540% (modérément positive, sous TP_ARM_PCT=0.7% pas encore armée — cohérent TRAIL ARM=0/TRAIL MODIFY=0). Marge confortable au seuil EMERGENCY -2.2% ROE. Réduction nette portfolio vs audit -1 (5→1) via external_exit=6 audit -1 + external_exit=3 cet audit = 9 sorties exchange-driven sur 12h. Bilan PnL non calculable sans détails fermetures (ETH +6.292%, BNB +0.395%, DOGE +0.596%, AAVE -0.070% toutes positives ou marginales = sorties globalement favorables probables).
+
+**Stats cycle log open=2 vs 1 ROE listée = écart 1 unité** — proposition info 11-06:00 (Stats cycle open=N) **re-manifestée 10ème audit cumulé**, amplitude faible cet audit mais persistance avérée fenêtre longue.
+
+**Effet du resserrement SL 0.011 (audit -3, 18h post-restart)** : 18h sans EMERGENCY EXIT sur 3 audits consécutifs = comportement attendu, mais évaluation biaisée par volume scalp asséché (ENTER=0+0+0 cumulés, peu de positions nouvelles exposées au nouveau seuil). Portfolio résiduel reste sain. Données encore insuffisantes pour conclure définitivement.
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. Pas de signal 24h justifiant flip (18h post-restart, ENTER=0 scalp asséché mais GRID actif observable = bilan grid favorable de fait, régime range medium persistant favorise grid).
+
+**Anti-oscillation respectée** : pas de changement settings ce cycle ; SCALP_SL_PNL_PCT=0.011 d'audit -3 reste en observation 1-2 audits supplémentaires.
+
+**Changes** : aucun, aucun pattern paramétrique ne se déclenche ; pipeline scalp asséché lié à MIN_CONFIDENCE=0.70 + MULTI_TF_GATE + filtres pré-LLM (hors bornes audit autonome) ; cache_stale oscillation 0↔683 non actionnable paramétriquement.
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` — urgence à nouveau redescendue (cache_stale=0 cet audit) mais oscillation 0↔683 sur 12h = instabilité confirmée à caractériser. **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` — re-manifestée 10ème audit cumulé (écart 1 unité). **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending`. **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **cache_stale=0 ré-résolution spontanée** vs 683 audit -1 sans redémarrage — oscillation détectée trajectoire 11 audits, mécanisme intermittent à caractériser. (b) **CONSENSUS=73 explosion ~4×** vs audits précédents mais 100% SKIP conf = activité interne pipeline plus élevée que perçue dans audits récents (potentiel volume scan accru). (c) **Portfolio très réduit 5→1 position** : SOL BUY +0.540% seul, marge EMERGENCY confortable. (d) **Écart Stats cycle open=2 vs ROE=1 = 1 unité** — proposition info 11-06:00 re-manifestée 10ème audit cumulé, amplitude faible. (e) **50 audits consécutifs** (12-06:00 → 26-12:00, ~444h = ~18.5j), 1 seule intervention paramétrique (audit -3 SL). **Recommandation humain prioritaire** : (1) **caractériser oscillation cache_stale** mécanisme intermittent vs accumulation linéaire — proposition warning 22-00:00 garde valeur debug même si urgence variable ; (2) **observer 1-2 audits supplémentaires** pour conclure sur effet durable SL 0.011 ; (3) **CONSENSUS=73 vs 15-18 audits précédents = ~4× augmentation activité interne** : monitorer si tendance se maintient.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
