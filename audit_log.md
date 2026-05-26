@@ -1087,3 +1087,31 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-26 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=6, recovery_fallback=0, recovery_abandon=0, enter=0, consensus=15, skip_conf=15, skip_cooldown=14, trail_arm=0, trail_modify=60, llm_err=0, hl_sync_err=0, **cache_stale=683 (RÉ-ESCALADE vs 1 audit -1, +68200%)**, open=1 (Stats cycle) vs 5 ROE listées (AAVE BUY -0.070% / BNB BUY +0.395% / DOGE BUY +0.596% / ETH SELL +6.292% / SOL BUY +0.269%)
+
+**Diagnostic** : 49ème audit consécutif, 2ème fenêtre post-redémarrage SCALP_SL_PNL_PCT 0.011. **Aucun pattern de la table ne se déclenche** : EMERGENCY=0 (vs ≥3), flip_refusé=0 (vs ≥5), SKIP conf=15/720 ≈ 0.02/cycle (≪ 10/cycle), TRAIL ARM=0 mais ENTER=0 (cohérent — pas de nouvelle position à armer ; ETH SELL +6.292% probablement armé pré-fenêtre). Pipeline scalp toujours asséché côté volume (ENTER=0, CONSENSUS=15) — confirme calibration restrictive sustained post-MIN_CONFIDENCE=0.70 (modif humaine récente) + MULTI_TF_GATE strict observé dans échantillon (STRATE GATE vetos h1_wait/m15_wait sur SOL/DOGE/SUI/LINK = blocage structurel hors bornes audit autonome).
+
+**ALERTE INFRA cache_stale=683 RÉ-ESCALADE** : trajectoire 0→737→1042→349→815→1473→1595→1516→1→**683** sur 10 audits = **rupture de la rupture** : la résolution post-restart audit -1 (cache_stale=1) ne tient pas, dégradation se ré-installe en 6h seulement. Confirmation du diagnostic audit -1 (problème de long-running state, redémarrage = patch temporaire et non fix). hl_sync_err=0 = connectivité brute toujours OK. Mécanisme : fuite d'état/timer côté sync_loop client HL qui ré-accumule progressivement. **Proposition warning 22-00:00 (GRID retry storm) urgence remonte** : confirmation que la re-manifestation est rapide et sustained, le redémarrage seul ne corrige pas la cause racine.
+
+**Portfolio résiduel sain** : 5 positions, distribution favorable : 1 gain très marqué (ETH SELL +6.292%, justifie largement TRAIL MODIFY=60 ratchet actif sur cette position), 3 modérément positives (BNB +0.395%, DOGE +0.596%, SOL +0.269%), 1 marginalement négative (AAVE -0.070%) — **aucune position critique ni quasi-EMERGENCY** (marge confortable au seuil EMERGENCY -2.2% ROE post-resserrement SL audit -2). external_exit=6 cohérent rotation modérée.
+
+**Stats cycle log open=1 vs 5 ROE listées = écart 4 unités** — proposition info 11-06:00 (Stats cycle open=N) **re-manifestée 9ème audit cumulé**, amplitude redescendue vs record 8 unités audit -2 mais persistance avérée.
+
+**Effet du resserrement SL 0.011 (audit -2 ; 1er audit complet post-restart)** : pas de pattern dégradant détectable, EMERGENCY=0 sur fenêtre complète, portfolio résiduel sain = comportement attendu. Données encore insuffisantes pour évaluer effet durable (volume scalp asséché = peu de trades exposés au nouveau seuil), observer ≥1 audit supplémentaire avant ré-évaluation.
+
+**Master switches inchangés** : SCALP_ENABLED=True, GRID_ENABLED=True. Pas de signal 24h justifiant flip (seulement 12h post-restart, données insuffisantes pour évaluer bilan scalp/grid net ; échantillon log montre GRID ETH/BNB/BTC ACTIVÉ + MR profils mis à jour = pipeline grid+MR opérationnel).
+
+**Anti-oscillation respectée** : pas de changement settings ce cycle ; le changement SCALP_SL_PNL_PCT 0.011 d'audit -2 reste en observation.
+
+**Changes** : aucun, aucun pattern paramétrique ne se déclenche ; effet resserrement SL nécessite encore 1-2 audits ; pipeline scalp asséché lié à MIN_CONFIDENCE=0.70 + MULTI_TF_GATE (hors bornes audit autonome) ; cache_stale ré-escalade non actionnable paramétriquement.
+
+**Code proposals** : aucune nouvelle. **Proposition warning 22-00:00 (GRID retry storm)** reste `pending` — **urgence remonte** : cache_stale ré-escalade 6h post-restart confirme mécanisme long-running state se ré-installe rapidement, redémarrage = patch temporaire insuffisant. **Proposition info 11-06:00 (Stats cycle open=N)** reste `pending` — re-manifestée 9ème audit cumulé (écart 4 unités cet audit). **Proposition info 20-06:00 (bug sub-cent PUMP)** reste `pending`. **Proposition critical 19-06:00** reste `applied`.
+
+**Alerts** : (a) **cache_stale=683 RÉ-ESCALADE post-restart** : la résolution audit -1 (=1) ne tient pas, dégradation ré-installée en 6h ; confirme diagnostic long-running state ; proposition warning 22-00:00 urgence remonte (mécanisme rapide à ré-manifester). (b) **Portfolio résiduel très sain** : 5 positions, ETH +6.292% gain marqué, aucune critique, marge confortable au seuil EMERGENCY -2.2%. (c) **Pipeline scalp asséché sustained** : ENTER=0 sur 12h post-restart, calibration MIN_CONFIDENCE=0.70 (humain) + MULTI_TF_GATE strict = blocage structurel hors bornes audit autonome. (d) **Écart Stats cycle open=1 vs ROE=5 = 4 unités** — proposition info 11-06:00 re-manifestée 9ème audit cumulé, amplitude redescendue mais persistance avérée. (e) **49 audits consécutifs** (12-06:00 → 26-06:00, ~438h = ~18.25j), 1 seule intervention paramétrique (audit -2). **Recommandation humain prioritaire** : (1) **CRITIQUE re-prioriser proposition warning 22-00:00** : confirmation cache_stale ré-escalade rapide post-restart = problème long-running state actif, redémarrage automatique seul insuffisant ; (2) **observer 1-2 audits supplémentaires** pour évaluer effet durable SL 0.011 (données encore insuffisantes, volume scalp asséché) ; (3) **considérer relâchement MIN_CONFIDENCE 0.70→0.65** si pipeline scalp reste asséché sur 24h — mais hors trigger automatique du tableau (15 SKIP conf / 720 cycles ≪ seuil 10/cycle).
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
