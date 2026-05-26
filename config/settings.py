@@ -191,7 +191,7 @@ METRICS_FILE = "memory/metrics_v5.json"
 # ne se lance pas (mais les positions existantes restent monitorées par le
 # trail loop + emergency exit). Utile pour évaluer la rentabilité réelle de
 # chaque brique séparément.
-SCALP_ENABLED = True  # bull/bear/consensus → entrées dirigées via scalper (test grid-only 2026-05-06)
+SCALP_ENABLED = False # 2026-05-26 : désactivé après analyse PnL 7j scalp NET -$19 (vs grid +$2, MR +$0.19). All-time scalp -$32 = 92% du déficit total. Bot ne fait plus que grid + MR.
 # GRID_ENABLED ci-dessous
 
 # Multi-timeframe gate (architecture "trading floor" — strates H1+M15+M1, veto strict).
