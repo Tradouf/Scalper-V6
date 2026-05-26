@@ -432,21 +432,36 @@ class GridManager:
         # - TP sell  ↔ on cherche à fermer un long  → position_szi doit être > 0
         # - TP buy   ↔ on cherche à fermer un short → position_szi doit être < 0
         # Si la position n'est pas du bon côté, HL refusera "Reduce only would
-        # increase position". On désarme le niveau au lieu de boucler.
+        # increase position".
+        #
+        # Fix 26/05 : avant on marquait state="done" → trou permanent dans le
+        # ladder (cas BNB 25-26/05 où 2 niveaux ont été désarmés et jamais
+        # ré-armés). Maintenant on RECYCLE le niveau en pending au target_px.
+        # Le fill courant est déjà compensé par un autre fill (sinon szi ne
+        # serait pas à 0), donc on peut reposer le limit sans risque.
         EPS = 1e-9
-        if tp_side == "sell" and position_szi <= EPS:
+        if (tp_side == "sell" and position_szi <= EPS) or \
+           (tp_side == "buy"  and position_szi >= -EPS):
             logger.info(
-                "GRID %s level %s@%.4f: TP %s skipped (position szi=%.6f ≤ 0) → niveau désarmé",
+                "GRID %s level %s@%.4f: TP %s skipped (position szi=%.6f) → recycle pending",
                 g.symbol, lvl.side, lvl.target_px, tp_side, position_szi,
             )
-            lvl.state = "done"
-            return
-        if tp_side == "buy" and position_szi >= -EPS:
-            logger.info(
-                "GRID %s level %s@%.4f: TP %s skipped (position szi=%.6f ≥ 0) → niveau désarmé",
-                g.symbol, lvl.side, lvl.target_px, tp_side, position_szi,
+            new_oid = self._place_limit(
+                g.symbol, lvl.side, lvl.qty, lvl.target_px, lev, reduce_only=False,
             )
-            lvl.state = "done"
+            if new_oid is None:
+                logger.warning(
+                    "GRID %s: recycle pending %s@%.4f échoué après G2 skip → désarmé",
+                    g.symbol, lvl.side, lvl.target_px,
+                )
+                lvl.state = "done"
+                return
+            lvl.pending_oid = new_oid
+            lvl.fill_px = None
+            lvl.tp_oid = None
+            lvl.tp_target_px = None
+            lvl.miss_pending = 0
+            lvl.state = "pending"
             return
 
         oid = self._place_limit(g.symbol, tp_side, lvl.qty, tp_target, lev, reduce_only=True)
