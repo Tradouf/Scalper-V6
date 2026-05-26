@@ -233,6 +233,12 @@ GRID_FORCE_SYMBOLS: list = []  # debug: force la grille sur ces symboles (ignore
 # proprement la grille si |price-center| > DRIFT_K·spacing pendant DRIFT_WINDOW_SEC.
 GRID_DRIFT_K = 3.0           # seuil drift en multiples du spacing (3 < K < LEVELS+1)
 GRID_DRIFT_WINDOW_SEC = 3600 # 1h d'écart soutenu → désactivation soft
+# Health check ladder (2026-05-26) : vérification d'intégrité périodique.
+# Pour chaque level d'un grid actif : si l'OID attendu n'est pas dans le book
+# HL, on repose. Aucune analyse de cause — on ne se pose pas de question, on
+# répare. Catch les divergences en cours de session (state="done", OIDs
+# cancellés externalement, bugs FSM non couverts).
+GRID_HEALTH_CHECK_SEC = 300  # 5 min
 
 # ── Mean Reversion (déterministe, H1) ────────────────────────────────────────
 # Stratégie standalone : entrée sur z-score extrême, sortie sur retour à la

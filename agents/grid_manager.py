@@ -64,6 +64,8 @@ class GridState:
     # Drift guard (fix 25/05) : timestamp où le prix est sorti du seuil
     # GRID_DRIFT_K·spacing autour du center. None = pas en dérive.
     drift_since: Optional[float] = None
+    # Ladder health check : timestamp du dernier check d'intégrité.
+    last_health_check: float = 0.0
 
 
 class GridManager:
@@ -239,6 +241,14 @@ class GridManager:
         for lvl in g.levels:
             self._tick_level(g, lvl, open_oids, current_price, lev, position_szi, cache_fresh)
 
+        # Ladder health check périodique (toutes les ~5 min).
+        # Indépendant de la FSM : si un level n'a pas son ordre sur HL, on
+        # le repose. Pas de question, pas d'analyse de cause.
+        from config.settings import GRID_HEALTH_CHECK_SEC
+        if cache_fresh and time.time() - g.last_health_check > GRID_HEALTH_CHECK_SEC:
+            self._ladder_health_check(g, open_oids, lev)
+            g.last_health_check = time.time()
+
     def deactivate(self, symbol: str, cancel: bool = True, close_position: bool = False) -> None:
         """
         close_position=True : ferme aussi la position résiduelle via market reduce_only.
@@ -264,6 +274,66 @@ class GridManager:
     def deactivate_all(self) -> None:
         for sym in list(self._grids.keys()):
             self.deactivate(sym, cancel=True)
+
+    def _ladder_health_check(
+        self, g: "GridState", open_oids: Set[int], lev: int,
+    ) -> None:
+        """Vérifie l'intégrité du ladder côté HL et repose les ordres manquants.
+
+        Logique brutale : pour chaque level dont l'OID attendu n'est pas dans
+        open_oids (ou inexistant), on repose. Pas d'analyse de cause :
+          - state="done"               → ré-arme en pending (target_px)
+          - state="pending" sans OID   → ré-arme en pending
+          - state="pending" OID absent → ré-arme en pending
+          - state="tp_placed" OID absent → laisse la FSM gérer (transition
+                                          normale tp_placed→recycle si confirmé)
+
+        Le check tp_placed est délégué à la FSM normale (qui a déjà miss_tp +
+        cache_fresh) pour éviter de doubler les TPs si vraiment filled.
+        """
+        repairs = 0
+        for lvl in g.levels:
+            need_rearm = False
+            reason = ""
+            if lvl.state == "done":
+                need_rearm = True
+                reason = "state=done"
+            elif lvl.state == "pending":
+                if lvl.pending_oid is None or int(lvl.pending_oid) not in open_oids:
+                    need_rearm = True
+                    reason = "pending OID absent"
+
+            if not need_rearm:
+                continue
+
+            new_oid = self._place_limit(
+                g.symbol, lvl.side, lvl.qty, lvl.target_px, lev,
+                reduce_only=False,
+            )
+            if new_oid is None:
+                logger.warning(
+                    "GRID %s health_check: re-pose %s@%.4f échouée (%s)",
+                    g.symbol, lvl.side, lvl.target_px, reason,
+                )
+                continue
+            logger.warning(
+                "GRID %s health_check: re-pose %s@%.4f (raison: %s, oid=%d)",
+                g.symbol, lvl.side, lvl.target_px, reason, new_oid,
+            )
+            lvl.pending_oid = new_oid
+            lvl.fill_px = None
+            lvl.tp_oid = None
+            lvl.tp_target_px = None
+            lvl.miss_pending = 0
+            lvl.miss_tp = 0
+            lvl.state = "pending"
+            repairs += 1
+
+        if repairs:
+            logger.info(
+                "GRID %s health_check: %d niveau(x) re-posé(s) sur %d total",
+                g.symbol, repairs, len(g.levels),
+            )
 
     def cleanup_dangling_orders(self, symbol: Optional[str] = None) -> int:
         """Annule + dé-enregistre les ordres tagués grid_pending / grid_tp dont
