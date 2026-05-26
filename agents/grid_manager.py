@@ -75,6 +75,9 @@ class GridManager:
         self._exchange = exchange
         self._grids: Dict[str, GridState] = {}
         self._deactivation_ts: Dict[str, float] = {}
+        # Cache des tick decimals par symbole (lookup via HL meta universe).
+        # HL exige max (6 - szDecimals) décimales pour le prix. BNB=3, BTC=1, etc.
+        self._tick_decimals: Dict[str, int] = {}
 
     # ─── API publique ─────────────────────────────────────────────────────────
 
@@ -131,7 +134,7 @@ class GridManager:
 
         # Buy levels sous le center (level 1 = le plus proche, level N = le plus bas)
         for k in range(1, n_levels + 1):
-            price = self._round_px(center - k * spacing)
+            price = self._round_px(center - k * spacing, symbol)
             if price <= 0:
                 continue
             oid = self._place_limit(symbol, "buy", qty, price, lev, reduce_only=False)
@@ -146,7 +149,7 @@ class GridManager:
 
         # Sell levels au-dessus du center
         for k in range(1, n_levels + 1):
-            price = self._round_px(center + k * spacing)
+            price = self._round_px(center + k * spacing, symbol)
             if price <= 0:
                 continue
             oid = self._place_limit(symbol, "sell", qty, price, lev, reduce_only=False)
@@ -487,10 +490,10 @@ class GridManager:
         # Sell filled @ k → TP buy @ k-spacing  (step en-dessous)
         if lvl.side == "buy":
             tp_side = "sell"
-            tp_target = self._round_px(lvl.target_px + g.spacing)
+            tp_target = self._round_px(lvl.target_px + g.spacing, g.symbol)
         else:
             tp_side = "buy"
-            tp_target = self._round_px(lvl.target_px - g.spacing)
+            tp_target = self._round_px(lvl.target_px - g.spacing, g.symbol)
 
         if tp_target <= 0:
             logger.warning("GRID %s: tp_target invalide (%.6f), niveau désarmé",
@@ -584,8 +587,36 @@ class GridManager:
 
     # ─── Privé ────────────────────────────────────────────────────────────────
 
-    def _round_px(self, price: float) -> float:
+    def _get_tick_decimals(self, symbol: str) -> int:
+        """Récupère le nombre de décimales prix tolérées par HL pour ce symbole.
+        Cache après le 1er fetch. Fallback à 4 si meta indisponible.
+        """
+        sym = symbol.upper()
+        if sym in self._tick_decimals:
+            return self._tick_decimals[sym]
         try:
+            meta = self._exchange._client.info.meta()
+            universe = meta.get("universe", []) if isinstance(meta, dict) else []
+            for u in universe:
+                if str(u.get("name", "")).upper() == sym:
+                    sz_dec = int(u.get("szDecimals", 3) or 3)
+                    px_dec = max(0, 6 - sz_dec)
+                    self._tick_decimals[sym] = px_dec
+                    return px_dec
+        except Exception as e:
+            logger.warning("GRID %s: meta fetch échoué pour tick_decimals: %r", sym, e)
+        fallback = {"BTC": 1, "ETH": 2, "BNB": 3, "SOL": 3, "BCH": 2, "AAVE": 3, "LINK": 4, "SUI": 5}.get(sym, 4)
+        self._tick_decimals[sym] = fallback
+        return fallback
+
+    def _round_px(self, price: float, symbol: str = "") -> float:
+        """Arrondit le prix au tick HL pour ce symbole (sinon HL rejette).
+        Le paramètre symbol est optionnel pour compatibilité ; sans lui on
+        retombe sur 6 décimales (legacy, BTC/ETH ok mais BNB ko).
+        """
+        try:
+            if symbol:
+                return round(float(price), self._get_tick_decimals(symbol))
             return round(float(price), 6)
         except Exception:
             return 0.0
