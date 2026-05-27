@@ -1205,3 +1205,27 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-27 12:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=0, flip_refusé=0, external_exit=6, recovery_fallback=1, enter=0, consensus=0, skip_conf=0, skip_cooldown=6, trail_arm=0, trail_modify=75, llm_err=0, hl_sync_err=3, cache_stale=67, open=4 (Stats) / 7 ROE listées (AAVE BUY +1.639% / BIO SELL -0.056% / DOGE BUY +3.000% / ETH BUY +3.230% / LINK BUY +1.945% / SOL SELL +0.251% / SUI BUY +3.268%)
+
+**Diagnostic** : 54ème audit, 4ème fenêtre post-flip humain SCALP_ENABLED=False (commit c4c9062 2026-05-26). **EMERGENCY=0 confirme convergence du cleanup** : trajectoire post-flip 6→2→3→0 sur 4 audits, portfolio scalp résiduel entièrement purgé ou stabilisé. Aucun pattern table déclenché : EMERGENCY=0 (<3), flip_refusé=0 (<5), SKIP conf=0, ENTER=0 attendu (pipeline scalp gelé SCALP=False, cohérent 24h sustained ENTER=0+0+0+0). external_exit=6 stable vs audit -1 (=6) = activité grid/MR exits ou trail_loop sur positions résiduelles, pas signal sustained. recovery_fallback=1 isolé pas pattern. INFRA cache_stale=67 rebond modéré vs 1 audit-1 (trajectoire 12 audits oscillatoire 0-1595, amplitude actuelle redescendue) — pas actionnable paramétriquement, proposition warning 22-00:00 reste utile si ré-escalade. hl_sync_err=3 bas niveau.
+
+**Portfolio sain et profitable** : 7 positions, **6/7 positives** (5 gains marqués : DOGE +3.000% / SUI +3.268% / ETH +3.230% / LINK +1.945% / AAVE +1.639% + SOL +0.251%), **1 marginale** BIO SELL -0.056%. DOGE/ETH/SUI au-dessus TP_ARM=0.7% = positions armées trail ratchet actif (cohérent trail_modify=75). Marge confortable au seuil EMERGENCY -2.2% ROE pour toutes positions. Reprise nette portfolio 4→7 positions vs audit -1 (=4) = grid+MR pipeline actifs (régime range medium favorise).
+
+**Écart Stats cycle open=4 vs ROE=7 = 3 unités** — proposition info 11-06:00 (Stats cycle open=N) **re-manifestée 13ème audit cumulé**, amplitude rebond cet audit (vs 1-2 récents) persistance avérée fenêtre longue confirmée.
+
+**Master switches** : SCALP_ENABLED=False (humain), GRID_ENABLED=True, MR_ENABLED=True. Aucun signal 24h justifiant counter-flip — décision humaine -$32 scalp all-time respectée, audit autonome pas autorisé à re-flipper. Régime range_medium persistant favorise grid+MR (sample log montre MR signals HOLD z-scores nominaux sur ETH/SOL/LINK/BTC/SUI/AAVE/BCH = pipeline MR opérationnel).
+
+**Anti-oscillation respectée** : pas de changement settings audit autonome depuis 18j+ (audit -4 SCALP_SL_PNL_PCT 0.013→0.011 dernière intervention), 4 propositions pending toujours actives couvrent patterns observés.
+
+**Changes** : aucun, paramétrage cohérent avec activité observée, convergence EMERGENCY→0 confirme stabilisation post-flip humain, portfolio sain et profitable.
+
+**Code proposals** : aucune nouvelle. 4 propositions pending actives — warning 22-00:00 GRID retry storm urgence basse (cache_stale en repli), info 11-06:00 Stats cycle open=N 13ème audit cumulé, info 20-06:00 sub-cent PUMP, critical 19-06:00 applied. Aucun bug structurel nouveau détectable cette fenêtre.
+
+**Alerts** : aucun. **Recommandation humain** : (1) **convergence EMERGENCY→0 atteinte** = phase nettoyage post-SCALP=False stabilisée, portfolio scalp résiduel purgé ou maîtrisé par grid/MR/trail_loop ; (2) **portfolio 6/7 positives avec 3 positions ≥+3% ROE** = bilan grid+MR très favorable sur cette fenêtre, valide la décision humaine SCALP=False ; (3) **décision propre re-flip SCALP=True envisageable** maintenant que convergence atteinte (audit +0 = environnement stable pour évaluer scénario "armé sous supervision"), à laisser à la discrétion humaine vu garde-fou audit autonome 4 audits 24h sustained ; (4) **caractériser oscillation cache_stale 12 audits** mécanisme intermittent toujours actif (67 cet audit), monitorer si ré-escalade vers 1000+.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
