@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .env
 .venv/
+
+# V7 — données historiques régénérables via scripts/backfill_history.py
+data/historical/*.parquet
+data/historical/*.json
