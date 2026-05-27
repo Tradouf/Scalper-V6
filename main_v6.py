@@ -2075,6 +2075,20 @@ class SalleDesMarchesV6:
                 )
         except Exception as e:
             logger.warning("[BOOT_RECONCILE] grid cleanup error: %r", e)
+        # Cleanup "unknown grid" : les records source=unknown qui sont des
+        # limit non-RO non-trigger sont presque certainement des reliquats
+        # d'ancien grid absorbés par absorb_orphans. Le scalp utilise du
+        # market, les SL/TP recovery sont des triggers, les TPs grid sont RO.
+        # Ne pas confondre avec MR : MR ouvre en market, ses SL sont triggers.
+        try:
+            cancelled = self.grid_manager.cleanup_unknown_grid_orphans()
+            if cancelled:
+                logger.warning(
+                    "[BOOT_RECONCILE] %d 'unknown' grid orphans annulés (limit non-RO non-trigger)",
+                    cancelled,
+                )
+        except Exception as e:
+            logger.warning("[BOOT_RECONCILE] unknown cleanup error: %r", e)
 
     def _recover_trail_guards(self) -> None:
         """

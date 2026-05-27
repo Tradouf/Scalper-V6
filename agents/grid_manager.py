@@ -338,6 +338,53 @@ class GridManager:
                 g.symbol, repairs, len(g.levels),
             )
 
+    def cleanup_unknown_grid_orphans(self) -> int:
+        """Annule + dé-enregistre les records source=unknown qui ressemblent
+        à des reliquats de grille (limit non-RO, non-trigger).
+
+        Heuristique : un ordre absorbé en "unknown" au boot avec :
+          - intent == "limit"
+          - is_trigger == False
+          - reduce_only == False
+        est presque sûrement un ancien niveau de grid (le scalp utilise du
+        market, les SL/TP recovery sont triggers, les TPs grid sont RO).
+        Cancel pour ne pas qu'ils traînent à travers les sessions.
+
+        Appelé uniquement au boot reconcile (pas en runtime, car un ordre
+        unknown pourrait être un add absorption transitoire en cours de
+        session — au boot c'est statique).
+        """
+        from memory.order_registry import SOURCE_UNKNOWN, get_order_registry
+        reg = get_order_registry()
+        targets = [
+            r for r in reg.all()
+            if r.source == SOURCE_UNKNOWN
+            and not r.is_trigger
+            and not r.reduce_only
+            and str(r.intent).lower() == "limit"
+        ]
+        cancelled = 0
+        for r in targets:
+            try:
+                self._exchange.cancel_order(str(r.oid))
+                cancelled += 1
+            except Exception as e:
+                logger.warning(
+                    "GRID cleanup_unknown cancel oid=%d %s (%s@%.4f): %r",
+                    r.oid, r.symbol, r.side, r.price, e,
+                )
+            finally:
+                try:
+                    reg.unregister(r.oid)
+                except Exception:
+                    pass
+        if targets:
+            logger.info(
+                "GRID cleanup_unknown_grid_orphans: %d candidats, %d annulés",
+                len(targets), cancelled,
+            )
+        return cancelled
+
     def cleanup_dangling_orders(self, symbol: Optional[str] = None) -> int:
         """Annule + dé-enregistre les ordres tagués grid_pending / grid_tp dont
         l'état n'est plus géré par un GridState en mémoire.
