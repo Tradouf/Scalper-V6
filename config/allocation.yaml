@@ -1,0 +1,101 @@
+# V7 — Configuration d'allocation dynamique multi-stratégies
+# Voir core/config.py pour la validation typée.
+
+# ─── Symboles tradés ──────────────────────────────────────────────────────────
+symbols:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - AAVE
+  - LINK
+  - SUI
+  - DOGE
+
+# ─── Détecteur de régime ──────────────────────────────────────────────────────
+regime:
+  window_bars: 100               # fenêtre features (100 bars 1h = 4j)
+  min_dwell_bars: 8              # hystérésis (8h)
+  timeframe: 1h
+  high_vol_atr_percentile: 0.85  # ATR > p85 sur la fenêtre → HIGH_VOL
+
+# ─── Allocateur ───────────────────────────────────────────────────────────────
+allocation:
+  # Matrice B[régime][stratégie] : poids de base
+  # Grid + MR dominent en RANGE, Momentum domine en TREND, tout réduit en HIGH_VOL.
+  base_weights:
+    trend_up:
+      grid: 0.1
+      mean_reversion: 0.2
+      momentum: 1.0
+    trend_down:
+      grid: 0.1
+      mean_reversion: 0.2
+      momentum: 1.0
+    range:
+      grid: 1.0
+      mean_reversion: 1.0
+      momentum: 0.1
+    high_vol:
+      grid: 0.2
+      mean_reversion: 0.3
+      momentum: 0.3
+
+  # Multiplicateur de performance — borné, lent.
+  mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
+  mult_max: 1.5                 # plafond : pas de chasing du momentum perf
+  perf_halflife_days: 45        # demi-vie EMA scoring
+
+  # Vol-targeting par stratégie
+  vol_target: 0.10              # vol annualisée cible
+
+# ─── Risk Manager ─────────────────────────────────────────────────────────────
+risk:
+  max_gross_exposure_pct: 2.0   # gross max = 2× equity
+  max_per_asset_pct: 0.4        # par actif max = 40% equity
+  kill_switch_dd_pct: 0.10      # -10% DD → kill switch
+  daily_loss_limit_pct: 0.03    # -3% jour → flat
+
+# ─── Execution ────────────────────────────────────────────────────────────────
+execution:
+  paper_mode: true              # paper trading par défaut (live = false au cutover)
+  rebalance_threshold_pct: 0.005 # bande non-trade 0.5% du gross
+  dashboard_port: 8082          # 8082 paper, 8081 live (cutover P8)
+
+# ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
+strategies:
+  grid:
+    enabled: true
+    atr_factor: 0.5
+    levels: 5
+    notional_per_level_usdc: 15.0
+    drift_k: 3.0
+    drift_window_sec: 3600
+    health_check_sec: 300
+    activation_threshold_usdc: 20.0
+
+  mean_reversion:
+    enabled: true
+    interval: 1h
+    window: 50
+    entry_z: 2.0
+    exit_z: 0.4
+    hl_min: 5.0
+    hl_max: 48.0
+    cooldown_sec: 1800
+    notional_usdc: 30.0
+    sl_z: 3.5
+    min_sl_buffer_std: 1.5
+
+  momentum:
+    enabled: true
+    interval: 1h
+    lookback_bars: 48
+    entry_zscore: 1.5
+    notional_usdc: 30.0
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+  data_historical: data/historical
+  memory: memory
+  logs: logs

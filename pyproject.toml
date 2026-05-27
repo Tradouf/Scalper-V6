@@ -1,0 +1,16 @@
+[project]
+name = "salledesmarches-v7"
+version = "7.0.0-dev"
+description = "Allocation dynamique multi-stratégies sur Hyperliquid"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+pythonpath = ["."]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
