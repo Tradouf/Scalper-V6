@@ -9,3 +9,10 @@ __pycache__/
 # V7 — données historiques régénérables via scripts/backfill_history.py
 data/historical/*.parquet
 data/historical/*.json
+
+# Runtime state V7 (régénéré par le bot)
+memory/order_registry.json
+memory/mr_state.json
+memory/shared_memory.json
+memory/scalp_memory.json
+memory/orderflow.db
