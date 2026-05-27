@@ -1185,3 +1185,23 @@ TRAIL NATIVE SL MODIFY=92 **fortement élevé** (vs 40/43/30/1/17/59 audits réc
 
 ---
 
+## 2026-05-27 06:00 (audit Opus)
+
+**Métriques 6h** : emergency_exit=3, flip_refusé=0, external_exit=6, recovery_fallback=1, enter=0, consensus=0, skip_conf=0, skip_cooldown=23, trail_arm=0, trail_modify=86, llm_err=0, hl_sync_err=1, cache_stale=1, open=5 (Stats) / 4 ROE listées (BNB BUY -1.378% / BTC BUY -0.200% / ETH BUY +0.586% / SUI BUY +0.569%)
+
+**Diagnostic** : 53ème audit, 3ème fenêtre post-flip humain SCALP_ENABLED=False (commit c4c9062 2026-05-26). Pattern table EMERGENCY EXIT=3 (=seuil) déclencherait techniquement règle "baisser SCALP_SL_PNL_PCT de 0.002", mais valeur actuelle 0.011 → -0.002 = 0.009 HORS BORNE min 0.010 = règle non-applicable mécaniquement. De plus contexte SCALP=False rend l'ajustement non-actionnable pour nouvelles entrées (pipeline scalp gelé ENTER=0+0+0 cumulé 18h post-flip) — n'affecterait que positions résiduelles encore monitorées par trail_loop. Trajectoire EMERGENCY post-flip humain : audit-2=6 (cleanup massif 18 sorties) → audit-1=2 (décroissance) → audit-0=3 (léger rebond cohérent cleanup résiduel non monotone). external_exit décroissance régulière 12→9→6 confirme purge progressive. INFRA HL cache_stale=1 / hl_sync_err=1 retour bas niveau stable (vs oscillation 0-1473 sur 12 audits cycle précédent), recovery_fallback=1 isolé pas de pattern.
+
+**État portfolio** : réduction nette 6→4 positions via 6 external_exit (sorties exchange-driven probablement favorables vu retour plateau sain). 1 position négative BNB -1.378% marge ~0.82pp avant EMERGENCY -2.2% ROE, 3 positions neutres-à-positives (BTC -0.200% / ETH +0.586% / SUI +0.569%). trail_modify=86 cohérent ratchet actif. TRAIL ARM=0 attendu, gains actuels sous TP_ARM=0.7%. Écart Stats open=5 vs ROE=4 = 1 unité, proposition info 11-06:00 ré-manifestée 12ème audit cumulé persistance fenêtre longue confirmée.
+
+**Anti-oscillation et garde-fous** : (1) Borne min SCALP_SL_PNL_PCT=0.010 atteinte, ne pas appliquer delta non-standard. (2) Transition humaine SCALP=False en cours, prudence accrue master switch (régime range medium favorise grid). (3) Pattern EMERGENCY cleanup résiduel non sustained (6→2→3 oscillant), pas de signal sustained 4 audits requis pour flip master switch.
+
+**Changes** : aucun, pattern table EMERGENCY=3 non-applicable (borne min atteinte) et non-actionnable (SCALP=False rend le paramètre dormant pour nouvelles entrées) — paramétrage cohérent avec activité observée, anti-oscillation respectée.
+
+**Code proposals** : aucune nouvelle. Les propositions pending existantes couvrent les patterns observés (Stats cycle desync 11-06:00 ré-manifestée, PUMP sub-cent, GRID ETH place_tp, INFRA cache_stale warning 22-00:00 maintenant en repli mais utile en cas ré-escalade). Aucun nouveau bug structurel détectable.
+
+**Alerts** : aucun déclencheur paramétrique humain. **Recommandation humain** : (1) observer 1-2 audits effet durable SCALP=False sur convergence EMERGENCY vers 0 (décroissance attendue quand portfolio scalp résiduel entièrement purgé) ; (2) surveiller BNB -1.378% seule position négative résiduelle, marge confortable mais à monitorer ; (3) si EMERGENCY persiste ≥3 sur 2 audits supplémentaires post-stabilisation, considérer re-flip SCALP=True pour mode "armé sous supervision" plutôt que trail_loop solo gérant positions résiduelles.
+
+**Suggéré** : aucun redémarrage requis (settings inchangés).
+
+---
+
