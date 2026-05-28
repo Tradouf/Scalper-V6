@@ -155,6 +155,80 @@ class V7Bot:
         self._running = False
         self.logger.info("V7 SIGTERM/SIGINT reçu, arrêt en cours...")
 
+    def _drive_grid(self, market, regime, prices) -> None:
+        """Pilote le grid_engine : activation conditionnelle + tick FSM.
+
+        Activation : poids grid (matrice B) × equity > activation_threshold_usdc
+                    AND régime range dominant (proba RANGE > 0.4)
+                    AND pas déjà actif sur ce symbole.
+        Désactivation : régime hors range OU breakout/drift géré par grid_engine.
+        """
+        from regime.features import atr as compute_atr
+        # Calcul du poids grid courant
+        weights = self.allocator.get_weights(regime, self.scorer.scores())
+        grid_w = weights.get("grid", 0.0)
+        equity = max(self.portfolio.equity, 100.0)
+        # Budget total alloué au grid (toutes positions confondues)
+        grid_total_budget = grid_w * equity
+        n_syms = max(len(self.cfg.symbols), 1)
+        budget_per_sym = grid_total_budget / n_syms
+        # Le grid s'active si budget >= activation_threshold ET régime range probable
+        prob_range = regime.probabilities.get(__import__("core.types", fromlist=["Regime"]).Regime.RANGE, 0.0)
+        should_activate = (
+            budget_per_sym >= self.cfg.strategies.grid.activation_threshold_usdc
+            and prob_range > 0.3
+        )
+
+        for sym in self.cfg.symbols:
+            # Configure le budget côté grid (info pour le Signal généré ensuite)
+            try:
+                self.grid.set_budget(sym, budget_per_sym)
+            except Exception:
+                pass
+            is_active = self.grid_engine.is_active(sym)
+            if not is_active and should_activate:
+                # Activate : calcule mid + ATR depuis les candles
+                candles = market.candles.get(sym, [])
+                if len(candles) < 30:
+                    continue
+                mid = float(candles[-1].close)
+                atr_val = compute_atr(
+                    [c.high for c in candles],
+                    [c.low for c in candles],
+                    [c.close for c in candles],
+                    period=14,
+                )
+                if atr_val is None or atr_val <= 0:
+                    continue
+                ok = self.grid_engine.activate(sym, mid, atr_val)
+                if ok:
+                    self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f budget=$%.0f", sym, mid, atr_val, budget_per_sym)
+            elif is_active and not should_activate:
+                self.grid_engine.deactivate(sym, cancel=True)
+                self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
+
+        # Tick FSM pour chaque grid actif (place TPs, recycle, drift, health check)
+        try:
+            open_oids = {int(o["oid"]) for o in self.exchange.get_open_orders() if o.get("oid")}
+        except Exception:
+            open_oids = set()
+        for sym in list(self.grid_engine.active_symbols()):
+            price = prices.get(sym, 0.0)
+            if price <= 0:
+                continue
+            # position_szi (signed) — convertit notional → szi (signed qty)
+            current_notional = self.portfolio.positions.get(sym, 0.0)
+            szi = current_notional / price if price > 0 else 0.0
+            try:
+                self.grid_engine.on_tick(
+                    sym, open_oids=open_oids,
+                    current_price=price,
+                    position_szi=szi,
+                    cache_fresh=True,
+                )
+            except Exception as e:
+                self.logger.warning("Grid on_tick %s error: %r", sym, e)
+
     def _tick(self) -> None:
         from core.types import MarketSnapshot
 
@@ -187,6 +261,15 @@ class V7Bot:
 
         # 2. Régime
         regime = self.detector.detect(market)
+
+        # 2.5. Grid driver (séparé du flow Signal car le grid est event-driven).
+        # On donne au grid son budget par symbole (= poids grid × equity / N syms),
+        # et on appelle son on_tick pour faire avancer la FSM (fills internes,
+        # health check, drift guard...).
+        try:
+            self._drive_grid(market, regime, prices)
+        except Exception as e:
+            self.logger.warning("Grid driver error: %r", e)
 
         # 3. Signaux (toutes stratégies)
         all_signals = []
@@ -230,11 +313,12 @@ class V7Bot:
             self.scorer.on_fill(f)
 
         # 9. Log
+        active_signals = [s for s in all_signals if s.target_notional > 0]
         self.logger.info(
-            "tick #%d  regime=%s conf=%.2f  signals=%d orders=%d fills=%d  "
+            "tick #%d  regime=%s conf=%.2f  sig_act=%d/%d orders=%d fills=%d  "
             "equity=$%.2f positions=%d",
             self._cycle, regime.label.value, regime.confidence,
-            len(all_signals), len(orders), len(fills),
+            len(active_signals), len(all_signals), len(orders), len(fills),
             self.portfolio.equity, len(self.portfolio.positions),
         )
 
@@ -246,6 +330,27 @@ class V7Bot:
     def _persist_state(self, regime, signals, target, projected, fills) -> None:
         mem = REPO / "memory"
         mem.mkdir(exist_ok=True)
+        # Cumulative counters (reset chaque restart)
+        if not hasattr(self, "_total_fills"):
+            self._total_fills = 0
+            self._total_orders = 0
+            self._total_signals = 0
+        self._total_fills += len(fills)
+        self._total_signals += len(signals)
+        active_signals = [s for s in signals if s.target_notional > 0]
+
+        # Détail signaux pour le dashboard
+        signals_detail = []
+        for s in signals:
+            signals_detail.append({
+                "strategy": s.strategy_id,
+                "asset": s.asset,
+                "direction": s.direction,
+                "target_notional": s.target_notional,
+                "confidence": s.confidence,
+                "edge_bps": s.expected_edge_bps,
+            })
+
         try:
             state = {
                 "ts": time.time(),
@@ -258,6 +363,8 @@ class V7Bot:
                 "weights": self.allocator.get_weights(regime, self.scorer.scores()),
                 "perf_scores": self.scorer.scores(),
                 "signals_count": len(signals),
+                "signals_active_count": len(active_signals),
+                "signals_detail": signals_detail,
                 "target_gross": target.gross_exposure,
                 "target_net": target.net_exposure,
                 "projected_gross": projected.gross_exposure,
@@ -265,6 +372,9 @@ class V7Bot:
                 "portfolio_equity": self.portfolio.equity,
                 "portfolio_positions": self.portfolio.positions,
                 "fills_count_this_cycle": len(fills),
+                # Compteurs cumulés depuis boot
+                "cumulative_fills": self._total_fills,
+                "cumulative_signals": self._total_signals,
             }
             (mem / "v7_state.json").write_text(json.dumps(state, indent=2, default=str))
         except Exception as e:

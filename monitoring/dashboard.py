@@ -157,9 +157,15 @@ INDEX_HTML = r"""<!doctype html>
       <div><div class="lbl">Projected net</div><div id="pnet" class="mono">…</div></div>
     </div>
     <div class="row">
-      <div><div class="lbl">Signaux ce tick</div><div id="signals" class="mono">…</div></div>
-      <div><div class="lbl">Fills ce tick</div><div id="fills" class="mono">…</div></div>
+      <div><div class="lbl">Signaux actifs / total (tick)</div><div id="signals" class="mono">…</div></div>
+      <div><div class="lbl">Fills cumul / depuis boot</div><div id="fills" class="mono">…</div></div>
     </div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Signaux courants</h2>
+    <table id="sigtbl"><thead><tr><th>Strat</th><th>Asset</th><th>Direction</th><th>Notional</th><th>Conf</th><th>Edge bps</th></tr></thead><tbody></tbody></table>
+    <div id="signals_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
   </div>
 
   <div class="card" style="grid-column:1/-1">
@@ -226,8 +232,25 @@ async function refresh() {
     document.getElementById('pgross').textContent = '$' + fmt(st.projected_gross, 2);
     document.getElementById('tnet').textContent = '$' + fmt(st.target_net, 2);
     document.getElementById('pnet').textContent = '$' + fmt(st.projected_net, 2);
-    document.getElementById('signals').textContent = st.signals_count;
-    document.getElementById('fills').textContent = st.fills_count_this_cycle;
+    document.getElementById('signals').textContent =
+      (st.signals_active_count != null ? st.signals_active_count : '?') + ' / ' + st.signals_count;
+    document.getElementById('fills').textContent =
+      st.fills_count_this_cycle + ' (tick) · ' + (st.cumulative_fills != null ? st.cumulative_fills : '?') + ' (cumul)';
+
+    // Signaux courants (détail)
+    const sigBody = document.querySelector('#sigtbl tbody');
+    sigBody.innerHTML = '';
+    const sigs = st.signals_detail || [];
+    const active = sigs.filter(s => s.target_notional > 0);
+    (active.length ? active : sigs.slice(0, 5)).forEach(s => {
+      const tr = document.createElement('tr');
+      const dirStr = s.direction > 0 ? '🟢 LONG' : (s.direction < 0 ? '🔴 SHORT' : '⚪ flat');
+      tr.innerHTML = `<td>${s.strategy}</td><td>${s.asset}</td><td>${dirStr}</td>
+        <td>$${fmt(s.target_notional,2)}</td><td>${fmt(s.confidence,2)}</td><td>${fmt(s.edge_bps,1)}</td>`;
+      sigBody.appendChild(tr);
+    });
+    document.getElementById('signals_note').textContent =
+      active.length ? `${active.length} signaux actifs (target>0)` : `Tous les signaux flat — bot en wait (régime ${st.regime?.label||'?'})`;
 
     // Recent ticks
     const ticks = s.recent_ticks || [];

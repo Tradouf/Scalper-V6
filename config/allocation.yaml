@@ -78,12 +78,12 @@ strategies:
     enabled: true
     interval: 1h
     window: 50
-    entry_z: 2.0
+    entry_z: 1.5             # 2.0→1.5 pour P7 observation (plus de trades)
     exit_z: 0.4
     hl_min: 5.0
     hl_max: 48.0
     cooldown_sec: 1800
-    notional_usdc: 200.0      # ~20% equity (équivaut à V6 risk-per-trade ~1%)
+    notional_usdc: 200.0
     sl_z: 3.5
     min_sl_buffer_std: 1.5
 
@@ -91,7 +91,7 @@ strategies:
     enabled: true
     interval: 1h
     lookback_bars: 48
-    entry_zscore: 1.5
+    entry_zscore: 1.0        # 1.5→1.0 pour P7 observation
     notional_usdc: 200.0
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
