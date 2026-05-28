@@ -16,3 +16,5 @@ memory/mr_state.json
 memory/shared_memory.json
 memory/scalp_memory.json
 memory/orderflow.db
+memory/v7_state.json
+*.pid
