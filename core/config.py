@@ -118,10 +118,24 @@ class MomentumStrategyConfig(BaseModel):
     notional_usdc: float = Field(30.0, ge=5.0, le=500.0)
 
 
+class SupertrendStrategyConfig(BaseModel):
+    """Supertrend classique ATR-based, trend-following avec stop trailing intégré."""
+    enabled: bool = True
+    interval: str = "1h"
+    period: int = Field(10, ge=5, le=30, description="Période ATR")
+    multiplier: float = Field(3.0, ge=1.0, le=6.0, description="ATR multiplier")
+    # Sizing dynamique : risque fixe par trade (% equity) ÷ distance au stop
+    risk_per_trade_pct: float = Field(0.01, ge=0.001, le=0.05, description="Risque max par trade en % equity")
+    notional_max_usdc: float = Field(500.0, ge=10.0, le=2000.0, description="Cap notional absolu")
+    notional_min_usdc: float = Field(10.0, ge=5.0, le=100.0, description="Plancher notional")
+    cooldown_sec: int = Field(900, ge=60, le=86400, description="Cooldown post-flip (15min par défaut)")
+
+
 class StrategiesConfig(BaseModel):
     grid: GridStrategyConfig = Field(default_factory=GridStrategyConfig)
     mean_reversion: MeanReversionStrategyConfig = Field(default_factory=MeanReversionStrategyConfig)
     momentum: MomentumStrategyConfig = Field(default_factory=MomentumStrategyConfig)
+    supertrend: SupertrendStrategyConfig = Field(default_factory=SupertrendStrategyConfig)
 
 
 class PathsConfig(BaseModel):
@@ -156,6 +170,8 @@ class V7Config(BaseModel):
             enabled.add("mean_reversion")
         if self.strategies.momentum.enabled:
             enabled.add("momentum")
+        if self.strategies.supertrend.enabled:
+            enabled.add("supertrend")
         matrix_strats = set()
         for d in self.allocation.base_weights.values():
             matrix_strats.update(d.keys())

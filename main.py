@@ -74,6 +74,7 @@ class V7Bot:
         from regime.detector import RuleBasedRegimeDetector
         from strategies.mean_reversion import MeanReversionStrategy
         from strategies.momentum import MomentumStrategy
+        from strategies.supertrend import SupertrendStrategy
         from strategies.grid_engine import GridEngine
         from strategies.grid import GridStrategy
         from allocation.allocator import RuleBasedAllocator
@@ -103,10 +104,15 @@ class V7Bot:
         self.detector = RuleBasedRegimeDetector(self.cfg.regime)
         self.mr = MeanReversionStrategy(self.cfg.strategies.mean_reversion, self.cfg.symbols)
         self.momentum = MomentumStrategy(self.cfg.strategies.momentum, self.cfg.symbols)
+        # Supertrend : sizing dynamique, lit l'equity courante via callback
+        self.supertrend = SupertrendStrategy(
+            self.cfg.strategies.supertrend, self.cfg.symbols,
+            equity_callback=lambda: self.portfolio.equity,
+        )
         # Grid : utilise notre exchange (paper). Sa FSM placera des limits via paper.
         self.grid_engine = GridEngine(self.exchange, self.cfg.strategies.grid)
         self.grid = GridStrategy(self.grid_engine, symbols=self.cfg.symbols)
-        self.strategies = [self.mr, self.momentum, self.grid]
+        self.strategies = [self.mr, self.momentum, self.supertrend, self.grid]
 
         self.allocator = RuleBasedAllocator(self.cfg.allocation)
         self.scorer = PerformanceScorer(

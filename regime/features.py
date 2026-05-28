@@ -288,3 +288,156 @@ def returns_slope_zscore(prices: Sequence[float], window: int = 48) -> Optional[
     if sd < 1e-12:
         return None
     return float(slope / sd)
+
+
+def supertrend(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = 10,
+    multiplier: float = 3.0,
+) -> Optional[tuple]:
+    """Supertrend indicator (ATR-based trend filter).
+
+    Calcul itératif standard :
+      median       = (high + low) / 2
+      upper_band   = median + multiplier × ATR(period)
+      lower_band   = median - multiplier × ATR(period)
+      if close > prev_supertrend : supertrend = max(lower_band, prev_supertrend)  direction=+1
+      if close < prev_supertrend : supertrend = min(upper_band, prev_supertrend)  direction=-1
+
+    Returns :
+        (st_value_at_last_bar, direction_at_last_bar) ou None si insuffisant.
+        direction ∈ {+1, -1}. st_value = niveau de stop trailing courant.
+
+    Garantit no-leak : utilise uniquement les bars jusqu'à l'index t inclus.
+    """
+    h = _as_array(highs)
+    l = _as_array(lows)
+    c = _as_array(closes)
+    n = len(c)
+    if n < period + 2:
+        return None
+
+    # ATR (Wilder)
+    tr = true_range(h, l, c)
+    atr_arr = _wilder_smoothing(tr, period)
+
+    # Premiers index avec ATR valide
+    valid_idx = None
+    for i in range(n):
+        if np.isfinite(atr_arr[i]):
+            valid_idx = i
+            break
+    if valid_idx is None or valid_idx >= n - 1:
+        return None
+
+    median = (h + l) / 2.0
+    upper = median + multiplier * atr_arr
+    lower = median - multiplier * atr_arr
+
+    # État initial : on choisit la direction selon close vs median
+    st = np.full(n, np.nan)
+    direction = np.full(n, 0, dtype=int)
+    st[valid_idx] = lower[valid_idx]  # default trend up
+    direction[valid_idx] = 1 if c[valid_idx] >= median[valid_idx] else -1
+    if direction[valid_idx] == -1:
+        st[valid_idx] = upper[valid_idx]
+
+    for i in range(valid_idx + 1, n):
+        if not np.isfinite(upper[i]) or not np.isfinite(lower[i]):
+            st[i] = st[i - 1]
+            direction[i] = direction[i - 1]
+            continue
+        prev_dir = direction[i - 1]
+        prev_st = st[i - 1]
+        # Trend continuation by default
+        if prev_dir == 1:
+            # En trend haussier, st suit le lower_band en montant
+            new_st = max(lower[i], prev_st) if prev_st <= c[i - 1] else lower[i]
+            if c[i] < new_st:
+                # Flip vers trend baissier
+                direction[i] = -1
+                st[i] = upper[i]
+            else:
+                direction[i] = 1
+                st[i] = new_st
+        else:  # prev_dir == -1
+            new_st = min(upper[i], prev_st) if prev_st >= c[i - 1] else upper[i]
+            if c[i] > new_st:
+                direction[i] = 1
+                st[i] = lower[i]
+            else:
+                direction[i] = -1
+                st[i] = new_st
+
+    last_st = float(st[-1])
+    last_dir = int(direction[-1])
+    if not np.isfinite(last_st) or last_dir == 0:
+        return None
+    return last_st, last_dir
+
+
+def supertrend_with_history(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = 10,
+    multiplier: float = 3.0,
+) -> Optional[tuple]:
+    """Variante qui retourne l'historique complet (st_arr, dir_arr) en plus
+    du dernier point. Utile pour détecter un FLIP à l'instant t :
+        flip = (dir[-1] != dir[-2])
+
+    Returns : (st_arr, dir_arr, last_st, last_dir) ou None.
+    """
+    res = supertrend(highs, lows, closes, period, multiplier)
+    if res is None:
+        return None
+    # On refait le calcul en exposant les arrays (légère duplication mais clarté)
+    h = _as_array(highs)
+    l = _as_array(lows)
+    c = _as_array(closes)
+    n = len(c)
+    tr = true_range(h, l, c)
+    atr_arr = _wilder_smoothing(tr, period)
+    median = (h + l) / 2.0
+    upper = median + multiplier * atr_arr
+    lower = median - multiplier * atr_arr
+    valid_idx = None
+    for i in range(n):
+        if np.isfinite(atr_arr[i]):
+            valid_idx = i
+            break
+    if valid_idx is None:
+        return None
+    st = np.full(n, np.nan)
+    direction = np.full(n, 0, dtype=int)
+    st[valid_idx] = lower[valid_idx]
+    direction[valid_idx] = 1 if c[valid_idx] >= median[valid_idx] else -1
+    if direction[valid_idx] == -1:
+        st[valid_idx] = upper[valid_idx]
+    for i in range(valid_idx + 1, n):
+        if not np.isfinite(upper[i]) or not np.isfinite(lower[i]):
+            st[i] = st[i - 1]
+            direction[i] = direction[i - 1]
+            continue
+        prev_dir = direction[i - 1]
+        prev_st = st[i - 1]
+        if prev_dir == 1:
+            new_st = max(lower[i], prev_st) if prev_st <= c[i - 1] else lower[i]
+            if c[i] < new_st:
+                direction[i] = -1
+                st[i] = upper[i]
+            else:
+                direction[i] = 1
+                st[i] = new_st
+        else:
+            new_st = min(upper[i], prev_st) if prev_st >= c[i - 1] else upper[i]
+            if c[i] > new_st:
+                direction[i] = 1
+                st[i] = lower[i]
+            else:
+                direction[i] = -1
+                st[i] = new_st
+    return st, direction, float(st[-1]), int(direction[-1])

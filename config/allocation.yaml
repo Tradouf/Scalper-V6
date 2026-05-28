@@ -28,18 +28,22 @@ allocation:
       grid: 0.1
       mean_reversion: 0.2
       momentum: 1.0
+      supertrend: 1.0
     trend_down:
       grid: 0.1
       mean_reversion: 0.2
       momentum: 1.0
+      supertrend: 1.0
     range:
       grid: 1.0
       mean_reversion: 1.0
       momentum: 0.1
+      supertrend: 0.1
     high_vol:
       grid: 0.2
       mean_reversion: 0.3
       momentum: 0.3
+      supertrend: 0.2
 
   # Multiplicateur de performance — borné, lent.
   mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
@@ -93,6 +97,16 @@ strategies:
     lookback_bars: 48
     entry_zscore: 1.0        # 1.5→1.0 pour P7 observation
     notional_usdc: 200.0
+
+  supertrend:
+    enabled: true
+    interval: 1h
+    period: 10
+    multiplier: 3.0
+    risk_per_trade_pct: 0.01      # 1% equity de risque max par trade
+    notional_max_usdc: 500.0
+    notional_min_usdc: 10.0
+    cooldown_sec: 900
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
