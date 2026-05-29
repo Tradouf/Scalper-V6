@@ -77,6 +77,7 @@ strategies:
     drift_window_sec: 3600
     health_check_sec: 300
     activation_threshold_usdc: 20.0
+    frozen_timeout_sec: 600       # fix port V6 28/05 : G2 frozen state
 
   mean_reversion:
     enabled: true

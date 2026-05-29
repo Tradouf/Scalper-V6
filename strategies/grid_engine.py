@@ -41,12 +41,17 @@ class GridLevel:
     fill_px: Optional[float] = None
     tp_oid: Optional[int] = None             # TP reduce_only après fill
     tp_target_px: Optional[float] = None
-    state: str = "pending"                   # pending|filled|tp_placed|done
+    state: str = "pending"                   # pending|filled|tp_placed|done|frozen
     # Anti faux-positif fill (fix 24/05) : compteur d'occurrences consécutives
     # où l'oid est absent de open_oids. Évite de conclure "filled" sur un blip
     # de cache HL (cache stale 60s observé pendant le storm BCH du 24/05 16:01).
     miss_pending: int = 0                    # pour pending_oid
     miss_tp: int = 0                         # pour tp_oid
+    # Frozen guard (fix 28/05 V6 porté V7) : timestamp où le level a été gelé
+    # suite à G2 skip (TP refusé par HL car position du mauvais côté). Tant
+    # que frozen, aucun nouveau pending n'est posé au target_px → évite la
+    # boucle de re-fill observée sur ADA 28/05 21:57.
+    frozen_since: Optional[float] = None
 
 
 @dataclass
@@ -323,6 +328,10 @@ class GridEngine:
                 if lvl.pending_oid is None or int(lvl.pending_oid) not in open_oids:
                     need_rearm = True
                     reason = "pending OID absent"
+            # state == "frozen" : volontairement non géré ici (fix 28/05).
+            # Le niveau est gelé car le TP n'est pas plaçable côté HL ; le
+            # ré-armer ici relancerait la boucle de re-fill. _tick_level gère
+            # le dégel quand szi devient cohérent.
 
             if not need_rearm:
                 continue
@@ -347,6 +356,7 @@ class GridEngine:
             lvl.tp_target_px = None
             lvl.miss_pending = 0
             lvl.miss_tp = 0
+            lvl.frozen_since = None
             lvl.state = "pending"
             repairs += 1
 
@@ -494,13 +504,44 @@ class GridEngine:
                     "GRID %s level %s@%.4f filled → place TP",
                     g.symbol, lvl.side, lvl.target_px,
                 )
-                self._place_tp_for_level(g, lvl, lev, position_szi)
+                self._place_tp_for_level(g, lvl, lev, position_szi, cache_fresh)
             else:
                 lvl.miss_pending = 0  # OID toujours présent : reset compteur
 
         elif lvl.state == "filled":
             # Place TP si pas encore fait (retry possible)
-            self._place_tp_for_level(g, lvl, lev, position_szi)
+            self._place_tp_for_level(g, lvl, lev, position_szi, cache_fresh)
+
+        elif lvl.state == "frozen":
+            # G2 skip antérieur : le TP reduce_only serait refusé par HL car
+            # position du mauvais côté. On retente uniquement quand szi est
+            # cohérent. Sinon timeout → done (health_check ré-armera un
+            # pending propre, rythme borné GRID_HEALTH_CHECK_SEC).
+            if not cache_fresh:
+                return
+            frozen_timeout = int(getattr(self._cfg, "frozen_timeout_sec", 600))
+            tp_side = "sell" if lvl.side == "buy" else "buy"
+            EPS = 1e-9
+            szi_ok = (
+                (tp_side == "sell" and position_szi > EPS) or
+                (tp_side == "buy" and position_szi < -EPS)
+            )
+            if szi_ok:
+                logger.info(
+                    "GRID %s level %s@%.4f: dégel (szi=%.6f cohérent) → place TP",
+                    g.symbol, lvl.side, lvl.target_px, position_szi,
+                )
+                lvl.frozen_since = None
+                self._place_tp_for_level(g, lvl, lev, position_szi, cache_fresh)
+            elif lvl.frozen_since is not None and \
+                 time.time() - lvl.frozen_since > frozen_timeout:
+                logger.warning(
+                    "GRID %s level %s@%.4f: frozen >%ds (szi=%.6f toujours mauvais côté) → done",
+                    g.symbol, lvl.side, lvl.target_px,
+                    int(frozen_timeout), position_szi,
+                )
+                lvl.state = "done"
+                lvl.frozen_since = None
 
         elif lvl.state == "tp_placed":
             if lvl.tp_oid is not None and lvl.tp_oid not in open_oids:
@@ -545,12 +586,24 @@ class GridEngine:
 
     def _place_tp_for_level(
         self, g: GridState, lvl: GridLevel, lev: int, position_szi: float = 0.0,
+        cache_fresh: bool = True,
     ) -> None:
         """Place le TP reduce_only correspondant au niveau filled.
 
         G1 : si le TP ne peut être placé, marque le niveau "done" (pas de retry).
-        G2 : skip si la position globale n'a pas de quoi être réduite par ce TP.
+        G2 : si la position globale n'a pas de quoi être réduite par ce TP,
+             gèle le niveau (state="frozen"). _tick_level retentera quand szi
+             redevient cohérent.
+
+        cache_fresh : si False, on ne décide rien (position_szi est un snapshot
+        potentiellement périmé). L'appelant retentera au prochain tick.
+        Fix 28/05 : sans ça, szi figé par cache stale fait skipper le TP en
+        boucle alors que la position réelle évolue.
         """
+        # Fix 28/05 : ne pas décider sur snapshot szi périmé.
+        if not cache_fresh:
+            return
+
         # Buy filled @ k → TP sell @ k+spacing  (step au-dessus)
         # Sell filled @ k → TP buy @ k-spacing  (step en-dessous)
         if lvl.side == "buy":
@@ -572,34 +625,22 @@ class GridEngine:
         # Si la position n'est pas du bon côté, HL refusera "Reduce only would
         # increase position".
         #
-        # Fix 26/05 : avant on marquait state="done" → trou permanent dans le
-        # ladder (cas BNB 25-26/05 où 2 niveaux ont été désarmés et jamais
-        # ré-armés). Maintenant on RECYCLE le niveau en pending au target_px.
-        # Le fill courant est déjà compensé par un autre fill (sinon szi ne
-        # serait pas à 0), donc on peut reposer le limit sans risque.
+        # Fix 28/05 (port V6) : avant (fix 26/05) on recyclait le pending au même
+        # prix → boucle de re-fill quand prix collait au target (cas ADA 28/05
+        # 21:57 : 5 fills empilés en 42s sur buy@0.2320 car szi=-384 figé par
+        # cache stale). Maintenant on gèle. Le niveau redevient actif soit
+        # quand szi est cohérent (dégel dans _tick_level), soit après timeout
+        # → done → ré-armement via _ladder_health_check (rythme borné 5 min).
         EPS = 1e-9
         if (tp_side == "sell" and position_szi <= EPS) or \
            (tp_side == "buy"  and position_szi >= -EPS):
-            logger.info(
-                "GRID %s level %s@%.4f: TP %s skipped (position szi=%.6f) → recycle pending",
-                g.symbol, lvl.side, lvl.target_px, tp_side, position_szi,
-            )
-            new_oid = self._place_limit(
-                g.symbol, lvl.side, lvl.qty, lvl.target_px, lev, reduce_only=False,
-            )
-            if new_oid is None:
+            if lvl.state != "frozen":
                 logger.warning(
-                    "GRID %s: recycle pending %s@%.4f échoué après G2 skip → désarmé",
-                    g.symbol, lvl.side, lvl.target_px,
+                    "GRID %s level %s@%.4f: TP %s impossible (szi=%.6f) → frozen",
+                    g.symbol, lvl.side, lvl.target_px, tp_side, position_szi,
                 )
-                lvl.state = "done"
-                return
-            lvl.pending_oid = new_oid
-            lvl.fill_px = None
-            lvl.tp_oid = None
-            lvl.tp_target_px = None
-            lvl.miss_pending = 0
-            lvl.state = "pending"
+                lvl.frozen_since = time.time()
+            lvl.state = "frozen"
             return
 
         oid = self._place_limit(g.symbol, tp_side, lvl.qty, tp_target, lev, reduce_only=True)

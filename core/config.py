@@ -94,6 +94,9 @@ class GridStrategyConfig(BaseModel):
     drift_window_sec: int = Field(3600, ge=300, le=86400)
     health_check_sec: int = Field(300, ge=60, le=3600)
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
+    # Frozen guard (fix V6 28/05 ported into V7) : timeout avant de basculer
+    # un niveau frozen en done quand szi reste du mauvais côté.
+    frozen_timeout_sec: int = Field(600, ge=60, le=3600, description="Timeout level frozen → done")
 
 
 class MeanReversionStrategyConfig(BaseModel):
