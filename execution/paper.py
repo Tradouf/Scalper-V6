@@ -199,7 +199,12 @@ class PaperExchange:
             else:
                 signed = 0.0  # RO sur position nulle = no-op
         new_n = self._paper_positions.get(req.symbol, 0.0) + signed
-        if abs(new_n) < 1e-9:
+        # Dust clamp (fix 30/05) : si la position résiduelle est sous
+        # DUST_NOTIONAL_USD, on la considère comme strictement nulle. Évite
+        # les szi=-2.3e-5 par arrondi flottant qui bloquent le G2 check du
+        # grid (cas AAVE 30/05 : grid figé sur level buy@82.96 par szi dust).
+        DUST_NOTIONAL_USD = 1.0
+        if abs(new_n) < DUST_NOTIONAL_USD:
             self._paper_positions.pop(req.symbol, None)
         else:
             self._paper_positions[req.symbol] = new_n
