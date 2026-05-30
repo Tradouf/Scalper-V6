@@ -301,6 +301,56 @@ class GridEngine:
         for sym in list(self._grids.keys()):
             self.deactivate(sym, cancel=True)
 
+    def _find_orphan_grid_pending(
+        self, symbol: str, side: str, target_px: float,
+    ) -> Optional[int]:
+        """Cherche dans le registry un grid_pending matchant (symbol, side, ~target_px)
+        qui n'est pas déjà tracké par un level actif. Permet à _ladder_health_check
+        d'adopter un OID existant côté HL au lieu d'en placer un doublon.
+
+        Port V6 fix 5316822 (29/05) : doublons observés sur SOL/BNB/XRP quand
+        un place_limit antérieur a réussi côté HL mais que l'OID n'a pas pu
+        être propagé au lvl.pending_oid (cache stale, FSM glitch).
+
+        Tolérance prix : 0.01% (rounding _round_px entre placements/lectures).
+        """
+        try:
+            reg = get_order_registry()
+            # Re-aligne registry depuis disque (no-op chez le writer).
+            try:
+                reg.reload_if_stale()
+            except Exception:
+                pass
+            tracked: Set[int] = set()
+            for g in self._grids.values():
+                for lvl in g.levels:
+                    if lvl.pending_oid is not None:
+                        tracked.add(int(lvl.pending_oid))
+                    if lvl.tp_oid is not None:
+                        tracked.add(int(lvl.tp_oid))
+            tol = max(abs(target_px) * 1e-4, 1e-9)
+            sym_up = str(symbol).upper()
+            side_lc = str(side).lower()
+            for r in reg.all():
+                if r.source != SOURCE_GRID_PENDING:
+                    continue
+                if str(r.symbol).upper() != sym_up:
+                    continue
+                if str(r.side).lower() != side_lc:
+                    continue
+                try:
+                    if abs(float(r.price) - float(target_px)) > tol:
+                        continue
+                except Exception:
+                    continue
+                oid = int(r.oid)
+                if oid in tracked:
+                    continue
+                return oid
+        except Exception as e:
+            logger.warning("GRID %s _find_orphan_grid_pending: %r", symbol, e)
+        return None
+
     def _ladder_health_check(
         self, g: "GridState", open_oids: Set[int], lev: int,
     ) -> None:
@@ -336,20 +386,33 @@ class GridEngine:
             if not need_rearm:
                 continue
 
-            new_oid = self._place_limit(
-                g.symbol, lvl.side, lvl.qty, lvl.target_px, lev,
-                reduce_only=False,
+            # Fix 29/05 (port V6) : avant de re-poser, scanner le registry
+            # pour un grid_pending orphelin matching → adopter au lieu de
+            # placer un doublon (cas SOL sell@83.148 posté 2 fois en V6).
+            adopted_oid = self._find_orphan_grid_pending(
+                g.symbol, lvl.side, lvl.target_px,
             )
-            if new_oid is None:
-                logger.warning(
-                    "GRID %s health_check: re-pose %s@%.4f échouée (%s)",
-                    g.symbol, lvl.side, lvl.target_px, reason,
+            if adopted_oid is not None:
+                logger.info(
+                    "GRID %s health_check: niveau %s@%.4f déjà présent côté HL oid=%d → adopt (raison init: %s)",
+                    g.symbol, lvl.side, lvl.target_px, adopted_oid, reason,
                 )
-                continue
-            logger.warning(
-                "GRID %s health_check: re-pose %s@%.4f (raison: %s, oid=%d)",
-                g.symbol, lvl.side, lvl.target_px, reason, new_oid,
-            )
+                new_oid = adopted_oid
+            else:
+                new_oid = self._place_limit(
+                    g.symbol, lvl.side, lvl.qty, lvl.target_px, lev,
+                    reduce_only=False,
+                )
+                if new_oid is None:
+                    logger.warning(
+                        "GRID %s health_check: re-pose %s@%.4f échouée (%s)",
+                        g.symbol, lvl.side, lvl.target_px, reason,
+                    )
+                    continue
+                logger.warning(
+                    "GRID %s health_check: re-pose %s@%.4f (raison: %s, oid=%d)",
+                    g.symbol, lvl.side, lvl.target_px, reason, new_oid,
+                )
             lvl.pending_oid = new_oid
             lvl.fill_px = None
             lvl.tp_oid = None

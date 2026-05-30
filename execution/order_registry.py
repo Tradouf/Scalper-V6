@@ -62,6 +62,7 @@ class OrderRegistry:
         self._path = Path(file_path)
         self._lock = threading.RLock()
         self._records: Dict[int, OrderRecord] = {}
+        self._loaded_mtime: float = 0.0
         self._load()
 
     # ─── persistence ──────────────────────────────────────────────────────────
@@ -74,9 +75,31 @@ class OrderRegistry:
             for raw in data.get("records", []):
                 rec = OrderRecord(**raw)
                 self._records[rec.oid] = rec
+            try:
+                self._loaded_mtime = self._path.stat().st_mtime
+            except OSError:
+                pass
             logger.info("OrderRegistry: %d records chargés depuis %s", len(self._records), self._path)
         except Exception as e:
             logger.warning("OrderRegistry: échec chargement %s: %r", self._path, e)
+
+    def reload_if_stale(self) -> bool:
+        """Re-charge depuis disque si le fichier a été modifié depuis le dernier
+        load. Utile pour les processes lecteurs (dashboard) qui ne mutent pas
+        le registry mais doivent voir les écritures du bot.
+        Port V6 fix 5316822 : 31 ordres grid_pending vus comme "unknown" dans
+        le dashboard parce que son singleton était figé au boot.
+        """
+        with self._lock:
+            try:
+                mtime = self._path.stat().st_mtime
+            except OSError:
+                return False
+            if mtime <= self._loaded_mtime:
+                return False
+            self._records.clear()
+            self._load()
+            return True
 
     def _save_locked(self) -> None:
         try:
@@ -85,6 +108,11 @@ class OrderRegistry:
             payload = {"records": [asdict(r) for r in self._records.values()]}
             tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
             tmp.replace(self._path)
+            # Track mtime pour que reload_if_stale soit no-op chez l'écrivain.
+            try:
+                self._loaded_mtime = self._path.stat().st_mtime
+            except OSError:
+                pass
         except Exception as e:
             logger.warning("OrderRegistry: échec sauvegarde: %r", e)
 
