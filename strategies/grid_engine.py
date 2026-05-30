@@ -55,6 +55,28 @@ class GridLevel:
 
 
 @dataclass
+class PlaceResult:
+    """Résultat d'un `_place_limit` (fix 30/05 V6 porté V7).
+
+    Distingue les cas que l'ancien retour `Optional[int]` confondait sous
+    « oid vide » — confusion qui transformait un fill réel en faux échec, créant
+    des positions orphelines → EMERGENCY EXIT (grid/orphan).
+
+    status :
+      "resting"  → ordre limit au repos, `oid` valide (cas nominal).
+      "filled"   → exécuté immédiatement (limit marketable côté HL). Pas d'oid
+                   resting, `avg_px` = prix d'exécution. La position EXISTE :
+                   l'appelant DOIT la tracker (level → "filled") sinon orphelin.
+      "deferred" → non posté car aurait croisé le book (marketable). Aucun effet
+                   de bord ; ré-armer plus tard quand le prix s'éloigne.
+      "rejected" → échec réel (marge, erreur API). Aucun ordre, aucune position.
+    """
+    oid: Optional[int]
+    status: str
+    avg_px: Optional[float] = None
+
+
+@dataclass
 class GridState:
     symbol: str
     center: float
@@ -158,29 +180,45 @@ class GridEngine:
             price = self._round_px(center - k * spacing, symbol)
             if price <= 0:
                 continue
-            oid = self._place_limit(symbol, "buy", qty, price, lev, reduce_only=False)
-            if oid is None:
+            res = self._place_limit(symbol, "buy", qty, price, lev, reduce_only=False, current_price=center)
+            if res.status == "rejected":
                 # Rollback : cancel tout ce qui est posé puis abort.
                 logger.warning("GRID %s: échec place buy@%.4f niveau %d — rollback", symbol, price, k)
                 for p in placed:
                     self._cancel_oid(symbol, p)
                 return False
-            placed.append(oid)
-            levels.append(GridLevel(side="buy", target_px=price, qty=qty, pending_oid=oid))
+            if res.status == "filled":
+                # Exécuté immédiatement : le niveau détient déjà sa position, TP au 1er tick.
+                levels.append(GridLevel(side="buy", target_px=price, qty=qty,
+                                        fill_px=res.avg_px or price, state="filled"))
+                continue
+            if res.status == "deferred":
+                # Marketable à l'activation (rare) : health_check ré-armera plus tard.
+                levels.append(GridLevel(side="buy", target_px=price, qty=qty, state="done"))
+                continue
+            placed.append(res.oid)
+            levels.append(GridLevel(side="buy", target_px=price, qty=qty, pending_oid=res.oid))
 
         # Sell levels au-dessus du center
         for k in range(1, n_levels + 1):
             price = self._round_px(center + k * spacing, symbol)
             if price <= 0:
                 continue
-            oid = self._place_limit(symbol, "sell", qty, price, lev, reduce_only=False)
-            if oid is None:
+            res = self._place_limit(symbol, "sell", qty, price, lev, reduce_only=False, current_price=center)
+            if res.status == "rejected":
                 logger.warning("GRID %s: échec place sell@%.4f niveau %d — rollback", symbol, price, k)
                 for p in placed:
                     self._cancel_oid(symbol, p)
                 return False
-            placed.append(oid)
-            levels.append(GridLevel(side="sell", target_px=price, qty=qty, pending_oid=oid))
+            if res.status == "filled":
+                levels.append(GridLevel(side="sell", target_px=price, qty=qty,
+                                        fill_px=res.avg_px or price, state="filled"))
+                continue
+            if res.status == "deferred":
+                levels.append(GridLevel(side="sell", target_px=price, qty=qty, state="done"))
+                continue
+            placed.append(res.oid)
+            levels.append(GridLevel(side="sell", target_px=price, qty=qty, pending_oid=res.oid))
 
         self._grids[symbol] = GridState(
             symbol=symbol,
@@ -272,7 +310,7 @@ class GridEngine:
         # le repose. Pas de question, pas d'analyse de cause.
         GRID_HEALTH_CHECK_SEC = int(self._cfg.health_check_sec)
         if cache_fresh and time.time() - g.last_health_check > GRID_HEALTH_CHECK_SEC:
-            self._ladder_health_check(g, open_oids, lev)
+            self._ladder_health_check(g, open_oids, lev, current_price)
             g.last_health_check = time.time()
 
     def deactivate(self, symbol: str, cancel: bool = True, close_position: bool = False) -> None:
@@ -353,6 +391,7 @@ class GridEngine:
 
     def _ladder_health_check(
         self, g: "GridState", open_oids: Set[int], lev: int,
+        current_price: Optional[float] = None,
     ) -> None:
         """Vérifie l'intégrité du ladder côté HL et repose les ordres manquants.
 
@@ -399,17 +438,39 @@ class GridEngine:
                 )
                 new_oid = adopted_oid
             else:
-                new_oid = self._place_limit(
+                res = self._place_limit(
                     g.symbol, lvl.side, lvl.qty, lvl.target_px, lev,
-                    reduce_only=False,
+                    reduce_only=False, current_price=current_price,
                 )
-                if new_oid is None:
-                    logger.warning(
-                        "GRID %s health_check: re-pose %s@%.4f échouée (%s)",
-                        g.symbol, lvl.side, lvl.target_px, reason,
+                if res.status == "filled":
+                    # Re-pose exécutée immédiatement (marketable) → le niveau
+                    # détient sa position : on le passe en "filled" pour que la
+                    # FSM place son TP. Sinon position orpheline → EMERGENCY EXIT.
+                    logger.info(
+                        "GRID %s health_check: re-pose %s@%.4f exécutée immédiatement → filled",
+                        g.symbol, lvl.side, lvl.target_px,
                     )
+                    lvl.pending_oid = None
+                    lvl.fill_px = res.avg_px or lvl.target_px
+                    lvl.tp_oid = None
+                    lvl.tp_target_px = None
+                    lvl.miss_pending = 0
+                    lvl.miss_tp = 0
+                    lvl.frozen_since = None
+                    lvl.state = "filled"
+                    repairs += 1
                     continue
-                logger.warning(
+                if res.status != "resting":
+                    # deferred : marketable, on attend (silencieux, plus de spam).
+                    # rejected : vrai échec → warning, retry au prochain health_check.
+                    if res.status == "rejected":
+                        logger.warning(
+                            "GRID %s health_check: re-pose %s@%.4f rejetée (%s)",
+                            g.symbol, lvl.side, lvl.target_px, reason,
+                        )
+                    continue
+                new_oid = res.oid
+                logger.info(
                     "GRID %s health_check: re-pose %s@%.4f (raison: %s, oid=%d)",
                     g.symbol, lvl.side, lvl.target_px, reason, new_oid,
                 )
@@ -632,17 +693,25 @@ class GridEngine:
                 lvl.tp_oid = None
                 lvl.tp_target_px = None
                 lvl.miss_tp = 0
-                new_oid = self._place_limit(
+                res = self._place_limit(
                     g.symbol, lvl.side, lvl.qty, lvl.target_px, lev, reduce_only=False,
+                    current_price=current_price,
                 )
-                if new_oid is None:
-                    logger.warning(
-                        "GRID %s: re-armement niveau %s@%.4f échoué",
-                        g.symbol, lvl.side, lvl.target_px,
-                    )
+                if res.status == "filled":
+                    # Re-armé mais exécuté immédiatement → retraite en filled (TP au prochain tick).
+                    lvl.fill_px = res.avg_px or lvl.target_px
+                    lvl.state = "filled"
+                    return
+                if res.status != "resting":
+                    # deferred (marketable, on attend) ou rejected. Désarme; recycle/health_check retentera.
+                    if res.status == "rejected":
+                        logger.warning(
+                            "GRID %s: re-armement niveau %s@%.4f échoué",
+                            g.symbol, lvl.side, lvl.target_px,
+                        )
                     lvl.state = "done"
                     return
-                lvl.pending_oid = new_oid
+                lvl.pending_oid = res.oid
                 lvl.state = "pending"
             else:
                 lvl.miss_tp = 0  # OID TP toujours présent : reset
@@ -706,22 +775,38 @@ class GridEngine:
             lvl.state = "frozen"
             return
 
-        oid = self._place_limit(g.symbol, tp_side, lvl.qty, tp_target, lev, reduce_only=True)
-        if oid is None:
+        res = self._place_limit(g.symbol, tp_side, lvl.qty, tp_target, lev, reduce_only=True)
+        if res.status == "filled":
+            # TP exécuté immédiatement (tp_target déjà franchi) = profit pris.
+            # On compte le step et on recycle le niveau directement en "done".
+            pnl_pct = g.spacing / max(lvl.fill_px or g.center, 1e-9)
+            g.total_pnl_pct += pnl_pct
+            g.trade_count += 1
+            logger.info(
+                "GRID %s TP %s@%.4f exécuté immédiatement pnl=%.3f%% cumul=%.3f%% (niveau %s@%.4f → done)",
+                g.symbol, tp_side, tp_target, pnl_pct * 100, g.total_pnl_pct * 100,
+                lvl.side, lvl.target_px,
+            )
+            lvl.fill_px = None
+            lvl.tp_oid = None
+            lvl.tp_target_px = None
+            lvl.state = "done"
+            return
+        if res.status != "resting":
             # G1 : pas de retry infini. Le niveau est désarmé, retry au prochain
-            # cycle complet (réactivation grid) seulement.
+            # cycle complet (réactivation grid / health_check) seulement.
             logger.warning(
-                "GRID %s: place_tp %s@%.4f échoué pour niveau %s@%.4f → niveau désarmé",
-                g.symbol, tp_side, tp_target, lvl.side, lvl.target_px,
+                "GRID %s: place_tp %s@%.4f échoué (status=%s) pour niveau %s@%.4f → niveau désarmé",
+                g.symbol, tp_side, tp_target, res.status, lvl.side, lvl.target_px,
             )
             lvl.state = "done"
             return
-        lvl.tp_oid = oid
+        lvl.tp_oid = res.oid
         lvl.tp_target_px = tp_target
         lvl.state = "tp_placed"
         logger.info(
             "GRID %s level %s@%.4f → TP %s@%.4f oid=%d",
-            g.symbol, lvl.side, lvl.target_px, tp_side, tp_target, oid,
+            g.symbol, lvl.side, lvl.target_px, tp_side, tp_target, res.oid,
         )
 
     def _close_position_if_open(self, symbol: str) -> None:
@@ -806,7 +891,28 @@ class GridEngine:
     def _place_limit(
         self, symbol: str, side: str, qty: float, price: float,
         leverage: int, reduce_only: bool = False,
-    ) -> Optional[int]:
+        current_price: Optional[float] = None,
+    ) -> PlaceResult:
+        """Place un limit. Retourne un PlaceResult (cf. dataclass).
+
+        current_price : si fourni et l'ordre est une OUVERTURE (reduce_only=False),
+        garde anti-marketable : on ne poste jamais un limit qui croiserait le book.
+        HL l'exécuterait immédiatement (status="filled", pas d'oid resting) → fill
+        non resting → si mal traité, position orpheline → EMERGENCY EXIT. On diffère
+        (le niveau sera ré-armé quand le prix s'éloigne). Les TP reduce_only ne sont
+        PAS gardés : un fill immédiat de TP = prise de profit, comportement voulu.
+        """
+        if (not reduce_only) and current_price is not None and current_price > 0:
+            crosses = (
+                (side == "buy" and price >= current_price) or
+                (side == "sell" and price <= current_price)
+            )
+            if crosses:
+                logger.info(
+                    "GRID %s place_limit %s@%.4f différé (croiserait le book, mid=%.4f)",
+                    symbol, side, price, current_price,
+                )
+                return PlaceResult(oid=None, status="deferred")
         try:
             req = OrderRequest(
                 symbol=symbol,
@@ -837,12 +943,28 @@ class GridEngine:
                     )
                 except Exception as reg_e:
                     logger.warning("GRID %s registry.register %s: %r", symbol, oid_int, reg_e)
-                return oid_int
-            logger.warning("GRID %s place_limit %s@%.4f: oid vide", symbol, side, price)
-            return None
+                return PlaceResult(oid=oid_int, status="resting")
+            # Pas d'oid resting : distinguer fill immédiat (l'ordre a EXÉCUTÉ) d'un
+            # vrai rejet. C'est le cœur du fix 30/05 — l'ancien code renvoyait None
+            # dans les deux cas (« oid vide ») et perdait le fill → orphelin.
+            if str(getattr(result, "status", "")).lower() == "filled":
+                try:
+                    avg_px = float(result.price) if result.price else None
+                except (TypeError, ValueError):
+                    avg_px = None
+                logger.info(
+                    "GRID %s place_limit %s@%.4f exécuté immédiatement (filled avg_px=%s) — pas d'oid resting",
+                    symbol, side, price, avg_px,
+                )
+                return PlaceResult(oid=None, status="filled", avg_px=avg_px)
+            logger.warning(
+                "GRID %s place_limit %s@%.4f: rejeté (status=%s, pas d'oid)",
+                symbol, side, price, getattr(result, "status", "?"),
+            )
+            return PlaceResult(oid=None, status="rejected")
         except Exception as e:
             logger.warning("GRID %s place_limit %s@%.4f: %r", symbol, side, price, e)
-            return None
+            return PlaceResult(oid=None, status="rejected")
 
 
 # Alias V6 pour compatibilité éventuelle pendant la transition
