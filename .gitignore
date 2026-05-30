@@ -10,6 +10,11 @@ __pycache__/
 data/historical/*.parquet
 data/historical/*.json
 
+# V7 — bougies 1m collectées par scripts/ohlc_collector.py (régénérables)
+data/ohlc_1m/*.parquet
+data/ohlc_1m/*.log
+data/ohlc_1m/*.tmp
+
 # Runtime state V7 (régénéré par le bot)
 memory/order_registry.json
 memory/mr_state.json
