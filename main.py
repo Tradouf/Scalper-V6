@@ -131,6 +131,21 @@ class V7Bot:
         )
         self.portfolio = PortfolioImpl(_equity=1000.0)  # initial paper equity
 
+        # Boot reconciler : seulement en mode live (paper démarre vide à chaque restart).
+        # Sync positions HL + equity + registry (ghost/orphan) avant le 1er tick.
+        if not self.cfg.execution.paper_mode:
+            from execution.boot_reconciler import BootReconciler
+            br = BootReconciler(self.hl_read, self.exchange, self.portfolio)
+            summary = br.reconcile()
+            self.logger.info(
+                "BootReconciler résumé: positions=%d equity=$%.2f orders=%d ghosts=%d orphans=%d errors=%d",
+                summary["positions_loaded"], summary["equity"],
+                summary["orders_live"], summary["ghosts_purged"],
+                summary["orphans_absorbed"], len(summary["errors"]),
+            )
+            if summary["errors"]:
+                self.logger.warning("BootReconciler erreurs: %s", summary["errors"])
+
         self._running = True
         self._cycle = 0
 
