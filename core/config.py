@@ -75,6 +75,10 @@ class RiskConfig(BaseModel):
     max_per_asset_pct: float = Field(0.4, ge=0.05, le=2.0, description="Notional max par asset en × equity")
     kill_switch_dd_pct: float = Field(0.10, ge=0.02, le=0.50, description="Drawdown qui kill tout")
     daily_loss_limit_pct: float = Field(0.03, ge=0.005, le=0.10)
+    # EmergencyExit (port V6 + Fix #8)
+    emergency_exit_enabled: bool = Field(True, description="Active le mécanisme EMERGENCY EXIT (paper l'ignore de toute façon)")
+    emergency_exit_roe_pct: float = Field(0.022, ge=0.005, le=0.10, description="Force-close si ROE ≤ -seuil (positions tracées ET orphelines)")
+    orphan_grace_sec: float = Field(6.0, ge=1.0, le=60.0, description="Grâce avant force-close d'une orpheline (Fix #8)")
 
 
 class ExecutionConfig(BaseModel):

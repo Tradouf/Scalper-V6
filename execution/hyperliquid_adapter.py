@@ -136,6 +136,58 @@ class HyperliquidReadAdapter:
             out[coin] = szi * mark  # signed notional
         return out
 
+    def get_positions_detailed(self) -> Dict[str, dict]:
+        """Retourne {asset → {szi, entry_px, leverage, mark_px, roe}} pour le
+        risk monitoring (EmergencyExitManager). ROE calculé sur prix :
+          ROE = (mark - entry)/entry × leverage × sign(szi)
+        Avec sign(szi) : -1 si short (les pertes augmentent quand mark monte),
+        +1 si long.
+        """
+        if not self._addr:
+            return {}
+        try:
+            r = requests.post(
+                HL_API,
+                json={"type": "clearinghouseState", "user": self._addr},
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            self._log_throttled_warning("HL clearinghouseState detailed error: %r", e)
+            return {}
+
+        out: Dict[str, dict] = {}
+        mids = self.get_all_mids()
+        for ap in data.get("assetPositions", []):
+            pos = ap.get("position", ap)
+            coin = str(pos.get("coin", "")).upper()
+            szi = float(pos.get("szi", 0) or 0)
+            if not coin or szi == 0:
+                continue
+            entry_px = float(pos.get("entryPx", 0) or 0)
+            mark_px = mids.get(coin, entry_px)
+            lev_raw = pos.get("leverage", {})
+            leverage = (
+                float(lev_raw.get("value", 1)) if isinstance(lev_raw, dict)
+                else float(lev_raw or 1)
+            )
+            roe = 0.0
+            if entry_px > 0 and mark_px > 0:
+                price_change_pct = (mark_px - entry_px) / entry_px
+                # szi>0=long: +price → +ROE ; szi<0=short: +price → -ROE
+                sign = 1.0 if szi > 0 else -1.0
+                roe = price_change_pct * leverage * sign
+            out[coin] = {
+                "szi": szi,
+                "entry_px": entry_px,
+                "mark_px": mark_px,
+                "leverage": leverage,
+                "roe": roe,
+                "side": "BUY" if szi > 0 else "SELL",
+            }
+        return out
+
     def get_equity(self) -> float:
         """Equity totale (spot USDC, en compte unifié)."""
         if not self._addr:

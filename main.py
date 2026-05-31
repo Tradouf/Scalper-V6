@@ -146,6 +146,17 @@ class V7Bot:
             if summary["errors"]:
                 self.logger.warning("BootReconciler erreurs: %s", summary["errors"])
 
+        # EmergencyExitManager : filet de sécurité par-position (port V6 + Fix #8).
+        # Instancié toujours mais no-op en paper (PaperExchange ne sync pas HL).
+        from risk.emergency_exit import EmergencyExitManager
+        self.emergency = EmergencyExitManager(
+            cfg=self.cfg.risk,
+            read_adapter=self.hl_read,
+            write_adapter=self.exchange,
+            portfolio=self.portfolio,
+            paper_mode=self.cfg.execution.paper_mode,
+        )
+
         self._running = True
         self._cycle = 0
 
@@ -318,6 +329,19 @@ class V7Bot:
             self.portfolio.set_equity(equity)
         risk_state = RiskStateImpl(equity=self.portfolio.equity)
         projected = self.risk.project(target, risk_state)
+
+        # 6.5. EmergencyExit : check ROE positions HL réelles, force-close si dépasse
+        # seuil. AVANT reconcile pour laisser submit recomposer après les force-close.
+        try:
+            em = self.emergency.check_and_exit()
+            if em["tracked_emergency"] + em["orphan_force_closed"] + em["orphan_grace_armed"] > 0:
+                self.logger.warning(
+                    "EmergencyExit tick: tracked_forced=%d orphan_armed=%d orphan_forced=%d (checked=%d)",
+                    em["tracked_emergency"], em["orphan_grace_armed"],
+                    em["orphan_force_closed"], em["checked"],
+                )
+        except Exception as e:
+            self.logger.warning("EmergencyExit error: %r", e)
 
         # 7. Reconcile + submit
         orders = self.exec.reconcile(projected, self.portfolio)
