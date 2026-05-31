@@ -97,8 +97,12 @@ class V7Bot:
             self.exchange = PaperExchange(get_mark_price=self.hl_read.get_mark_price)
             self.logger.info("Mode PAPER : PaperExchange instancié")
         else:
-            self.logger.error("Live mode pas encore supporté en V7 MVP. Forcer paper_mode=true")
-            raise NotImplementedError("Live mode arrivera en P8 cutover")
+            from execution.hyperliquid_write_adapter import HyperliquidWriteAdapter
+            self.exchange = HyperliquidWriteAdapter(enable_trading=True)
+            self.logger.warning(
+                "Mode LIVE : HyperliquidWriteAdapter instancié — vrais ordres HL. "
+                "Vérifier reconcile boot, Fix #2/#4/#8 portés avant production."
+            )
 
         # Composants
         self.detector = RuleBasedRegimeDetector(self.cfg.regime)
