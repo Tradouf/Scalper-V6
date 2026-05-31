@@ -59,10 +59,11 @@ risk:
   max_per_asset_pct: 0.4        # par actif max = 40% equity
   kill_switch_dd_pct: 0.10      # -10% DD → kill switch
   daily_loss_limit_pct: 0.03    # -3% jour → flat
+  high_lev_emergency_exempt: true   # Fix 10 Knob A activé (boucle HYPE 10x)
 
 # ─── Execution ────────────────────────────────────────────────────────────────
 execution:
-  paper_mode: true              # paper trading par défaut (live = false au cutover)
+  paper_mode: false              # LIVE — cutover 2026-05-31
   rebalance_threshold_pct: 0.005 # bande non-trade 0.5% du gross
   dashboard_port: 8082          # 8082 paper, 8081 live (cutover P8)
 

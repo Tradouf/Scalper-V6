@@ -169,8 +169,14 @@ class ExecutionEngine:
                 fill_price = order.price if order.price else 0.0
             notional_signed = order.qty * fill_price * (1.0 if order.side == "buy" else -1.0)
             fee_estimate = abs(notional_signed) * 4.5 / 10_000.0  # taker 0.045%
+            # OID synthétique si HL ne retourne pas d'oid resting (cas marketable
+            # immediate fill : result.status="filled" + order_id=""). Fill exige
+            # un order_id non-vide (cf. core/types.py:Fill.__post_init__).
+            oid = str(result.order_id) if result.order_id else (
+                f"imm-{order.asset}-{int(dt.datetime.utcnow().timestamp() * 1000)}"
+            )
             fills.append(Fill(
-                order_id=str(result.order_id),
+                order_id=oid,
                 asset=order.asset,
                 notional=notional_signed,
                 price=float(fill_price),

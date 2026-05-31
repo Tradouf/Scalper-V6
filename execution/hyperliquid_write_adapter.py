@@ -135,6 +135,12 @@ class HyperliquidWriteAdapter:
             logger.warning("get_mark_price %s error: %r", coin, e)
             return 0.0
 
+    def update_mark_price(self, coin: str, price: float) -> None:
+        """No-op en live : HL maintient ses propres mids serveur-side. Méthode
+        définie pour parité d'interface avec PaperExchange (main.py la call
+        à chaque tick pour propager les mids vers le moteur paper)."""
+        return None
+
     # ─── API étendue (parité ExecutionEngine si besoin) ───────────────────────
 
     def get_positions(self) -> list:
