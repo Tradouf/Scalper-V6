@@ -38,10 +38,20 @@ class HyperliquidWriteAdapter:
         enable_trading : passe à False pour la phase de dry-run / vérif config.
     """
 
+    # Fix #2 (port V6 d59107e) : garde anti-réponse-vide-fantôme sur open_orders.
+    # HL renvoie parfois [] sur un blip d'API alors que des ordres existent. Sans
+    # garde, le cache est vidé → grid considère tous les pendings comme filled →
+    # empile des TPs sur des positions inexistantes (cas 28/05 22:28, 30 niveaux
+    # marqués filled en 4s). Tolérance : 3 réponses vides consécutives avant purge.
+    _OPEN_ORDERS_EMPTY_STREAK_TOLERANCE = 3
+
     def __init__(self, enable_trading: bool = True) -> None:
         self._inner = HyperliquidExchangeClient(enable_trading=enable_trading)
         # Expose le SDK client brut pour les besoins de grid_engine (meta, user_state).
         self._client = self._inner._client
+        # Fix #2 — cache + streak vide pour get_open_orders.
+        self._orders_cache: List[dict] = []
+        self._orders_empty_streak: int = 0
         logger.info(
             "HyperliquidWriteAdapter init enable_trading=%s network=%s",
             enable_trading,
@@ -67,12 +77,54 @@ class HyperliquidWriteAdapter:
     def get_open_orders(self, coin: Optional[str] = None) -> List[dict]:
         """Liste des ordres ouverts (frontend_open_orders HL). Format :
         [{coin, oid, side(B/A), sz, limitPx, triggerPx, isTrigger, reduceOnly, tpsl, orderType, ...}]
+
+        Fix #2 : tolère N réponses vides consécutives avant d'accepter la purge
+        du cache (anti-blip API). Sur erreur réseau ou pendant la fenêtre de
+        tolérance, retourne le dernier cache valide.
         """
         try:
-            return self._client.get_open_orders(coin=coin) or []
+            fresh = self._client.get_open_orders(coin=coin) or []
         except Exception as e:
-            logger.warning("get_open_orders error coin=%s: %r", coin, e)
+            logger.warning(
+                "get_open_orders error coin=%s: %r — fallback cache (%d records)",
+                coin, e, len(self._orders_cache),
+            )
+            return list(self._orders_cache)
+
+        # Cas nominal : réponse non-vide → on accepte et on reset le streak.
+        if fresh:
+            self._orders_cache = fresh
+            self._orders_empty_streak = 0
+            return fresh
+
+        # Réponse vide : compte combien consécutives.
+        self._orders_empty_streak += 1
+
+        # Si le cache était déjà vide → accepter direct (rien à protéger).
+        if not self._orders_cache:
             return []
+
+        # Fenêtre de tolérance : on retourne le cache, on log un WARN au 1er.
+        if self._orders_empty_streak <= self._OPEN_ORDERS_EMPTY_STREAK_TOLERANCE:
+            if self._orders_empty_streak == 1:
+                logger.warning(
+                    "get_open_orders: HL renvoie [] mais cache=%d records — "
+                    "tolérance Fix #2 (streak %d/%d)",
+                    len(self._orders_cache),
+                    self._orders_empty_streak,
+                    self._OPEN_ORDERS_EMPTY_STREAK_TOLERANCE,
+                )
+            return list(self._orders_cache)
+
+        # Streak dépasse la tolérance : on accepte la purge.
+        logger.warning(
+            "get_open_orders: streak vide %d > tolérance %d → purge cache (%d records vidés)",
+            self._orders_empty_streak,
+            self._OPEN_ORDERS_EMPTY_STREAK_TOLERANCE,
+            len(self._orders_cache),
+        )
+        self._orders_cache = []
+        return []
 
     def get_mark_price(self, coin: str) -> float:
         """Mark price courant via /info type=ticker (déjà cached côté HyperliquidClient)."""
