@@ -79,6 +79,20 @@ class RiskConfig(BaseModel):
     emergency_exit_enabled: bool = Field(True, description="Active le mécanisme EMERGENCY EXIT (paper l'ignore de toute façon)")
     emergency_exit_roe_pct: float = Field(0.022, ge=0.005, le=0.10, description="Force-close si ROE ≤ -seuil (positions tracées ET orphelines)")
     orphan_grace_sec: float = Field(6.0, ge=1.0, le=60.0, description="Grâce avant force-close d'une orpheline (Fix #8)")
+    # Fix 9 PROTOTYPE — trail régime-gaté (port V6, flag OFF par défaut).
+    # Tant que regime_gated_trail=False, comportement strictement inchangé.
+    # Validation requise : rejouer le backtest sur 1m loggé par data/ohlc_1m/.
+    regime_gated_trail: bool = Field(False, description="PROTOTYPE Fix 9 : activer le trail régime-gaté")
+    regime_trend_slope_min: float = Field(0.003, ge=0.0, le=0.05, description="|pente| min pour qualifier régime 'trend' à l'entrée")
+    regime_slope_bars: int = Field(12, ge=4, le=48, description="N bougies pré-entrée pour le calcul de pente")
+    regime_trend_sl_dist_pct: float = Field(0.010, ge=0.002, le=0.05, description="Distance ratchet (trend) — non utilisée si flag OFF")
+    # Fix 10 PROTOTYPE — haut levier exempt + cap (port V6, flag OFF par défaut).
+    high_lev_emergency_exempt: bool = Field(False, description="PROTOTYPE Fix 10 Knob A : exempte les positions >= high_lev_threshold du seuil ROE serré")
+    high_lev_threshold: int = Field(6, ge=2, le=20, description="Levier au-dessus duquel Knob A applique la distance prix au lieu du ROE")
+    high_lev_emergency_price_pct: float = Field(0.006, ge=0.001, le=0.05, description="Distance prix (laisse respirer) si Knob A actif")
+    high_lev_emergency_roe_cap: float = Field(0.08, ge=0.02, le=0.30, description="Cap ROE max (limite la perte) si Knob A actif")
+    leverage_cap_enabled: bool = Field(False, description="PROTOTYPE Fix 10 Knob B : cap de levier préventif à l'entrée")
+    global_leverage_cap: int = Field(5, ge=1, le=20, description="Cap levier global si Knob B actif")
 
 
 class ExecutionConfig(BaseModel):

@@ -50,6 +50,30 @@ class EmergencyExitManager:
         # Fix #8 : timer de grâce par symbole orphelin.
         self._orphan_emergency_since: Dict[str, float] = {}
 
+    def _emergency_threshold(self, leverage: float) -> float:
+        """Helper Fix 10 Knob A (port V6, flag OFF par défaut).
+
+        Retourne le seuil ROE négatif à appliquer.
+          Flag OFF → comportement historique : -emergency_exit_roe_pct.
+          Flag ON + leverage < high_lev_threshold → idem (inchangé).
+          Flag ON + leverage >= high_lev_threshold → seuil = MAX (le moins serré)
+            entre :
+              - -high_lev_emergency_price_pct × leverage (distance prix, laisse respirer)
+              - -high_lev_emergency_roe_cap (cap ROE, limite la perte)
+            On garde le plus permissif (le moins négatif) car on veut laisser
+            respirer le haut levier MAIS borner les pertes par le cap absolu.
+        """
+        roe_base = -abs(self._cfg.emergency_exit_roe_pct)
+        if not getattr(self._cfg, "high_lev_emergency_exempt", False):
+            return roe_base
+        if leverage < float(getattr(self._cfg, "high_lev_threshold", 6)):
+            return roe_base
+        roe_from_price = -abs(self._cfg.high_lev_emergency_price_pct) * leverage
+        roe_cap = -abs(self._cfg.high_lev_emergency_roe_cap)
+        # On prend le MAX (= le moins négatif = le moins serré, laisse respirer)
+        # entre la distance prix et le cap (qui borne pour très haut levier).
+        return max(roe_from_price, roe_cap)
+
     def check_and_exit(self) -> dict:
         """Une passe de vérification. Retourne un résumé chiffré pour le log."""
         out = {
@@ -70,7 +94,6 @@ class EmergencyExitManager:
             return out
 
         out["checked"] = len(positions)
-        threshold = -abs(self._cfg.emergency_exit_roe_pct)
         now = time.time()
         portfolio_assets = {a for a, n in self._portfolio.positions.items() if abs(n) > 1e-9}
 
@@ -79,6 +102,9 @@ class EmergencyExitManager:
 
         for asset, info in positions.items():
             roe = info["roe"]
+            # Fix 10 Knob A : seuil dépend du levier (flag OFF = comportement
+            # historique strictement inchangé, cf. _emergency_threshold).
+            threshold = self._emergency_threshold(info.get("leverage", 1.0))
             if roe > threshold:
                 # Hors zone : reset timer si armé.
                 if asset in self._orphan_emergency_since:
@@ -96,9 +122,9 @@ class EmergencyExitManager:
             if is_tracked:
                 # Branche tracée : force-close immédiat (CRITICAL).
                 logger.critical(
-                    "EMERGENCY EXIT %s ROE=%.3f%% ≤ -%.3f%% — force close "
+                    "EMERGENCY EXIT %s ROE=%.3f%% ≤ %.3f%% — force close "
                     "(entry=%.4f mark=%.4f side=%s lev=%.0fx)",
-                    asset, roe * 100, abs(threshold) * 100,
+                    asset, roe * 100, threshold * 100,
                     info["entry_px"], info["mark_px"], info["side"], info["leverage"],
                 )
                 ok = self._force_close(asset, info)
