@@ -28,6 +28,12 @@ logger = logging.getLogger("v7.execution")
 class ExecutionEngine:
     """Implémente le Protocol ExecutionEngine."""
 
+    # Fix #4 (port V6 5316822) : seuil dust. Une position résiduelle dont la
+    # valeur en USD est sous ce seuil est traitée comme 0 dans reconcile.
+    # Évite le blocage observé V6 (BTC short qty=1e-05 ≈ $0.74, HL rejette
+    # le reduce_only sous min ~$10 → grid figée indéfiniment sur ce symbole).
+    DUST_NOTIONAL_USD = 2.0
+
     def __init__(
         self,
         exchange: ExchangeClient,
@@ -64,6 +70,16 @@ class ExecutionEngine:
 
         for asset in all_assets:
             current_n = current.positions.get(asset, 0.0)
+            # Fix #4 : ignorer une position dust (< DUST_NOTIONAL_USD en valeur
+            # absolue notionnelle). HL refuse de la fermer (sous min ordre) →
+            # sans ce filtre, reconcile générerait à chaque tick un order qty=1e-5
+            # qui sera rejeté, bloquant toute nouvelle activité sur le symbole.
+            if 0 < abs(current_n) < self.DUST_NOTIONAL_USD:
+                logger.debug(
+                    "ExecutionEngine %s : position dust %.4f$ < %.2f$ → traitée comme 0",
+                    asset, current_n, self.DUST_NOTIONAL_USD,
+                )
+                current_n = 0.0
             tp = target_by_asset.get(asset)
             wanted = tp.target_notional if tp else 0.0
             diff = wanted - current_n
@@ -86,6 +102,10 @@ class ExecutionEngine:
                 continue
 
             qty = abs(diff) / price
+            if qty <= 0:
+                # Cas-limite (rebalance_threshold_pct=0 + dust filtré) : on n'a
+                # rien à exécuter mais on est passé sous la bande non-trade.
+                continue
             side = "buy" if diff > 0 else "sell"
             # reduce_only : uniquement si on reste du même côté ET on réduit.
             # Pour un flip (long → short ou inverse), RO=False car HL clampe
