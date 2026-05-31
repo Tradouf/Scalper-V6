@@ -51,6 +51,13 @@ cmd_start() {
         echo "❌ Aucun venv trouvé"
         return 1
     fi
+    # Source .env (HL_PRIVATE_KEY etc.) — requis en live mode pour HyperliquidWriteAdapter.
+    # En paper, le wallet n'est pas utilisé mais l'export est sans danger.
+    if [[ -f "$REPO/.env" ]] || [[ -L "$REPO/.env" ]]; then
+        set -a
+        source "$REPO/.env"
+        set +a
+    fi
     nohup python3 main.py >> "$LOG_FILE" 2>&1 < /dev/null &
     PID=$!
     disown
