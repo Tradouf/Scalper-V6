@@ -75,10 +75,14 @@ strategies:
     levels: 5
     notional_per_level_usdc: 15.0
     drift_k: 3.0
-    drift_window_sec: 3600
+    drift_window_sec: 900         # 2026-06-01 : 3600→900. Sinon la grille fade une
+                                  # tendance 1h avant de lâcher (cas BNB short en rallye)
     health_check_sec: 300
     activation_threshold_usdc: 20.0
     frozen_timeout_sec: 600       # fix port V6 28/05 : G2 frozen state
+    min_spacing_ticks: 2          # garde bas-prix (DOGE) : niveaux distincts
+    fast_loop_enabled: true       # thread grille dédié (port V6) : pilote la FSM
+    fast_loop_sec: 3              # à cadence rapide → évite l'épidémie szi=0/frozen
 
   mean_reversion:
     enabled: true

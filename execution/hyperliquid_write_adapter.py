@@ -52,6 +52,12 @@ class HyperliquidWriteAdapter:
         # Fix #2 — cache + streak vide pour get_open_orders.
         self._orders_cache: List[dict] = []
         self._orders_empty_streak: int = 0
+        # Sérialise les écritures d'ordres : depuis 2026-06-01 la grille tourne
+        # dans un thread dédié (cadence rapide ~3s) EN PLUS du tick principal 30s.
+        # Deux threads peuvent appeler place_order/cancel_order simultanément →
+        # collision de nonce HL. Le verrou sérialise toutes les écritures.
+        import threading
+        self._write_lock = threading.RLock()
         logger.info(
             "HyperliquidWriteAdapter init enable_trading=%s network=%s",
             enable_trading,
@@ -69,10 +75,12 @@ class HyperliquidWriteAdapter:
         immédiatement par HL. grid_engine._place_limit voit alors PlaceResult
         status='filled' (cf. Fix 7 commit 0a10091).
         """
-        return self._inner.place_order(req)  # type: ignore[return-value]
+        with self._write_lock:
+            return self._inner.place_order(req)  # type: ignore[return-value]
 
     def cancel_order(self, order_id: str) -> CancelResult:
-        return self._inner.cancel_order(order_id)  # type: ignore[return-value]
+        with self._write_lock:
+            return self._inner.cancel_order(order_id)  # type: ignore[return-value]
 
     def get_open_orders(self, coin: Optional[str] = None) -> List[dict]:
         """Liste des ordres ouverts (frontend_open_orders HL). Format :

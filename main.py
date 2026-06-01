@@ -159,6 +159,11 @@ class V7Bot:
 
         self._running = True
         self._cycle = 0
+        # Verrou partagé : protège grid_engine._grids entre le thread principal
+        # (activation/désactivation) et le thread grille dédié (FSM on_tick).
+        import threading
+        self._grid_lock = threading.RLock()
+        self._grid_thread = None
 
     # ─── Boucle principale ────────────────────────────────────────────────────
 
@@ -167,6 +172,18 @@ class V7Bot:
         signal.signal(signal.SIGINT, self._handle_stop)
 
         interval = 30  # secondes
+        # Thread grille dédié (port V6) : pilote la FSM grille à cadence rapide,
+        # découplé du tick analytique lent. Évite l'épidémie szi=0→frozen.
+        if getattr(self.cfg.strategies.grid, "fast_loop_enabled", True):
+            import threading
+            self._grid_thread = threading.Thread(
+                target=self._grid_loop, daemon=True, name="grid-loop",
+            )
+            self._grid_thread.start()
+            self.logger.info(
+                "Grid fast loop démarré (cadence=%ds)",
+                int(getattr(self.cfg.strategies.grid, "fast_loop_sec", 3)),
+            )
         self.logger.info("V7 boucle démarrée (interval=%ds)", interval)
         while self._running:
             try:
@@ -222,63 +239,96 @@ class V7Bot:
             except Exception:
                 pass
             is_active = self.grid_engine.is_active(sym)
-            if not is_active and should_activate:
-                # Activate : calcule mid + ATR depuis les candles
-                candles = market.candles.get(sym, [])
-                if len(candles) < 30:
-                    continue
-                mid = float(candles[-1].close)
-                atr_val = compute_atr(
-                    [c.high for c in candles],
-                    [c.low for c in candles],
-                    [c.close for c in candles],
-                    period=14,
-                )
-                if atr_val is None or atr_val <= 0:
-                    continue
-                ok = self.grid_engine.activate(sym, mid, atr_val)
-                if ok:
-                    self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f budget=$%.0f", sym, mid, atr_val, budget_per_sym)
-            elif is_active and not should_activate:
-                self.grid_engine.deactivate(sym, cancel=True)
-                self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
+            try:
+                with self._grid_lock:
+                    if not is_active and should_activate:
+                        candles = market.candles.get(sym, [])
+                        if len(candles) < 30:
+                            continue
+                        mid = float(candles[-1].close)
+                        atr_val = compute_atr(
+                            [c.high for c in candles],
+                            [c.low for c in candles],
+                            [c.close for c in candles],
+                            period=14,
+                        )
+                        if atr_val is None or atr_val <= 0:
+                            continue
+                        if self.grid_engine.activate(sym, mid, atr_val):
+                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f budget=$%.0f", sym, mid, atr_val, budget_per_sym)
+                    elif is_active and not should_activate:
+                        self.grid_engine.deactivate(sym, cancel=True)
+                        self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
+            except Exception as e:
+                self.logger.warning("Grid activation %s error: %r", sym, e)
 
-        # Tick FSM pour chaque grid actif (place TPs, recycle, drift, health check)
+        # NB : la FSM grille (pose TP, dégel, drift, health check) n'est PLUS
+        # pilotée ici. Elle tourne dans le thread dédié _grid_loop (cadence ~3s)
+        # pour réagir vite aux fills — sinon entre deux ticks lents (30-157s),
+        # buy ET sell se remplissent → net szi=0 → gel massif. Cf. _grid_fast_tick.
+
+    def _grid_fast_tick(self) -> None:
+        """FSM grille pour chaque symbole actif. Appelée par le thread _grid_loop
+        à cadence rapide (port de la boucle dédiée V6). Découple le pilotage grille
+        du tick analytique lent (candles/signaux/allocation)."""
+        active = list(self.grid_engine.active_symbols())
+        if not active:
+            return
+        # Cache du dernier mid connu : sur ReadTimeout HL (fréquent), on réutilise
+        # le dernier prix valide au lieu de skip — sinon le check breakout/drift
+        # ne s'évalue jamais quand l'API rame (cas BNB sorti de range non détecté).
+        try:
+            fresh = self.hl_read.get_all_mids() or {}
+        except Exception as e:
+            fresh = {}
+            self.logger.warning("grid fast tick: get_all_mids error: %r — fallback last mids", e)
+        last = getattr(self, "_last_mids", {})
+        if fresh:
+            last.update(fresh)
+            self._last_mids = last
+        prices = self._last_mids = last
         try:
             open_oids = {int(o["oid"]) for o in self.exchange.get_open_orders() if o.get("oid")}
         except Exception:
             open_oids = set()
-        # Lecture des positions HL réelles UNE FOIS par tick (en live).
-        # Les fills internes du grid_engine ne passent PAS par ExecutionEngine →
-        # portfolio.positions ne les reflète pas. Sans cette lecture HL, le
-        # check G2 du grid voit szi=0 → "TP impossible" → frozen → trous sur
-        # l'UI HL (observé en V7 live 31/05-01/06, 84 frozen avec szi=0.000000).
+        # Lecture des positions HL réelles (en live) : les fills internes du grid
+        # ne passent pas par l'ExecutionEngine → portfolio ne les reflète pas.
         hl_pos_detailed = {}
         if not self.cfg.execution.paper_mode:
             try:
                 hl_pos_detailed = self.hl_read.get_positions_detailed()
             except Exception as e:
-                self.logger.warning("HL positions read for grid szi: %r", e)
-        for sym in list(self.grid_engine.active_symbols()):
+                self.logger.warning("grid fast tick: positions read error: %r", e)
+        for sym in active:
             price = prices.get(sym, 0.0)
             if price <= 0:
                 continue
             if hl_pos_detailed:
-                # Live : szi signé réel depuis clearinghouseState
                 szi = float(hl_pos_detailed.get(sym, {}).get("szi", 0.0))
             else:
-                # Paper : fallback portfolio.positions (PaperExchange est local)
-                current_notional = self.portfolio.positions.get(sym, 0.0)
-                szi = current_notional / price if price > 0 else 0.0
+                cur = self.portfolio.positions.get(sym, 0.0)
+                szi = cur / price if price > 0 else 0.0
             try:
-                self.grid_engine.on_tick(
-                    sym, open_oids=open_oids,
-                    current_price=price,
-                    position_szi=szi,
-                    cache_fresh=True,
-                )
+                with self._grid_lock:
+                    self.grid_engine.on_tick(
+                        sym, open_oids=open_oids,
+                        current_price=price,
+                        position_szi=szi,
+                        cache_fresh=True,
+                    )
             except Exception as e:
                 self.logger.warning("Grid on_tick %s error: %r", sym, e)
+
+    def _grid_loop(self) -> None:
+        """Thread démon : pilote la FSM grille à cadence rapide (port V6 _grid_loop)."""
+        sec = int(getattr(self.cfg.strategies.grid, "fast_loop_sec", 3))
+        time.sleep(5)  # délai boot : laisse le 1er tick activer des grilles
+        while self._running:
+            try:
+                self._grid_fast_tick()
+            except Exception as e:
+                self.logger.warning("grid loop error: %r", e)
+            time.sleep(sec)
 
     def _tick(self) -> None:
         from core.types import MarketSnapshot
@@ -288,10 +338,13 @@ class V7Bot:
         if not prices:
             self.logger.warning("Tick V7 #%d : pas de prix, skip", self._cycle)
             return
-        # Met à jour les marks du paper exchange
-        for sym, px in prices.items():
-            if sym in self.cfg.symbols:
-                self.exchange.update_mark_price(sym, px)
+        # Met à jour les marks du paper exchange (no-op en live : le write adapter
+        # n'a pas update_mark_price → sans ce guard, le tick LIVE entier avortait
+        # avec AttributeError, 90 occurrences observées le 31/05).
+        if hasattr(self.exchange, "update_mark_price"):
+            for sym, px in prices.items():
+                if sym in self.cfg.symbols:
+                    self.exchange.update_mark_price(sym, px)
 
         # Charge les candles 1h pour les symboles
         candles_dict = {}

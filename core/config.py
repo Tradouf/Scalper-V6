@@ -109,13 +109,22 @@ class GridStrategyConfig(BaseModel):
     levels: int = Field(5, ge=2, le=10)
     notional_per_level_usdc: float = Field(15.0, ge=5.0, le=500.0)
     drift_k: float = Field(3.0, ge=1.0, le=5.0)
-    drift_window_sec: int = Field(3600, ge=300, le=86400)
+    # 2026-06-01 : 3600→900. La grille fade une tendance pendant tout ce délai
+    # avant de se désactiver (cas BNB short dans un rallye +5%). 15 min de dérive
+    # SOUTENUE (le timer se reset si le prix revient en zone) = signal de trend.
+    drift_window_sec: int = Field(900, ge=300, le=86400)
     health_check_sec: int = Field(300, ge=60, le=3600)
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
     # Garde bas-prix : spacing minimum exprimé en ticks HL. Empêche que plusieurs
     # niveaux ne s'arrondissent au même prix sur les actifs à petit prix (DOGE
     # ~$0.10 : spacing ATR 0.0003 < tick 0.001 → collisions/doublons/manquants).
     min_spacing_ticks: int = Field(2, ge=1, le=10, description="Spacing grid ≥ N ticks HL")
+    # Boucle grille dédiée (port V6) : la FSM grille (pose TP, dégel, drift) tourne
+    # dans un thread rapide séparé du tick principal 30s. Sinon, entre deux ticks
+    # lents (jusqu'à 157s observé), buy ET sell se remplissent → net szi=0 → TP
+    # reduce-only impossible → gel massif (~900 niveaux abandonnés observés).
+    fast_loop_enabled: bool = Field(True, description="Thread grille dédié (cadence rapide)")
+    fast_loop_sec: int = Field(3, ge=1, le=30, description="Cadence du thread grille (s)")
     # Frozen guard (fix V6 28/05 ported into V7) : timeout avant de basculer
     # un niveau frozen en done quand szi reste du mauvais côté.
     frozen_timeout_sec: int = Field(600, ge=60, le=3600, description="Timeout level frozen → done")
