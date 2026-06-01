@@ -23,3 +23,6 @@ memory/scalp_memory.json
 memory/orderflow.db
 memory/v7_state.json
 *.pid
+
+# Audit Opus V7 — run logs (les sorties audit_log_v7.md / code_proposals_v7.md SONT suivies)
+audit_history/
