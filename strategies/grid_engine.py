@@ -240,7 +240,7 @@ class GridEngine:
         current_price: float, position_szi: float = 0.0,
         cache_fresh: bool = True,
     ) -> None:
-        """Mise à jour ladder. Appelé toutes les TRAIL_CHECK_SEC secondes depuis main_v6._grid_loop.
+        """Mise à jour ladder. Appelé à chaque cycle depuis la boucle principale V7 (main.py).
 
         position_szi : szi signé de la position globale du symbole (positif=long,
         négatif=short, 0=flat). Permet (G2) d'éviter de placer un TP qui serait
