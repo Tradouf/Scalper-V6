@@ -248,13 +248,28 @@ class V7Bot:
             open_oids = {int(o["oid"]) for o in self.exchange.get_open_orders() if o.get("oid")}
         except Exception:
             open_oids = set()
+        # Lecture des positions HL réelles UNE FOIS par tick (en live).
+        # Les fills internes du grid_engine ne passent PAS par ExecutionEngine →
+        # portfolio.positions ne les reflète pas. Sans cette lecture HL, le
+        # check G2 du grid voit szi=0 → "TP impossible" → frozen → trous sur
+        # l'UI HL (observé en V7 live 31/05-01/06, 84 frozen avec szi=0.000000).
+        hl_pos_detailed = {}
+        if not self.cfg.execution.paper_mode:
+            try:
+                hl_pos_detailed = self.hl_read.get_positions_detailed()
+            except Exception as e:
+                self.logger.warning("HL positions read for grid szi: %r", e)
         for sym in list(self.grid_engine.active_symbols()):
             price = prices.get(sym, 0.0)
             if price <= 0:
                 continue
-            # position_szi (signed) — convertit notional → szi (signed qty)
-            current_notional = self.portfolio.positions.get(sym, 0.0)
-            szi = current_notional / price if price > 0 else 0.0
+            if hl_pos_detailed:
+                # Live : szi signé réel depuis clearinghouseState
+                szi = float(hl_pos_detailed.get(sym, {}).get("szi", 0.0))
+            else:
+                # Paper : fallback portfolio.positions (PaperExchange est local)
+                current_notional = self.portfolio.positions.get(sym, 0.0)
+                szi = current_notional / price if price > 0 else 0.0
             try:
                 self.grid_engine.on_tick(
                     sym, open_oids=open_oids,
