@@ -163,6 +163,21 @@ class GridEngine:
             logger.warning("GRID %s: paramètres invalides (center=%.4f atr=%.4f)", symbol, center, atr)
             return False
 
+        # Garde bas-prix : si le spacing est plus fin que N ticks HL, plusieurs
+        # niveaux center±k·spacing s'arrondissent au même prix (_round_px) →
+        # collisions → niveaux manquants + doublons re-posés par health_check
+        # (deux niveaux au même target_px que l'anti-doublon ne peut distinguer).
+        # Cas DOGE ~$0.10 : spacing 0.0003 < tick 0.001. On relève au plancher.
+        min_spacing_ticks = int(getattr(self._cfg, "min_spacing_ticks", 2))
+        tick = 10.0 ** (-self._get_tick_decimals(symbol))
+        min_spacing = tick * min_spacing_ticks
+        if spacing < min_spacing:
+            logger.info(
+                "GRID %s: spacing %.6f < %d ticks (%.6f) → relevé (actif bas-prix)",
+                symbol, spacing, min_spacing_ticks, min_spacing,
+            )
+            spacing = min_spacing
+
         qty = round(GRID_NOTIONAL / center, 6)
         if qty * center < 10.5:
             logger.warning("GRID %s: notional trop faible (%.2f < $10.5)", symbol, qty * center)
@@ -350,7 +365,10 @@ class GridEngine:
         un place_limit antérieur a réussi côté HL mais que l'OID n'a pas pu
         être propagé au lvl.pending_oid (cache stale, FSM glitch).
 
-        Tolérance prix : 0.01% (rounding _round_px entre placements/lectures).
+        Tolérance prix : max(0.01% , ½ tick HL). Le plancher ½ tick couvre les
+        actifs bas-prix où 0.01%×target_px est plus petit que le tick (DOGE :
+        0.01%×0.1 = 1e-5 ≪ tick 1e-3) — sans ce plancher le garde ne reconnaît
+        pas l'ordre réellement posé (arrondi au tick) et re-pose un doublon.
         """
         try:
             reg = get_order_registry()
@@ -366,7 +384,8 @@ class GridEngine:
                         tracked.add(int(lvl.pending_oid))
                     if lvl.tp_oid is not None:
                         tracked.add(int(lvl.tp_oid))
-            tol = max(abs(target_px) * 1e-4, 1e-9)
+            half_tick = 0.5 * (10.0 ** (-self._get_tick_decimals(symbol)))
+            tol = max(abs(target_px) * 1e-4, half_tick)
             sym_up = str(symbol).upper()
             side_lc = str(side).lower()
             for r in reg.all():

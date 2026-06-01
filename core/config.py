@@ -112,6 +112,10 @@ class GridStrategyConfig(BaseModel):
     drift_window_sec: int = Field(3600, ge=300, le=86400)
     health_check_sec: int = Field(300, ge=60, le=3600)
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
+    # Garde bas-prix : spacing minimum exprimé en ticks HL. Empêche que plusieurs
+    # niveaux ne s'arrondissent au même prix sur les actifs à petit prix (DOGE
+    # ~$0.10 : spacing ATR 0.0003 < tick 0.001 → collisions/doublons/manquants).
+    min_spacing_ticks: int = Field(2, ge=1, le=10, description="Spacing grid ≥ N ticks HL")
     # Frozen guard (fix V6 28/05 ported into V7) : timeout avant de basculer
     # un niveau frozen en done quand szi reste du mauvais côté.
     frozen_timeout_sec: int = Field(600, ge=60, le=3600, description="Timeout level frozen → done")

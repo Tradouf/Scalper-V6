@@ -189,3 +189,26 @@ def test_engine_active_symbols_proxy():
     assert strat.active_symbols() == []
     engine.activate("BTC", center=70000.0, atr=100.0)
     assert strat.active_symbols() == ["BTC"]
+
+
+def test_low_price_grid_min_spacing_no_collision(monkeypatch):
+    """Actif bas-prix (DOGE-like, tick=0.001) : le spacing ATR (0.00035) est plus
+    fin que le plancher de 2 ticks → relevé → niveaux à prix tous distincts.
+
+    Sans la garde, plusieurs niveaux s'arrondiraient au même prix (collisions →
+    ordres manquants + doublons re-posés par health_check)."""
+    ex = MockExchange(mark_prices={"DOGE": 0.1001})
+    engine = GridEngine(ex, _grid_cfg())  # min_spacing_ticks=2 par défaut
+    monkeypatch.setattr(engine, "_get_tick_decimals", lambda sym: 3)  # tick=0.001
+    ok = engine.activate("DOGE", center=0.1001, atr=0.0007)  # spacing ATR=0.00035
+    assert ok
+    prices = [o.price for o in ex.placed_orders]
+    assert len(prices) == 10              # 5 buy + 5 sell
+    assert len(set(prices)) == 10         # tous distincts → ni collision ni doublon
+
+
+def test_low_price_grid_default_min_spacing_ticks():
+    """Le knob min_spacing_ticks a une valeur par défaut (≥1) dans la config."""
+    cfg = _grid_cfg()
+    assert getattr(cfg, "min_spacing_ticks", None) is not None
+    assert cfg.min_spacing_ticks >= 1
