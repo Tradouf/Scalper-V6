@@ -139,6 +139,66 @@ def test_on_fill_close_removes_position():
     assert "BTC" not in strat.open_positions()
 
 
+def test_on_fill_close_clears_intent():
+    """Fix anti-whipsaw : le fill de clôture purge aussi l'intent de maintien."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC"])
+    strat.on_fill(Fill(order_id="1", asset="BTC", notional=100.0, price=70000.0, fee=0.1, strategy_id="mean_reversion", timestamp=NOW))
+    strat._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.5}
+    strat.on_fill(Fill(order_id="2", asset="BTC", notional=-100.0, price=70500.0, fee=0.1, strategy_id="mean_reversion", timestamp=NOW))
+    assert "BTC" not in strat._intent
+
+
+# ─── Maintien de position (anti-whipsaw) ─────────────────────────────────────
+
+
+def test_hold_reemits_maintain_signal():
+    """Position tenue (pas de revert) → ré-émet l'exposition au lieu de se taire.
+
+    Sinon l'allocateur fermerait la position au tick suivant (bug whipsaw V7)."""
+    np.random.seed(42)
+    strat = MeanReversionStrategy(
+        _cfg(window=30, hl_min=2.0, hl_max=200.0, exit_z=0.0), symbols=["BTC"]
+    )
+    # Position ouverte + son intent d'entrée (mémorisé à l'ouverture).
+    strat._positions["BTC"] = {"side": "buy", "entry_px": 100.0, "qty": 0.3, "opened_ts": NOW.timestamp()}
+    strat._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.5}
+    # Série AR(1) mean-reverting → half-life finie (passe le filtre), std>0.
+    x = [100.0]
+    for _ in range(79):
+        x.append(100.0 + 0.8 * (x[-1] - 100.0) + np.random.normal(0, 1.0))
+    market = _make_market(x)
+    sigs = strat.generate_signals(market)
+    assert len(sigs) == 1
+    s = sigs[0]
+    # exit_z=0 → jamais de CLOSE → maintien reproduisant l'intent à l'identique.
+    assert s.target_notional == 30.0
+    assert s.direction == 1.0
+    assert s.confidence == 0.5
+    assert s.stop_price is None  # ne retouche pas le SL natif posé à l'entrée
+
+
+def test_sync_positions_drops_externally_closed():
+    """SÉCURITÉ : une position fermée hors stratégie (flat côté exchange) est
+    purgée → le maintien ne la ré-ouvre pas."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC", "ETH"])
+    for sym, px, qty in (("BTC", 100.0, 0.3), ("ETH", 50.0, 0.6)):
+        strat._positions[sym] = {"side": "buy", "entry_px": px, "qty": qty, "opened_ts": NOW.timestamp()}
+        strat._intent[sym] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.5}
+    # BTC fermé (absent / flat), ETH toujours long côté exchange.
+    strat.sync_positions({"ETH": 30.0})
+    assert "BTC" not in strat._positions and "BTC" not in strat._intent
+    assert "ETH" in strat._positions
+
+
+def test_sync_positions_drops_on_sign_flip():
+    """Si l'exchange montre le sens opposé, la croyance est invalidée."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC"])
+    strat._positions["BTC"] = {"side": "buy", "entry_px": 100.0, "qty": 0.3, "opened_ts": NOW.timestamp()}
+    strat._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.5}
+    strat.sync_positions({"BTC": -30.0})  # net SHORT
+    assert "BTC" not in strat._positions
+
+
 # ─── CLOSE signal ────────────────────────────────────────────────────────────
 
 

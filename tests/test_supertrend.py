@@ -151,6 +151,14 @@ class TestSupertrendStrategy:
         s.on_fill(Fill(order_id="2", asset="BTC", notional=-200.0, price=70500.0, fee=0.1, strategy_id="supertrend", timestamp=NOW))
         assert "BTC" not in s.open_positions()
 
+    def test_on_fill_close_clears_intent(self):
+        """Fix anti-whipsaw : le fill de clôture purge l'intent de maintien."""
+        s = SupertrendStrategy(_cfg(), symbols=["BTC"])
+        s.on_fill(Fill(order_id="1", asset="BTC", notional=200.0, price=70000.0, fee=0.1, strategy_id="supertrend", timestamp=NOW))
+        s._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.8}
+        s.on_fill(Fill(order_id="2", asset="BTC", notional=-200.0, price=70500.0, fee=0.1, strategy_id="supertrend", timestamp=NOW))
+        assert "BTC" not in s._intent
+
     def test_sizing_clamped_to_max(self):
         """Si la distance au stop est très petite, qty serait énorme → cap à notional_max."""
         s = SupertrendStrategy(

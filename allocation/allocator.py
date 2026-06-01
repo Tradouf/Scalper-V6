@@ -54,12 +54,17 @@ class RuleBasedAllocator:
         by_asset: Dict[str, Dict] = defaultdict(
             lambda: {"notional": 0.0, "contribs": {}}
         )
+        # (a) Fermetures explicites attribuées : asset → strategy_id. Un signal
+        # CLOSE (target_notional<=0, direction=0) doit produire une TargetPosition
+        # à 0 PORTANT son strategy_id, sinon le reconcile ferme avec strategy_id
+        # =None → le fill de clôture n'est pas redistribué à la stratégie →
+        # _positions jamais purgé (désync). Cf. execution/engine.py:91-96.
+        close_intents: Dict[str, str] = {}
         for sig in signals:
             if sig.target_notional <= 0:
-                # CLOSE ou HOLD : pas de contribution à l'allocation positive.
-                # Note : un CLOSE est un signal explicite pour fermer une
-                # position existante. Le risk manager / exec gérera la
-                # transition vers 0 lors du reconcile.
+                # CLOSE : on retient l'intention attribuée (la dernière gagne).
+                if float(sig.direction) == 0.0 and sig.strategy_id:
+                    close_intents[sig.asset] = sig.strategy_id
                 continue
             w = weights.get(sig.strategy_id, 0.0)
             if w <= 0:
@@ -78,6 +83,19 @@ class RuleBasedAllocator:
             )
             for asset, data in by_asset.items()
         ]
+        # (a) Ajoute les fermetures attribuées, mais uniquement pour les actifs
+        # qu'aucune stratégie ne veut tenir (sinon on écraserait une exposition
+        # directionnelle valide d'une autre stratégie sur le même actif).
+        for asset, sid in close_intents.items():
+            if asset in by_asset:
+                continue
+            positions.append(
+                TargetPosition(
+                    asset=asset,
+                    target_notional=0.0,
+                    contributing_strategies={sid: 0.0},
+                )
+            )
         gross = sum(abs(p.target_notional) for p in positions)
         net = sum(p.target_notional for p in positions)
 

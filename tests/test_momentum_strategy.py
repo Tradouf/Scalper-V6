@@ -125,6 +125,15 @@ def test_on_fill_tracking():
     assert "BTC" not in strat.open_positions()
 
 
+def test_on_fill_close_clears_intent():
+    """Fix anti-whipsaw : le fill de clôture purge l'intent de maintien."""
+    strat = MomentumStrategy(_cfg(), symbols=["BTC"])
+    strat.on_fill(Fill(order_id="1", asset="BTC", notional=50.0, price=100.0, fee=0.05, strategy_id="momentum", timestamp=NOW))
+    strat._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0, "confidence": 0.7}
+    strat.on_fill(Fill(order_id="2", asset="BTC", notional=-50.0, price=105.0, fee=0.05, strategy_id="momentum", timestamp=NOW))
+    assert "BTC" not in strat._intent
+
+
 def test_cooldown_blocks_retrigger():
     strat = MomentumStrategy(_cfg(lookback_bars=48, entry_zscore=1.0), symbols=["BTC"], cooldown_sec=3600)
     np.random.seed(5)

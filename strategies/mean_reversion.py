@@ -56,6 +56,12 @@ class MeanReversionStrategy:
         # Tracking interne des positions MR ouvertes (sera mis à jour via on_fill)
         # key: symbol → {side, entry_px, qty, sl_price, opened_ts}
         self._positions: Dict[str, Dict] = {}
+        # Intention d'allocation à ré-émettre tant que la position est tenue
+        # (V7 est level-triggered : l'allocateur ferme tout actif absent de la
+        # cible. Une position « HOLD » doit donc ré-exprimer son exposition à
+        # chaque tick, sinon elle est fermée 1 tick après son ouverture).
+        # key: symbol → {direction, target_notional, confidence}
+        self._intent: Dict[str, Dict] = {}
         # Snapshot dernières métriques (pour dashboard / debug)
         self._last_metrics: Dict[str, Dict] = {}
 
@@ -99,10 +105,25 @@ class MeanReversionStrategy:
             if abs(new_notional) < 0.01:
                 # Fermée
                 self._positions.pop(sym, None)
+                self._intent.pop(sym, None)
                 self._last_close_ts[sym] = fill.timestamp.timestamp() if isinstance(fill.timestamp, dt.datetime) else time.time()
             else:
                 existing["qty"] = abs(new_notional / fill.price)
                 existing["side"] = "buy" if new_notional > 0 else "sell"
+
+    def sync_positions(self, net_by_asset: Dict[str, float], dust: float = 1.0) -> None:
+        """Purge les positions tracées qui n'existent plus côté exchange (fermées
+        par EmergencyExit, SL natif, liquidation) ou dont le sens a changé.
+
+        SÉCURITÉ : sans cette synchro, le maintien (ré-émission HOLD) ré-ouvrirait
+        une position fermée hors stratégie → boucle de réouverture. `net_by_asset`
+        = {asset → notional signé} réel (HL en live, portfolio en paper)."""
+        for sym in list(self._positions.keys()):
+            net = net_by_asset.get(sym, 0.0)
+            side = self._positions[sym]["side"]
+            if abs(net) < dust or (side == "buy" and net < 0) or (side == "sell" and net > 0):
+                self._positions.pop(sym, None)
+                self._intent.pop(sym, None)
 
     # ─── Évaluation par symbole ───────────────────────────────────────────────
 
@@ -124,11 +145,14 @@ class MeanReversionStrategy:
         if hl <= 0 or hl < self._cfg.hl_min or hl > self._cfg.hl_max:
             return None
 
-        # Position MR ouverte → check exit (CLOSE)
+        # Position MR ouverte → check exit (CLOSE) ou maintien
         if sym in self._positions:
             if abs(z) < self._cfg.exit_z:
-                # CLOSE signal : direction 0, target_notional 0, mais on
-                # encode l'intention via expected_edge_bps=0 et confidence=1
+                # CLOSE signal : direction 0, target_notional 0. (b) On purge
+                # l'intent dès la décision de fermeture pour cesser de ré-émettre
+                # le maintien ; _positions sera vidé par on_fill sur le fill réel
+                # (attribué grâce au correctif (a) côté allocateur).
+                self._intent.pop(sym, None)
                 return Signal(
                     strategy_id=self._strategy_id,
                     asset=sym,
@@ -140,7 +164,12 @@ class MeanReversionStrategy:
                     horizon_bars=1,
                     timestamp=market.timestamp,
                 )
-            return None  # HOLD : position ouverte, pas de revert encore
+            # HOLD : pas encore de revert → ré-émettre l'exposition tenue pour
+            # que l'allocateur garde la position dans la cible (anti-whipsaw).
+            intent = self._intent.get(sym)
+            if intent is not None:
+                return self._maintain_signal(sym, intent, market)
+            return None  # position non tracée (pré-existante) → ne pas piloter
 
         # Pas de position → check entry
         # Cooldown
@@ -166,6 +195,15 @@ class MeanReversionStrategy:
         sl_price = mark - sl_buffer if side == "buy" else mark + sl_buffer
 
         self._last_signal_ts[sym] = now_ts
+        conf = min(1.0, abs(z) / (self._cfg.entry_z * 2.0))
+        # Mémorise l'intention pour la ré-émettre à l'identique pendant le HOLD
+        # (mêmes direction/notional/confidence → l'allocateur reproduit la même
+        # cible → reconcile sous le seuil → position conservée, pas de churn).
+        self._intent[sym] = {
+            "direction": direction,
+            "target_notional": notional,
+            "confidence": conf,
+        }
 
         return Signal(
             strategy_id=self._strategy_id,
@@ -173,9 +211,27 @@ class MeanReversionStrategy:
             direction=direction,
             target_notional=notional,
             expected_edge_bps=50.0,  # estimation heuristique, à ajuster post P5
-            confidence=min(1.0, abs(z) / (self._cfg.entry_z * 2.0)),
+            confidence=conf,
             stop_price=float(sl_price),
             horizon_bars=int(hl),
+            timestamp=market.timestamp,
+        )
+
+    def _maintain_signal(self, sym: str, intent: Dict, market: MarketSnapshot) -> Signal:
+        """Ré-émet l'exposition tenue (HOLD) pour la maintenir dans la cible.
+
+        stop_price=None : le SL natif est posé une fois à l'entrée ; on ne le
+        retouche pas à chaque tick de maintien.
+        """
+        return Signal(
+            strategy_id=self._strategy_id,
+            asset=sym,
+            direction=float(intent["direction"]),
+            target_notional=float(intent["target_notional"]),
+            expected_edge_bps=0.0,
+            confidence=float(intent["confidence"]),
+            stop_price=None,
+            horizon_bars=1,
             timestamp=market.timestamp,
         )
 

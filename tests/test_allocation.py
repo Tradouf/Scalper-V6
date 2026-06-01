@@ -201,16 +201,39 @@ class TestAllocator:
         assert btc.target_notional > 0  # LONG
         assert eth.target_notional < 0  # SHORT
 
-    def test_close_signals_ignored_in_allocation(self):
-        """Signaux CLOSE (target_notional=0) ne contribuent pas."""
+    def test_close_signal_emits_attributed_zero_target(self):
+        """Fix (a) : un CLOSE produit une TargetPosition à 0 PORTANT son
+        strategy_id (pour que le reconcile attribue le fill de clôture), sans
+        contribuer à l'exposition."""
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({Regime.RANGE: 1.0, Regime.TREND_UP: 0.0,
                           Regime.TREND_DOWN: 0.0, Regime.HIGH_VOL: 0.0})
         signals = [
-            _signal("grid", "BTC", direction=0.0, notional=0.0, confidence=1.0),  # CLOSE
+            _signal("mean_reversion", "BTC", direction=0.0, notional=0.0, confidence=1.0),  # CLOSE
         ]
         tp = alloc.allocate(signals, regime, self._portfolio(), perf_scores={})
-        assert tp.positions == []
+        assert len(tp.positions) == 1
+        pos = tp.positions[0]
+        assert pos.asset == "BTC"
+        assert pos.target_notional == 0.0
+        assert "mean_reversion" in pos.contributing_strategies
+        # N'ajoute aucune exposition.
+        assert tp.gross_exposure == 0.0
+
+    def test_close_signal_does_not_override_directional(self):
+        """Fix (a) : un CLOSE sur un actif qu'une autre stratégie veut tenir ne
+        doit PAS écraser l'exposition directionnelle."""
+        alloc = RuleBasedAllocator(self._cfg())
+        regime = _regime({Regime.RANGE: 1.0, Regime.TREND_UP: 0.0,
+                          Regime.TREND_DOWN: 0.0, Regime.HIGH_VOL: 0.0})
+        signals = [
+            _signal("mean_reversion", "BTC", direction=1.0, notional=100.0, confidence=1.0),  # LONG
+            _signal("momentum", "BTC", direction=0.0, notional=0.0, confidence=1.0),          # CLOSE
+        ]
+        tp = alloc.allocate(signals, regime, self._portfolio(), perf_scores={})
+        btc = [p for p in tp.positions if p.asset == "BTC"]
+        assert len(btc) == 1  # pas de doublon close + directionnel
+        assert btc[0].target_notional > 0  # l'exposition directionnelle gagne
 
     def test_gross_and_net_exposure_computed(self):
         alloc = RuleBasedAllocator(self._cfg())

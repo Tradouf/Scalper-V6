@@ -59,6 +59,9 @@ class SupertrendStrategy:
         self._last_signal_ts: Dict[str, float] = {}
         # Tracking interne des positions ST ouvertes
         self._positions: Dict[str, Dict] = {}
+        # Intention d'allocation à ré-émettre tant que la position est tenue
+        # (V7 level-triggered : un HOLD silencieux = fermeture par l'allocateur).
+        self._intent: Dict[str, Dict] = {}  # symbol → {direction, target_notional, confidence}
         # Snapshot debug
         self._last_metrics: Dict[str, Dict] = {}
 
@@ -92,9 +95,20 @@ class SupertrendStrategy:
             new_signed = signed_existing + fill.notional
             if abs(new_signed) < 0.01:
                 self._positions.pop(sym, None)
+                self._intent.pop(sym, None)
             else:
                 existing["qty"] = abs(new_signed / fill.price)
                 existing["side"] = "buy" if new_signed > 0 else "sell"
+
+    def sync_positions(self, net_by_asset: Dict[str, float], dust: float = 1.0) -> None:
+        """Purge les positions tracées fermées hors stratégie (EmergencyExit, SL,
+        liquidation). Empêche le maintien de ré-ouvrir une position fermée."""
+        for sym in list(self._positions.keys()):
+            net = net_by_asset.get(sym, 0.0)
+            side = self._positions[sym]["side"]
+            if abs(net) < dust or (side == "buy" and net < 0) or (side == "sell" and net > 0):
+                self._positions.pop(sym, None)
+                self._intent.pop(sym, None)
 
     # ─── Évaluation ───────────────────────────────────────────────────────────
 
@@ -127,7 +141,8 @@ class SupertrendStrategy:
             pos_side = self._positions[sym]["side"]
             pos_dir = 1 if pos_side == "buy" else -1
             if last_dir != pos_dir:
-                # Flip contre la position → CLOSE
+                # Flip contre la position → CLOSE — (b) purge l'intent.
+                self._intent.pop(sym, None)
                 return Signal(
                     strategy_id=self._strategy_id,
                     asset=sym,
@@ -139,7 +154,11 @@ class SupertrendStrategy:
                     horizon_bars=1,
                     timestamp=market.timestamp,
                 )
-            return None  # HOLD : direction conforme
+            # HOLD (direction conforme) → ré-émettre l'exposition tenue.
+            intent = self._intent.get(sym)
+            if intent is not None:
+                return self._maintain_signal(sym, intent, market)
+            return None  # position non tracée → ne pas piloter
 
         # Pas de position → check entry (flip vs direction précédente connue)
         if prev_dir == 0 or last_dir == prev_dir:
@@ -172,6 +191,11 @@ class SupertrendStrategy:
         confidence = 0.8
 
         self._last_signal_ts[sym] = now_ts
+        self._intent[sym] = {
+            "direction": direction,
+            "target_notional": float(notional),
+            "confidence": confidence,
+        }
 
         return Signal(
             strategy_id=self._strategy_id,
@@ -182,6 +206,24 @@ class SupertrendStrategy:
             confidence=confidence,
             stop_price=float(last_st),
             horizon_bars=int(self._cfg.period),  # ordre de grandeur
+            timestamp=market.timestamp,
+        )
+
+    def _maintain_signal(self, sym: str, intent: Dict, market: MarketSnapshot) -> Signal:
+        """Ré-émet l'exposition tenue (HOLD) pour la maintenir dans la cible.
+
+        stop_price=None : le supertrend trailing est recalculé au flip ; le SL
+        natif d'entrée n'est pas retouché à chaque tick de maintien.
+        """
+        return Signal(
+            strategy_id=self._strategy_id,
+            asset=sym,
+            direction=float(intent["direction"]),
+            target_notional=float(intent["target_notional"]),
+            expected_edge_bps=0.0,
+            confidence=float(intent["confidence"]),
+            stop_price=None,
+            horizon_bars=1,
             timestamp=market.timestamp,
         )
 

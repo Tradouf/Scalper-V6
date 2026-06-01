@@ -322,6 +322,23 @@ class V7Bot:
         except Exception as e:
             self.logger.warning("Grid driver error: %r", e)
 
+        # 2.7. Sync des positions tracées par stratégie avec la réalité exchange.
+        # SÉCURITÉ anti-whipsaw : les stratégies ré-émettent leur exposition tant
+        # qu'elles se croient en position (maintien). Si une position est fermée
+        # hors stratégie (EmergencyExit, SL natif, liquidation), il faut purger
+        # cette croyance, sinon le maintien la ré-ouvrirait en boucle.
+        try:
+            net_by_asset = (
+                dict(self.portfolio.positions)
+                if self.cfg.execution.paper_mode
+                else self.hl_read.get_positions()
+            )
+            for strat in self.strategies:
+                if hasattr(strat, "sync_positions"):
+                    strat.sync_positions(net_by_asset)
+        except Exception as e:
+            self.logger.warning("sync_positions error: %r", e)
+
         # 3. Signaux (toutes stratégies)
         all_signals = []
         for strat in self.strategies:
