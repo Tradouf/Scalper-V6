@@ -489,6 +489,7 @@ class V7Bot:
             state = {
                 "ts": time.time(),
                 "cycle": self._cycle,
+                "paper_mode": self.cfg.execution.paper_mode,
                 "regime": {
                     "label": regime.label.value,
                     "confidence": regime.confidence,
@@ -509,10 +510,79 @@ class V7Bot:
                 # Compteurs cumulés depuis boot
                 "cumulative_fills": self._total_fills,
                 "cumulative_signals": self._total_signals,
+                # Logique par position (stratégie propriétaire + métrique + intent)
+                "positions_logic": self._collect_positions_logic(),
+                # État des grilles actives (niveaux par état, drift)
+                "grids": self._collect_grids(),
+                # Positions HL réelles (live) : szi/entry/PnL/ROE
+                "hl_positions": self._collect_hl_positions(),
+                "grid_fast_loop": bool(getattr(self.cfg.strategies.grid, "fast_loop_enabled", True)),
             }
             (mem / "v7_state.json").write_text(json.dumps(state, indent=2, default=str))
         except Exception as e:
             self.logger.debug("persist v7_state: %r", e)
+
+    # ─── Collecteurs pour le dashboard ────────────────────────────────────────
+
+    def _collect_positions_logic(self) -> dict:
+        """Pour chaque symbole tenu par une stratégie directionnelle : qui le tient,
+        son intent (direction/notional/confidence ré-émis chaque tick) et la métrique
+        qui justifie la position (z-score MR, slope momentum, direction supertrend)."""
+        logic: dict = {}
+        metric_key = {"mean_reversion": "z", "momentum": "slope_z", "supertrend": "direction"}
+        for sid, strat in (("mean_reversion", self.mr), ("momentum", self.momentum), ("supertrend", self.supertrend)):
+            try:
+                positions = strat.open_positions()
+                intents = getattr(strat, "_intent", {})
+                metrics = strat.get_last_metrics()
+            except Exception:
+                continue
+            for sym, pos in positions.items():
+                it = intents.get(sym, {})
+                m = metrics.get(sym, {})
+                logic.setdefault(sym, []).append({
+                    "strategy": sid,
+                    "side": pos.get("side"),
+                    "entry_px": pos.get("entry_px"),
+                    "qty": pos.get("qty"),
+                    "intent_notional": it.get("target_notional"),
+                    "intent_confidence": it.get("confidence"),
+                    "metric_name": metric_key.get(sid),
+                    "metric_value": m.get(metric_key.get(sid)),
+                })
+        return logic
+
+    def _collect_grids(self) -> dict:
+        """État des grilles actives : center/spacing + comptage des niveaux par état."""
+        out: dict = {}
+        try:
+            with self._grid_lock:
+                grids = dict(getattr(self.grid_engine, "_grids", {}))
+            for sym, g in grids.items():
+                states: dict = {}
+                for lvl in g.levels:
+                    states[lvl.state] = states.get(lvl.state, 0) + 1
+                out[sym] = {
+                    "center": g.center,
+                    "spacing": g.spacing,
+                    "n_levels": len(g.levels),
+                    "states": states,
+                    "drift": getattr(g, "drift_since", None) is not None,
+                    "breakout_limit": getattr(g, "breakout_limit", None),
+                }
+        except Exception as e:
+            self.logger.debug("collect_grids: %r", e)
+        return out
+
+    def _collect_hl_positions(self) -> dict:
+        """Positions HL réelles (live) : szi signé, entry, mark, ROE. {} en paper."""
+        if self.cfg.execution.paper_mode:
+            return {}
+        try:
+            return self.hl_read.get_positions_detailed() or {}
+        except Exception as e:
+            self.logger.debug("collect_hl_positions: %r", e)
+            return {}
 
 
 def main() -> int:

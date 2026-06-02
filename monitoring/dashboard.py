@@ -118,8 +118,8 @@ INDEX_HTML = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>SalleDesMarches V7 — Dashboard <span class="badge" style="background:#3a2b1c;color:#f5a623">PAPER</span></h1>
-  <div class="meta">Refresh: <span id="lastrf">…</span> · <span id="age"></span></div>
+  <h1>SalleDesMarches V7 — Dashboard <span class="badge" id="modebadge" style="background:#3a2b1c;color:#f5a623">…</span></h1>
+  <div class="meta">Refresh: <span id="lastrf">…</span> · <span id="age"></span> · grille <span id="gridloop"></span></div>
 </header>
 
 <div class="grid">
@@ -138,12 +138,13 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 
   <div class="card">
-    <h2>Portfolio paper</h2>
+    <h2>Portfolio</h2>
     <div class="row">
       <div><div class="lbl">Equity</div><div class="big" id="equity">…</div></div>
       <div><div class="lbl">Positions</div><div class="big" id="npos">…</div></div>
+      <div><div class="lbl">uPnL total</div><div class="big" id="upnl">…</div></div>
     </div>
-    <table id="postbl"><thead><tr><th>Asset</th><th>Notional</th></tr></thead><tbody></tbody></table>
+    <table id="postbl"><thead><tr><th>Asset</th><th>Notional</th><th>szi</th><th>Entry</th><th>ROE</th></tr></thead><tbody></tbody></table>
   </div>
 
   <div class="card">
@@ -160,6 +161,18 @@ INDEX_HTML = r"""<!doctype html>
       <div><div class="lbl">Signaux actifs / total (tick)</div><div id="signals" class="mono">…</div></div>
       <div><div class="lbl">Fills cumul / depuis boot</div><div id="fills" class="mono">…</div></div>
     </div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Positions &amp; logique</h2>
+    <table id="logictbl"><thead><tr><th>Asset</th><th>Stratégie</th><th>Sens</th><th>Entry</th><th>Métrique</th><th>Intent ($ · conf)</th><th>szi / ROE (live)</th></tr></thead><tbody></tbody></table>
+    <div id="logic_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Grilles actives <span style="font-size:11px;color:var(--mut)" id="gridcount"></span></h2>
+    <table id="gridtbl"><thead><tr><th>Asset</th><th>Center</th><th>Spacing</th><th>Niveaux (par état)</th><th>Drift</th></tr></thead><tbody></tbody></table>
+    <div id="grid_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
   </div>
 
   <div class="card" style="grid-column:1/-1">
@@ -191,6 +204,15 @@ async function refresh() {
     const ageColor = age > 90 ? 'red' : 'mut';
     document.getElementById('age').innerHTML = `cycle #${st.cycle||'?'} · last tick <span class="${ageColor}">${age}s ago</span>`;
 
+    // Mode LIVE/PAPER + état boucle grille
+    const live = st.paper_mode === false;
+    const mb = document.getElementById('modebadge');
+    mb.textContent = live ? 'LIVE' : 'PAPER';
+    mb.style.background = live ? '#2b1c1c' : '#3a2b1c';
+    mb.style.color = live ? '#e8506a' : '#f5a623';
+    document.getElementById('gridloop').innerHTML = st.grid_fast_loop
+      ? '<span class="grn">⚙ thread ON</span>' : '<span class="red">thread OFF</span>';
+
     // Régime
     const r_ = st.regime || {};
     document.getElementById('regime').innerHTML = '<span class="badge">'+(r_.label||'?')+'</span>';
@@ -213,19 +235,83 @@ async function refresh() {
       tbW.appendChild(tr);
     });
 
-    // Portfolio
+    // Portfolio — en live, on privilégie les positions HL réelles (szi/entry/ROE)
     document.getElementById('equity').innerHTML = '$'+fmt(st.portfolio_equity, 2);
+    const hl = st.hl_positions || {};
     const pos = st.portfolio_positions || {};
-    document.getElementById('npos').textContent = Object.keys(pos).length;
+    const useHl = Object.keys(hl).length > 0;
+    const assets = useHl ? Object.keys(hl) : Object.keys(pos);
+    document.getElementById('npos').textContent = assets.length;
+    let totalPnl = 0;
     const tbP = document.querySelector('#postbl tbody');
     tbP.innerHTML = '';
-    Object.entries(pos).forEach(([a, n]) => {
-      const tr = document.createElement('tr');
-      const cls = n > 0 ? 'grn' : 'red';
-      tr.innerHTML = `<td>${a}</td><td class="${cls}">$${fmt(n, 2)}</td>`;
-      tbP.appendChild(tr);
+    assets.forEach(a => {
+      const h = hl[a] || {};
+      const szi = Number(h.szi||0), mark = Number(h.mark_px||h.entry_px||0), entry = Number(h.entry_px||0);
+      const notional = useHl ? (szi * mark) : Number(pos[a]||0);
+      const roe = h.roe != null ? Number(h.roe) : null;
+      if (useHl && entry) totalPnl += szi * (mark - entry);   // uPnL exact
+      const cls = notional > 0 ? 'grn' : 'red';
+      const roeCls = roe == null ? 'mut' : (roe >= 0 ? 'grn' : 'red');
+      const trHtml = `<td>${a}</td><td class="${cls}">$${fmt(notional,2)}</td>`
+        + `<td class="mono">${useHl? fmt(h.szi,4):'–'}</td>`
+        + `<td class="mono">${useHl? fmt(h.entry_px,4):'–'}</td>`
+        + `<td class="${roeCls} mono">${roe==null?'–':fmt(roe,2)+'%'}</td>`;
+      const tr = document.createElement('tr'); tr.innerHTML = trHtml; tbP.appendChild(tr);
     });
-    if (Object.keys(pos).length === 0) tbP.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--mut)">aucune position</td></tr>';
+    if (assets.length === 0) tbP.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mut)">aucune position</td></tr>';
+    const up = document.getElementById('upnl');
+    if (useHl) { up.innerHTML = '$'+fmt(totalPnl,2); up.className = 'big '+(totalPnl>=0?'grn':'red'); }
+    else { up.textContent = '–'; }
+
+    // Positions & logique
+    const logic = st.positions_logic || {};
+    const tbL = document.querySelector('#logictbl tbody');
+    tbL.innerHTML = '';
+    let nlog = 0;
+    Object.keys(logic).sort().forEach(sym => {
+      (logic[sym]||[]).forEach(L => {
+        nlog++;
+        const h = hl[sym] || {};
+        const dir = L.side === 'buy' ? '🟢 LONG' : (L.side === 'sell' ? '🔴 SHORT' : '⚪');
+        const mv = L.metric_value;
+        const metricStr = (L.metric_name && mv != null) ? `${L.metric_name}=${fmt(mv,2)}` : '–';
+        const intentStr = `$${fmt(L.intent_notional,0)} · ${fmt(L.intent_confidence,2)}`;
+        const roe = h.roe != null ? Number(h.roe) : null;
+        const roeCls = roe == null ? 'mut' : (roe >= 0 ? 'grn' : 'red');
+        const liveStr = (h.szi != null) ? `${fmt(h.szi,3)} · <span class="${roeCls}">${roe==null?'–':fmt(roe,1)+'%'}</span>` : '–';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${sym}</td><td>${L.strategy}</td><td>${dir}</td>`
+          + `<td class="mono">${fmt(L.entry_px,4)}</td><td class="mono">${metricStr}</td>`
+          + `<td class="mono">${intentStr}</td><td class="mono">${liveStr}</td>`;
+        tbL.appendChild(tr);
+      });
+    });
+    if (nlog === 0) tbL.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--mut)">aucune position directionnelle tracée</td></tr>';
+    document.getElementById('logic_note').textContent =
+      'Intent = exposition ré-émise chaque tick (maintien anti-whipsaw). Métrique = ce qui justifie la position (z=écart MR, slope=momentum, direction=supertrend).';
+
+    // Grilles actives
+    const grids = st.grids || {};
+    const gk = Object.keys(grids).sort();
+    document.getElementById('gridcount').textContent = `(${gk.length})`;
+    const tbG = document.querySelector('#gridtbl tbody');
+    tbG.innerHTML = '';
+    gk.forEach(sym => {
+      const g = grids[sym];
+      const stm = g.states || {};
+      const order = ['pending','filled','tp_placed','frozen','done'];
+      const colorOf = {pending:'mut',filled:'grn',tp_placed:'grn',frozen:'red',done:'mut'};
+      const statesStr = order.filter(k=>stm[k]).map(k=>`<span class="${colorOf[k]}">${k}:${stm[k]}</span>`).join('  ') || '–';
+      const drift = g.drift ? '<span class="red">⚠ drift</span>' : '<span class="grn">ok</span>';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${sym}</td><td class="mono">${fmt(g.center,4)}</td><td class="mono">${fmt(g.spacing,4)}</td>`
+        + `<td class="mono" style="font-size:11px">${statesStr}</td><td>${drift}</td>`;
+      tbG.appendChild(tr);
+    });
+    if (gk.length === 0) tbG.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mut)">aucune grille active (régime hors range ?)</td></tr>';
+    document.getElementById('grid_note').textContent =
+      'frozen = TP reduce-only impossible (szi du mauvais côté) ; la boucle grille dédiée (~3s) dégèle dès que szi redevient cohérent.';
 
     // Allocation
     document.getElementById('tgross').textContent = '$' + fmt(st.target_gross, 2);
