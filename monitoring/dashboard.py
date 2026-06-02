@@ -256,7 +256,7 @@ async function refresh() {
       const trHtml = `<td>${a}</td><td class="${cls}">$${fmt(notional,2)}</td>`
         + `<td class="mono">${useHl? fmt(h.szi,4):'–'}</td>`
         + `<td class="mono">${useHl? fmt(h.entry_px,4):'–'}</td>`
-        + `<td class="${roeCls} mono">${roe==null?'–':fmt(roe,2)+'%'}</td>`;
+        + `<td class="${roeCls} mono">${roe==null?'–':fmt(roe*100,2)+'%'}</td>`;
       const tr = document.createElement('tr'); tr.innerHTML = trHtml; tbP.appendChild(tr);
     });
     if (assets.length === 0) tbP.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mut)">aucune position</td></tr>';
@@ -279,7 +279,7 @@ async function refresh() {
         const intentStr = `$${fmt(L.intent_notional,0)} · ${fmt(L.intent_confidence,2)}`;
         const roe = h.roe != null ? Number(h.roe) : null;
         const roeCls = roe == null ? 'mut' : (roe >= 0 ? 'grn' : 'red');
-        const liveStr = (h.szi != null) ? `${fmt(h.szi,3)} · <span class="${roeCls}">${roe==null?'–':fmt(roe,1)+'%'}</span>` : '–';
+        const liveStr = (h.szi != null) ? `${fmt(h.szi,3)} · <span class="${roeCls}">${roe==null?'–':fmt(roe*100,1)+'%'}</span>` : '–';
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${sym}</td><td>${L.strategy}</td><td>${dir}</td>`
           + `<td class="mono">${fmt(L.entry_px,4)}</td><td class="mono">${metricStr}</td>`
