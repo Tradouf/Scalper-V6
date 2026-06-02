@@ -111,19 +111,19 @@ class RuleBasedAllocator:
     def _compute_strategy_weights(
         self, regime: RegimeState, perf_scores: Dict[str, float]
     ) -> Dict[str, float]:
-        """Étapes 1-3 du pipeline : base × mult, normalisation."""
-        # 1. base_i = Σ_r P(r) × B[r][i]
-        # On itère sur les stratégies présentes dans la matrice B.
+        """Étapes 1-3 du pipeline : base × mult, normalisation.
+
+        EXCLUSIF (2026-06-02) : on n'utilise PLUS le blend Σ_r P(r)×B[r][i] (qui
+        activait plusieurs stratégies en même temps sur le compte netté → szi=0).
+        On prend la ligne du LABEL dominant (stabilisé par l'hystérésis du
+        détecteur) → une seule stratégie a un poids non-nul par régime.
+        """
         strategy_ids = set()
         for d in self._cfg.base_weights.values():
             strategy_ids.update(d.keys())
 
-        base: Dict[str, float] = {}
-        for strat_id in strategy_ids:
-            base[strat_id] = sum(
-                regime.probabilities.get(r, 0.0) * self._cfg.base_weights[r].get(strat_id, 0.0)
-                for r in Regime
-            )
+        row = self._cfg.base_weights.get(regime.label, {})
+        base: Dict[str, float] = {strat_id: row.get(strat_id, 0.0) for strat_id in strategy_ids}
 
         # 2. raw_i = base_i × clamp(perf, mult_min, mult_max)
         raw: Dict[str, float] = {}

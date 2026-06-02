@@ -121,7 +121,8 @@ class TestAllocator:
         # somme = 1
         assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-9)
 
-    def test_pure_trend_regime_momentum_dominates(self):
+    def test_pure_trend_regime_supertrend_active(self):
+        """Exclusif : en trend, seul supertrend a un poids (momentum off)."""
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({
             Regime.TREND_UP: 1.0,
@@ -130,12 +131,14 @@ class TestAllocator:
             Regime.HIGH_VOL: 0.0,
         }, label=Regime.TREND_UP)
         weights = alloc.get_weights(regime, perf_scores={})
-        assert weights["momentum"] > weights["grid"]
-        assert weights["momentum"] > weights["mean_reversion"]
-        assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-9)
+        assert weights["supertrend"] == pytest.approx(1.0)
+        assert weights["grid"] == 0.0
+        assert weights["mean_reversion"] == 0.0
+        assert weights["momentum"] == 0.0
 
-    def test_mixed_regime_blend(self):
-        """50/50 trend/range → poids intermédiaires, somme=1."""
+    def test_label_selects_single_strategy(self):
+        """Exclusif : c'est le LABEL dominant (pas le blend de probas) qui choisit
+        la stratégie active. Probas mixtes mais label=RANGE → mean_reversion seul."""
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({
             Regime.TREND_UP: 0.5,
@@ -144,22 +147,37 @@ class TestAllocator:
             Regime.HIGH_VOL: 0.0,
         }, label=Regime.RANGE)
         weights = alloc.get_weights(regime, perf_scores={})
+        nonzero = [k for k, v in weights.items() if v > 0]
+        assert nonzero == ["mean_reversion"]
         assert math.isclose(sum(weights.values()), 1.0, abs_tol=1e-9)
-        # Tous > 0
-        for k, v in weights.items():
-            assert v > 0, f"{k}={v}"
 
-    def test_perf_scores_clamped(self):
-        """Multiplicateur hors bornes → clamp à mult_min ou mult_max."""
+    def test_each_regime_activates_mapped_strategy(self):
+        """Mapping exclusif complet : range→MR, high_vol→grid, trends→supertrend."""
+        alloc = RuleBasedAllocator(self._cfg())
+        cases = {
+            Regime.RANGE: "mean_reversion",
+            Regime.HIGH_VOL: "grid",
+            Regime.TREND_UP: "supertrend",
+            Regime.TREND_DOWN: "supertrend",
+        }
+        for reg, strat in cases.items():
+            regime = _regime({r: (1.0 if r == reg else 0.0) for r in Regime}, label=reg)
+            w = alloc.get_weights(regime, perf_scores={})
+            active = [k for k, v in w.items() if v > 0.0]
+            assert active == [strat], f"{reg.value} → {active} (attendu {strat})"
+
+    def test_exclusive_weight_is_one_regardless_of_perf(self):
+        """Sous exclusivité, la strat active normalise à 1.0 quelle que soit la
+        perf (le multiplicateur perf devient inerte avec une seule stratégie)."""
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({
             Regime.TREND_UP: 0.0, Regime.TREND_DOWN: 0.0,
-            Regime.RANGE: 1.0, Regime.HIGH_VOL: 0.0,
-        }, label=Regime.RANGE)
-        w_high = alloc.get_weights(regime, perf_scores={"grid": 100.0})  # clampé à 1.5
-        w_low = alloc.get_weights(regime, perf_scores={"grid": -100.0})  # clampé à 0.3
-        # Plus le mult est haut, plus le poids du grid est haut
-        assert w_high["grid"] > w_low["grid"]
+            Regime.RANGE: 0.0, Regime.HIGH_VOL: 1.0,
+        }, label=Regime.HIGH_VOL)
+        w_high = alloc.get_weights(regime, perf_scores={"grid": 100.0})
+        w_low = alloc.get_weights(regime, perf_scores={"grid": -100.0})
+        assert w_high["grid"] == pytest.approx(1.0)
+        assert w_low["grid"] == pytest.approx(1.0)
 
     def test_no_signal_returns_empty_portfolio(self):
         alloc = RuleBasedAllocator(self._cfg())
@@ -171,12 +189,12 @@ class TestAllocator:
         assert tp.net_exposure == 0.0
 
     def test_signals_aggregated_by_asset(self):
-        """Plusieurs stratégies sur le même asset → contributions sommées."""
+        """Deux signaux de la stratégie ACTIVE sur le même asset → sommés."""
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({Regime.TREND_UP: 0.0, Regime.TREND_DOWN: 0.0,
                           Regime.RANGE: 1.0, Regime.HIGH_VOL: 0.0})
         signals = [
-            _signal("grid", "BTC", direction=1.0, notional=200.0, confidence=1.0),
+            _signal("mean_reversion", "BTC", direction=1.0, notional=200.0, confidence=1.0),
             _signal("mean_reversion", "BTC", direction=1.0, notional=100.0, confidence=1.0),
         ]
         tp = alloc.allocate(signals, regime, self._portfolio(), perf_scores={})
@@ -184,16 +202,25 @@ class TestAllocator:
         pos = tp.positions[0]
         assert pos.asset == "BTC"
         assert pos.target_notional > 0
-        assert "grid" in pos.contributing_strategies
         assert "mean_reversion" in pos.contributing_strategies
+
+    def test_inactive_strategy_signal_ignored(self):
+        """Exclusif : un signal d'une stratégie NON active dans le régime courant
+        ne produit aucune cible (grid n'est pas la strat du régime range)."""
+        alloc = RuleBasedAllocator(self._cfg())
+        regime = _regime({Regime.TREND_UP: 0.0, Regime.TREND_DOWN: 0.0,
+                          Regime.RANGE: 1.0, Regime.HIGH_VOL: 0.0}, label=Regime.RANGE)
+        signals = [_signal("grid", "BTC", direction=1.0, notional=200.0, confidence=1.0)]
+        tp = alloc.allocate(signals, regime, self._portfolio(), perf_scores={})
+        assert tp.positions == []
 
     def test_signed_direction_preserved(self):
         alloc = RuleBasedAllocator(self._cfg())
         regime = _regime({Regime.TREND_UP: 1.0, Regime.TREND_DOWN: 0.0,
                           Regime.RANGE: 0.0, Regime.HIGH_VOL: 0.0}, label=Regime.TREND_UP)
         signals = [
-            _signal("momentum", "BTC", direction=1.0, notional=100.0, confidence=1.0),
-            _signal("momentum", "ETH", direction=-1.0, notional=100.0, confidence=1.0),
+            _signal("supertrend", "BTC", direction=1.0, notional=100.0, confidence=1.0),
+            _signal("supertrend", "ETH", direction=-1.0, notional=100.0, confidence=1.0),
         ]
         tp = alloc.allocate(signals, regime, self._portfolio(), perf_scores={})
         btc = next(p for p in tp.positions if p.asset == "BTC")
@@ -237,8 +264,9 @@ class TestAllocator:
 
     def test_gross_and_net_exposure_computed(self):
         alloc = RuleBasedAllocator(self._cfg())
-        regime = _regime({Regime.RANGE: 1.0, Regime.TREND_UP: 0.0,
-                          Regime.TREND_DOWN: 0.0, Regime.HIGH_VOL: 0.0})
+        # grid est la stratégie active en HIGH_VOL.
+        regime = _regime({Regime.RANGE: 0.0, Regime.TREND_UP: 0.0,
+                          Regime.TREND_DOWN: 0.0, Regime.HIGH_VOL: 1.0}, label=Regime.HIGH_VOL)
         signals = [
             _signal("grid", "BTC", direction=1.0, notional=100.0, confidence=1.0),
             _signal("grid", "ETH", direction=-1.0, notional=100.0, confidence=1.0),
@@ -247,14 +275,3 @@ class TestAllocator:
         # gross = |btc| + |eth|, net = btc + eth
         assert tp.gross_exposure > 0
         assert tp.gross_exposure >= abs(tp.net_exposure)
-
-    def test_perf_score_affects_weights(self):
-        """Strat avec perf positive → poids plus élevé que perf négative."""
-        alloc = RuleBasedAllocator(self._cfg())
-        regime = _regime({Regime.RANGE: 0.5, Regime.TREND_UP: 0.5,
-                          Regime.TREND_DOWN: 0.0, Regime.HIGH_VOL: 0.0})
-        w_no_perf = alloc.get_weights(regime, perf_scores={})
-        # Grid : score haut (boost), Momentum : score bas (penalty)
-        w_with_perf = alloc.get_weights(regime, perf_scores={"grid": 1.4, "momentum": 0.4})
-        # grid devrait gagner du poids relatif
-        assert w_with_perf["grid"] / w_no_perf["grid"] > w_with_perf["momentum"] / w_no_perf["momentum"]

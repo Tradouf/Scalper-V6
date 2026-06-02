@@ -164,6 +164,7 @@ class V7Bot:
         import threading
         self._grid_lock = threading.RLock()
         self._grid_thread = None
+        self._grid_safety_pause = False  # enveloppe sécurité high_vol (vol ingérable)
 
     # ─── Boucle principale ────────────────────────────────────────────────────
 
@@ -211,26 +212,51 @@ class V7Bot:
     def _drive_grid(self, market, regime, prices) -> None:
         """Pilote le grid_engine : activation conditionnelle + tick FSM.
 
-        Activation : poids grid (matrice B) × equity > activation_threshold_usdc
-                    AND régime range dominant (proba RANGE > 0.4)
-                    AND pas déjà actif sur ce symbole.
-        Désactivation : régime hors range OU breakout/drift géré par grid_engine.
+        2026-06-02 — EXCLUSIF : la grille est la stratégie active en HIGH_VOL
+        (pas serrés + renouvellement rapide pour récolter l'oscillation). Elle
+        ne s'active plus en range (c'est mean_reversion qui prend le range).
+        Désactivation : régime hors high_vol OU breakout/drift OU sécurité vol.
         """
         from regime.features import atr as compute_atr
-        # Calcul du poids grid courant
+        from core.types import Regime
         weights = self.allocator.get_weights(regime, self.scorer.scores())
         grid_w = weights.get("grid", 0.0)
         equity = max(self.portfolio.equity, 100.0)
-        # Budget total alloué au grid (toutes positions confondues)
         grid_total_budget = grid_w * equity
         n_syms = max(len(self.cfg.symbols), 1)
         budget_per_sym = grid_total_budget / n_syms
-        # Le grid s'active si budget >= activation_threshold ET régime range probable
-        prob_range = regime.probabilities.get(__import__("core.types", fromlist=["Regime"]).Regime.RANGE, 0.0)
+        # La grille s'active en HIGH_VOL (sa vocation exclusive) avec budget suffisant.
+        is_high_vol = regime.label == Regime.HIGH_VOL
+        hv_factor = float(getattr(self.cfg.strategies.grid, "high_vol_atr_factor", 0.25))
+
+        # Enveloppe de sécurité : si la vol réalisée explose (> mult × médiane), la
+        # grille high_vol se ferait rincer → pause + flat (hystérésis : reprise <0.8×).
+        safety_mult = float(getattr(self.cfg.strategies.grid, "high_vol_safety_mult", 2.5))
+        vol_ratio = self._avg_vol_ratio(market)
+        if not self._grid_safety_pause and vol_ratio > safety_mult:
+            self._grid_safety_pause = True
+            self.logger.warning(
+                "GRID SÉCURITÉ : vol réalisée %.2f× médiane (> %.1f×) → flat + pause grilles",
+                vol_ratio, safety_mult,
+            )
+        elif self._grid_safety_pause and vol_ratio < safety_mult * 0.8:
+            self._grid_safety_pause = False
+            self.logger.info("GRID SÉCURITÉ : vol revenue (%.2f×) → reprise autorisée", vol_ratio)
+
         should_activate = (
-            budget_per_sym >= self.cfg.strategies.grid.activation_threshold_usdc
-            and prob_range > 0.3
+            is_high_vol
+            and not self._grid_safety_pause
+            and budget_per_sym >= self.cfg.strategies.grid.activation_threshold_usdc
         )
+        # En pause sécurité : on flatte les grilles encore actives (position incluse).
+        if self._grid_safety_pause:
+            with self._grid_lock:
+                for sym in list(self.grid_engine.active_symbols()):
+                    try:
+                        self.grid_engine.deactivate(sym, cancel=True, close_position=True)
+                        self.logger.warning("GRID SÉCURITÉ : %s flatté (vol ingérable)", sym)
+                    except Exception as e:
+                        self.logger.warning("GRID SÉCURITÉ deactivate %s: %r", sym, e)
 
         for sym in self.cfg.symbols:
             # Configure le budget côté grid (info pour le Signal généré ensuite)
@@ -254,8 +280,8 @@ class V7Bot:
                         )
                         if atr_val is None or atr_val <= 0:
                             continue
-                        if self.grid_engine.activate(sym, mid, atr_val):
-                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f budget=$%.0f", sym, mid, atr_val, budget_per_sym)
+                        if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor):
+                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f (high_vol)", sym, mid, atr_val, hv_factor, budget_per_sym)
                     elif is_active and not should_activate:
                         self.grid_engine.deactivate(sym, cancel=True)
                         self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
@@ -318,6 +344,26 @@ class V7Bot:
                     )
             except Exception as e:
                 self.logger.warning("Grid on_tick %s error: %r", sym, e)
+
+    def _avg_vol_ratio(self, market) -> float:
+        """Ratio moyen (vol réalisée 24h courante / médiane historique) sur les
+        symboles. >1 = vol au-dessus de la normale. Sert à l'enveloppe de sécurité
+        high_vol (vol ingérable → flat grilles)."""
+        import numpy as np
+        ratios = []
+        for c in market.candles.values():
+            if not c or len(c) < 50:
+                continue
+            closes = np.array([x.close for x in c], dtype=float)
+            rets = np.diff(np.log(np.maximum(closes, 1e-12)))
+            if len(rets) < 48:
+                continue
+            cur = float(np.std(rets[-24:]))
+            hist = [float(np.std(rets[i - 24:i])) for i in range(24, len(rets))]
+            base = float(np.median(hist)) if hist else 0.0
+            if base > 1e-9:
+                ratios.append(cur / base)
+        return float(np.mean(ratios)) if ratios else 1.0
 
     def _grid_loop(self) -> None:
         """Thread démon : pilote la FSM grille à cadence rapide (port V6 _grid_loop)."""

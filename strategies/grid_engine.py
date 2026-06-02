@@ -138,8 +138,12 @@ class GridEngine:
             return False
         return True
 
-    def activate(self, symbol: str, center: float, atr: float) -> bool:
-        """Place N niveaux de chaque côté du center. Retourne True si succès."""
+    def activate(self, symbol: str, center: float, atr: float, atr_factor: Optional[float] = None) -> bool:
+        """Place N niveaux de chaque côté du center. Retourne True si succès.
+
+        atr_factor : override optionnel (mode high_vol = pas resserrés). None =
+        valeur de config par défaut.
+        """
         if self.is_active(symbol):
             return False
         if not self.can_activate(symbol):
@@ -153,7 +157,7 @@ class GridEngine:
         except Exception as e:
             logger.warning("GRID %s cleanup_dangling pré-activation: %r", symbol, e)
 
-        GRID_ATR_FACTOR = float(self._cfg.atr_factor)
+        GRID_ATR_FACTOR = float(atr_factor if atr_factor is not None else self._cfg.atr_factor)
         GRID_LEVELS = int(self._cfg.levels)
         GRID_NOTIONAL = float(self._cfg.notional_per_level_usdc)
         GRID_LEVERAGE = int(getattr(self._cfg, "leverage", 3))
@@ -177,6 +181,18 @@ class GridEngine:
                 symbol, spacing, min_spacing_ticks, min_spacing,
             )
             spacing = min_spacing
+
+        # Plancher anti-frais : chaque round-trip (= 1 step) doit couvrir les frais
+        # aller-retour + marge. Sinon, surtout en mode high_vol resserré, la grille
+        # trade à perte nette. spacing ≥ min_spacing_pct × center.
+        min_spacing_px = center * float(getattr(self._cfg, "min_spacing_pct", 0.001))
+        if spacing < min_spacing_px:
+            logger.info(
+                "GRID %s: spacing %.6f < plancher anti-frais %.6f (%.3f%% du prix) → relevé",
+                symbol, spacing, min_spacing_px,
+                float(getattr(self._cfg, "min_spacing_pct", 0.001)) * 100,
+            )
+            spacing = min_spacing_px
 
         qty = round(GRID_NOTIONAL / center, 6)
         if qty * center < 10.5:

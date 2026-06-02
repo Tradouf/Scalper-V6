@@ -21,29 +21,35 @@ regime:
 
 # ─── Allocateur ───────────────────────────────────────────────────────────────
 allocation:
-  # Matrice B[régime][stratégie] : poids de base
-  # Grid + MR dominent en RANGE, Momentum domine en TREND, tout réduit en HIGH_VOL.
+  # Matrice B[régime][stratégie] : poids de base.
+  # 2026-06-02 — EXCLUSIF : une seule stratégie active par régime (les stratégies
+  # se remplacent sur le wallet partagé, hystérésis sur le label). Évite que
+  # plusieurs stratégies tradent le même compte netté → tue le szi=0/frozen.
+  #   range    → mean_reversion (la plus prometteuse en range)
+  #   high_vol → grille (pas serrés + renouvellement rapide, encadré sécurité)
+  #   trends   → supertrend (suit la tendance)
+  #   momentum → off pour l'instant
   base_weights:
     trend_up:
-      grid: 0.1
-      mean_reversion: 0.2
-      momentum: 1.0
+      grid: 0.0
+      mean_reversion: 0.0
+      momentum: 0.0
       supertrend: 1.0
     trend_down:
-      grid: 0.1
-      mean_reversion: 0.2
-      momentum: 1.0
+      grid: 0.0
+      mean_reversion: 0.0
+      momentum: 0.0
       supertrend: 1.0
     range:
-      grid: 1.0
+      grid: 0.0
       mean_reversion: 1.0
-      momentum: 0.1
-      supertrend: 0.1
+      momentum: 0.0
+      supertrend: 0.0
     high_vol:
-      grid: 0.2
-      mean_reversion: 0.3
-      momentum: 0.3
-      supertrend: 0.2
+      grid: 1.0
+      mean_reversion: 0.0
+      momentum: 0.0
+      supertrend: 0.0
 
   # Multiplicateur de performance — borné, lent.
   mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
@@ -77,10 +83,13 @@ strategies:
     drift_k: 3.0
     drift_window_sec: 900         # 2026-06-01 : 3600→900. Sinon la grille fade une
                                   # tendance 1h avant de lâcher (cas BNB short en rallye)
-    health_check_sec: 300
+    health_check_sec: 30          # 2026-06-02 : 300→30, renouvellement rapide des
+                                  # niveaux 'done' (grille high_vol = récolte oscillation)
     activation_threshold_usdc: 20.0
     frozen_timeout_sec: 600       # fix port V6 28/05 : G2 frozen state
     min_spacing_ticks: 2          # garde bas-prix (DOGE) : niveaux distincts
+    min_spacing_pct: 0.001        # plancher anti-frais : step ≥ 0.10% du prix
+    high_vol_atr_factor: 0.25     # high_vol : pas resserrés (÷2 vs 0.5 normal)
     fast_loop_enabled: true       # thread grille dédié (port V6) : pilote la FSM
     fast_loop_sec: 3              # à cadence rapide → évite l'épidémie szi=0/frozen
 

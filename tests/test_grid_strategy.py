@@ -212,3 +212,25 @@ def test_low_price_grid_default_min_spacing_ticks():
     cfg = _grid_cfg()
     assert getattr(cfg, "min_spacing_ticks", None) is not None
     assert cfg.min_spacing_ticks >= 1
+
+
+def _spacing_for(factor: float, atr: float = 440.0, center: float = 70000.0) -> float:
+    ex = MockExchange(mark_prices={"BTC": center})
+    e = GridEngine(ex, _grid_cfg())
+    assert e.activate("BTC", center, atr, atr_factor=factor)
+    return e._grids["BTC"].spacing
+
+
+def test_high_vol_atr_factor_tightens_spacing():
+    """Mode high_vol : atr_factor réduit → pas resserrés (récolte oscillation)."""
+    sp_hv = _spacing_for(0.25)
+    sp_norm = _spacing_for(0.5)
+    assert sp_hv < sp_norm
+    assert sp_hv == pytest.approx(440.0 * 0.25)  # 110, au-dessus du plancher anti-frais (70)
+
+
+def test_min_spacing_pct_fee_floor():
+    """Plancher anti-frais : un spacing ATR trop fin est relevé à min_spacing_pct×prix."""
+    # atr=10, factor=0.5 → 5, bien sous le plancher 0.10% × 70000 = 70.
+    sp = _spacing_for(0.5, atr=10.0)
+    assert sp == pytest.approx(70000.0 * 0.001)  # 70

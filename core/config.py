@@ -113,7 +113,7 @@ class GridStrategyConfig(BaseModel):
     # avant de se désactiver (cas BNB short dans un rallye +5%). 15 min de dérive
     # SOUTENUE (le timer se reset si le prix revient en zone) = signal de trend.
     drift_window_sec: int = Field(900, ge=300, le=86400)
-    health_check_sec: int = Field(300, ge=60, le=3600)
+    health_check_sec: int = Field(300, ge=15, le=3600)  # min abaissé pour renouvellement rapide en high_vol
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
     # Garde bas-prix : spacing minimum exprimé en ticks HL. Empêche que plusieurs
     # niveaux ne s'arrondissent au même prix sur les actifs à petit prix (DOGE
@@ -125,6 +125,17 @@ class GridStrategyConfig(BaseModel):
     # reduce-only impossible → gel massif (~900 niveaux abandonnés observés).
     fast_loop_enabled: bool = Field(True, description="Thread grille dédié (cadence rapide)")
     fast_loop_sec: int = Field(3, ge=1, le=30, description="Cadence du thread grille (s)")
+    # Mode high_vol (2026-06-02) : la grille devient la stratégie active en high_vol
+    # avec des pas resserrés pour récolter l'oscillation. atr_factor réduit.
+    high_vol_atr_factor: float = Field(0.25, ge=0.1, le=1.0, description="atr_factor en high_vol (pas serrés)")
+    # Plancher de pas anti-frais : spacing ≥ min_spacing_pct × prix → garantit que
+    # chaque round-trip (step) couvre les frais aller-retour + une marge.
+    # Round-trip HL ~0.03% (maker) à 0.09% (taker) ; 0.10% laisse de la marge.
+    min_spacing_pct: float = Field(0.001, ge=0.0003, le=0.02, description="Pas min en % du prix (couvre frais+marge)")
+    # Enveloppe de sécurité high_vol : si la vol réalisée dépasse N× sa médiane
+    # historique, la grille se ferait rincer → flat + pause (hystérésis : reprise
+    # sous 0.8×N). Protège contre la vol "ingérable".
+    high_vol_safety_mult: float = Field(2.5, ge=1.5, le=6.0, description="Coupe la grille si vol > N× médiane")
     # Frozen guard (fix V6 28/05 ported into V7) : timeout avant de basculer
     # un niveau frozen en done quand szi reste du mauvais côté.
     frozen_timeout_sec: int = Field(600, ge=60, le=3600, description="Timeout level frozen → done")
