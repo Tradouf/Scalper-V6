@@ -185,12 +185,20 @@ class V7Bot:
                 "Grid fast loop démarré (cadence=%ds)",
                 int(getattr(self.cfg.strategies.grid, "fast_loop_sec", 3)),
             )
+        # Watchdog : re-exec le process si le tick principal ne progresse plus
+        # (filet contre un éventuel hang résiduel, ex. blocage I/O). Le re-exec
+        # remplace l'image process → fonctionne même si le thread principal est figé.
+        self._last_tick_ts = time.time()
+        import threading as _th
+        _th.Thread(target=self._watchdog_loop, daemon=True, name="watchdog").start()
+
         self.logger.info("V7 boucle démarrée (interval=%ds)", interval)
         while self._running:
             try:
                 self._cycle += 1
                 t0 = time.time()
                 self._tick()
+                self._last_tick_ts = time.time()
                 elapsed = time.time() - t0
                 if elapsed > interval:
                     self.logger.warning("Tick V7 #%d a pris %.1fs > %ds", self._cycle, elapsed, interval)
@@ -208,6 +216,25 @@ class V7Bot:
     def _handle_stop(self, *_) -> None:
         self._running = False
         self.logger.info("V7 SIGTERM/SIGINT reçu, arrêt en cours...")
+
+    def _watchdog_loop(self) -> None:
+        """Surveille la progression du tick principal. Si aucun tick depuis
+        WATCHDOG_STALL_SEC, re-exec le process (auto-guérison anti-hang)."""
+        stall_sec = float(os.environ.get("WATCHDOG_STALL_SEC", "180"))
+        while self._running:
+            time.sleep(30)
+            age = time.time() - getattr(self, "_last_tick_ts", time.time())
+            if age > stall_sec:
+                self.logger.critical(
+                    "WATCHDOG : aucun tick depuis %.0fs (> %.0fs) → re-exec du process",
+                    age, stall_sec,
+                )
+                try:
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+                os.execv(sys.executable, [sys.executable, str(REPO / "main.py")])
 
     def _drive_grid(self, market, regime, prices) -> None:
         """Pilote le grid_engine : activation conditionnelle + tick FSM.

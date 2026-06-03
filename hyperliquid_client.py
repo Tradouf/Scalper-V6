@@ -21,6 +21,10 @@ HL_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 HL_WALLET_CONFIG = "hl_config.json"
 USE_TESTNET = False
 
+# Timeout HTTP (s) appliqué à TOUS les appels SDK HL (info + exchange). Sans lui,
+# requests.post(timeout=None) peut bloquer indéfiniment → gel total du bot.
+HL_HTTP_TIMEOUT_SEC = float(os.environ.get("HL_HTTP_TIMEOUT_SEC", "15"))
+
 logger = logging.getLogger("sdm.hl_client")
 
 
@@ -45,6 +49,11 @@ class HyperliquidClient:
 
         _empty_spot_meta = {"universe": [], "tokens": []}
         self.info = Info(self._api_url, skip_ws=True, spot_meta=_empty_spot_meta)
+        # CRITIQUE : le SDK HL fait requests.post(timeout=self.timeout) ; par défaut
+        # timeout=None → un appel peut BLOQUER INDÉFINIMENT si HL ne répond pas.
+        # Cause d'un gel total du bot (2026-06-02 17:02 : ConnectionError HL → hang
+        # 14h, irrécupérable même au SIGTERM). On borne tous les appels.
+        self.info.timeout = HL_HTTP_TIMEOUT_SEC
 
         self.exchange = None
         self.wallet = None
@@ -118,6 +127,9 @@ class HyperliquidClient:
                 account_address=account_address,
                 spot_meta=_empty_spot,
             )
+            # Borne aussi les écritures (place/cancel order) — sinon un place_order
+            # peut pendre indéfiniment sous _grid_lock et figer tout le bot.
+            self.exchange.timeout = HL_HTTP_TIMEOUT_SEC
 
             logger.info(
                 "Exchange client initialisé — wallet %s...%s",
