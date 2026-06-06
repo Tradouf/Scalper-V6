@@ -26,3 +26,12 @@ memory/v7_state.json
 
 # Audit Opus V7 — run logs (les sorties audit_log_v7.md / code_proposals_v7.md SONT suivies)
 audit_history/
+
+# ML fondations (2026-06-06) — données et artifacts, pas du code
+data/orderflow_hf.db*
+memory/xgb_l2_*.pkl
+memory/transformer_l2_*.pt
+memory/exec_bandit_state.json
+logs/orderflow_hf.log
+logs/exec_bandit.log
+logs/dashboard_v7.log

@@ -72,6 +72,8 @@ execution:
   paper_mode: false              # LIVE — cutover 2026-05-31
   rebalance_threshold_pct: 0.005 # bande non-trade 0.5% du gross
   dashboard_port: 8082          # 8082 paper, 8081 live (cutover P8)
+  exec_bandit_active: false      # bandit exécution OFF — activer quand ≥500 fills
+                                 # shadow ET ≥1 bps/ordre d'économie (exec_bandit_shadow.py --report)
 
 # ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
 strategies:

@@ -101,6 +101,11 @@ class ExecutionConfig(BaseModel):
     paper_mode: bool = Field(True, description="True = paper trading, False = live")
     rebalance_threshold_pct: float = Field(0.005, ge=0.0, le=0.05, description="Bande non-trade : |target-current| < seuil × gross → skip")
     dashboard_port: int = Field(8082, ge=1024, le=65535)
+    # Bandit d'exécution (2026-06-06) : OFF = market systématique (comportement
+    # historique). ON = la politique apprise par exec_bandit_shadow.py choisit
+    # market vs limit GTC (timeout 30s → fallback market). Critère d'activation :
+    # ≥500 fills shadow ET économie prequential ≥1 bps/ordre (cf. --report).
+    exec_bandit_active: bool = Field(False, description="Bandit exécution : limit adaptatif appris (False = market historique)")
 
 
 class GridStrategyConfig(BaseModel):

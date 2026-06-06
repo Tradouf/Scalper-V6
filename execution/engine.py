@@ -13,7 +13,9 @@ submit() délègue à ExchangeClient.place_order() (paper ou live).
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
+import time
 from typing import Dict, Optional
 
 from core.config import ExecutionConfig
@@ -23,6 +25,9 @@ from execution.portfolio import PortfolioImpl
 from execution.types import ExchangeClient, OrderRequest
 
 logger = logging.getLogger("v7.execution")
+
+FEE_TAKER_BPS = 4.5
+FEE_MAKER_BPS = 1.5
 
 
 class ExecutionEngine:
@@ -39,14 +44,22 @@ class ExecutionEngine:
         exchange: ExchangeClient,
         cfg: ExecutionConfig,
         prices_callback=None,
+        bandit=None,
     ) -> None:
         """`prices_callback(asset) -> price` : utilisé pour convertir notional → qty
         si le prix mark courant n'est pas dans le target. Si None, on tente
         `exchange.get_mark_price(asset)`.
+
+        `bandit` : BanditPolicy optionnelle (exec_bandit_active). None ou
+        choix "taker_now" → market historique. Bras limit → ordre limit GTC
+        suivi dans `_pending`, résolu par poll_pending() (fill ou timeout →
+        cancel + fallback market).
         """
         self._exchange = exchange
         self._cfg = cfg
         self._prices_callback = prices_callback
+        self._bandit = bandit
+        self._pending: list[dict] = []   # {oid, order, limit_px, deadline, arm}
 
     # ─── API publique (Protocol) ─────────────────────────────────────────────
 
@@ -135,16 +148,31 @@ class ExecutionEngine:
 
         return orders
 
-    def submit(self, orders: list[OrderImpl]) -> list[Fill]:
+    def submit(self, orders: list[OrderImpl], use_bandit: bool = True) -> list[Fill]:
         """Envoie les ordres et retourne les fills correspondants.
 
         On crée un Fill à partir du résultat de place_order(). Pour un fill
         accepted (market HL est presque toujours filled), on utilise les
         attributs de la requête (price, qty signée par side).
+
+        Si une BanditPolicy est branchée (exec_bandit_active) et qu'elle choisit
+        un bras limit : l'ordre part en limit GTC et rejoint `_pending` au lieu
+        de produire un Fill immédiat — poll_pending() le résoudra. Les fallbacks
+        de poll_pending repassent ici avec use_bandit=False (pas de récursion).
         """
         fills: list[Fill] = []
-        import datetime as dt
         for order in orders:
+            # ── Bandit : market historique ou limit adaptatif ? ──────────────
+            arm, limit_px = "taker_now", None
+            if use_bandit and self._bandit is not None and order.order_type == "market":
+                arm, limit_px = self._bandit.choose(
+                    order.asset, order.side,
+                    notional=order.qty * (self._get_price(order.asset) or 0.0),
+                    reduce_only=order.reduce_only,
+                )
+            if arm != "taker_now" and limit_px and limit_px > 0:
+                order = dataclasses.replace(order, order_type="limit", price=limit_px)
+
             req = OrderRequest(
                 symbol=order.asset,
                 side=order.side,
@@ -162,29 +190,91 @@ class ExecutionEngine:
             if result.status not in ("accepted", "filled"):
                 logger.warning("ExecutionEngine order rejected : %s %s %s", order.asset, order.side, result.status)
                 continue
-            # Construit le Fill — au moment du fill, on n'a pas toujours le price exact
-            # côté result. On prend result.price si présent, sinon get_mark_price.
-            fill_price = result.price if result.price else self._get_price(order.asset)
-            if fill_price is None or fill_price <= 0:
-                fill_price = order.price if order.price else 0.0
-            notional_signed = order.qty * fill_price * (1.0 if order.side == "buy" else -1.0)
-            fee_estimate = abs(notional_signed) * 4.5 / 10_000.0  # taker 0.045%
-            # OID synthétique si HL ne retourne pas d'oid resting (cas marketable
-            # immediate fill : result.status="filled" + order_id=""). Fill exige
-            # un order_id non-vide (cf. core/types.py:Fill.__post_init__).
-            oid = str(result.order_id) if result.order_id else (
-                f"imm-{order.asset}-{int(dt.datetime.utcnow().timestamp() * 1000)}"
-            )
-            fills.append(Fill(
-                order_id=oid,
-                asset=order.asset,
-                notional=notional_signed,
-                price=float(fill_price),
-                fee=fee_estimate,
-                strategy_id=order.strategy_id,
-                timestamp=dt.datetime.utcnow(),
-            ))
+
+            # Limit bandit resté au book (accepted + oid) → pending, pas de Fill.
+            if arm != "taker_now" and result.status == "accepted" and result.order_id:
+                from execution.bandit_policy import TIMEOUT_S
+                self._pending.append({
+                    "oid": str(result.order_id), "order": order,
+                    "limit_px": float(order.price), "arm": arm,
+                    "deadline": time.time() + TIMEOUT_S,
+                })
+                logger.info("ExecutionEngine bandit %s %s: limit %s @%.6g pending oid=%s",
+                            order.asset, order.side, arm, order.price, result.order_id)
+                continue
+
+            maker = (order.order_type == "limit" and result.status == "accepted")
+            fills.append(self._build_fill(order, result.price, result.order_id,
+                                          maker=maker))
         return fills
+
+    def poll_pending(self) -> list[Fill]:
+        """Résout les limits bandit en attente. À appeler à chaque tick.
+
+        - oid absent des open orders → considéré fill au prix limit (maker)
+        - deadline dépassée → cancel ; si cancel OK → fallback market (taker).
+          Si cancel KO (course : peut-être déjà fill), on garde l'entrée — le
+          prochain poll tranchera via open orders. Jamais de double exécution.
+        """
+        if not self._pending:
+            return []
+        try:
+            open_oids = {str(o.get("oid")) for o in self._exchange.get_open_orders()}
+        except Exception as e:
+            logger.warning("poll_pending: open_orders error %r — report au prochain poll", e)
+            return []
+        fills: list[Fill] = []
+        now = time.time()
+        still: list[dict] = []
+        for p in self._pending:
+            if p["oid"] not in open_oids:
+                logger.info("ExecutionEngine bandit %s: limit %s fill @%.6g (oid=%s)",
+                            p["order"].asset, p["arm"], p["limit_px"], p["oid"])
+                fills.append(self._build_fill(p["order"], p["limit_px"], p["oid"], maker=True))
+            elif now >= p["deadline"]:
+                try:
+                    res = self._exchange.cancel_order(p["oid"])
+                    ok = bool(getattr(res, "success", False))
+                except Exception as e:
+                    logger.warning("poll_pending cancel %s: %r", p["oid"], e)
+                    ok = False
+                if ok:
+                    logger.info("ExecutionEngine bandit %s: timeout %s → fallback market",
+                                p["order"].asset, p["arm"])
+                    fb = dataclasses.replace(p["order"], order_type="market", price=None)
+                    fills.extend(self.submit([fb], use_bandit=False))
+                else:
+                    still.append(p)   # cancel raté (fill probable) → re-check
+            else:
+                still.append(p)
+        self._pending = still
+        return fills
+
+    def _build_fill(self, order: OrderImpl, result_price, oid, maker: bool) -> Fill:
+        import datetime as dt
+        # Au moment du fill, on n'a pas toujours le price exact côté result :
+        # result.price si présent, sinon get_mark_price, sinon le px de l'ordre.
+        fill_price = result_price if result_price else self._get_price(order.asset)
+        if fill_price is None or fill_price <= 0:
+            fill_price = order.price if order.price else 0.0
+        notional_signed = order.qty * fill_price * (1.0 if order.side == "buy" else -1.0)
+        fee_bps = FEE_MAKER_BPS if maker else FEE_TAKER_BPS
+        fee_estimate = abs(notional_signed) * fee_bps / 10_000.0
+        # OID synthétique si HL ne retourne pas d'oid resting (cas marketable
+        # immediate fill : result.status="filled" + order_id=""). Fill exige
+        # un order_id non-vide (cf. core/types.py:Fill.__post_init__).
+        oid = str(oid) if oid else (
+            f"imm-{order.asset}-{int(dt.datetime.utcnow().timestamp() * 1000)}"
+        )
+        return Fill(
+            order_id=oid,
+            asset=order.asset,
+            notional=notional_signed,
+            price=float(fill_price),
+            fee=fee_estimate,
+            strategy_id=order.strategy_id,
+            timestamp=dt.datetime.utcnow(),
+        )
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
 

@@ -125,9 +125,19 @@ class V7Bot:
             halflife_days=self.cfg.allocation.perf_halflife_days,
         )
         self.risk = RiskManager(self.cfg.risk)
+        # Bandit d'exécution (2026-06-06) : OFF par défaut (exec_bandit_active).
+        # ON → la politique apprise en shadow choisit market vs limit GTC.
+        # Fail-open taker intégré à BanditPolicy (état absent, <500 obs, HF stale).
+        bandit = None
+        if self.cfg.execution.exec_bandit_active and not self.cfg.execution.paper_mode:
+            from execution.bandit_policy import BanditPolicy
+            bandit = BanditPolicy()
+            self.logger.warning("Bandit exécution ACTIF — limit adaptatif appris "
+                                "(fallback market, timeout 30s)")
         self.exec = ExecutionEngine(
             self.exchange, self.cfg.execution,
             prices_callback=self.hl_read.get_mark_price,
+            bandit=bandit,
         )
         self.portfolio = PortfolioImpl(_equity=1000.0)  # initial paper equity
 
@@ -504,6 +514,9 @@ class V7Bot:
         # 7. Reconcile + submit
         orders = self.exec.reconcile(projected, self.portfolio)
         fills = self.exec.submit(orders)
+        # Limits bandit en attente (no-op si bandit OFF ou aucune pending) :
+        # fills tardifs + fallbacks market après timeout, distribués comme les autres.
+        fills += self.exec.poll_pending()
 
         # 8. Update portfolio + distribute fills
         for f in fills:
