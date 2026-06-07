@@ -34,3 +34,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (proposition submit-sell du 06-02 toujours pending)
 **Alerts** : aucun
+
+## 2026-06-07 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=3, emergency=0, drift=1, breakout=0, errors=8 (5 error/1 ValueError/1 ReadTimeout/1 AttributeError), equity=$680.30→$680.25
+**Diagnostic** : Aucun pattern net. Régime 100% range. Spike EMERGENCY EXIT du précédent audit résorbé (15→0). Toutes pathologies grille sous seuils (szi0=3, abandons=3, drift=1, doublons=6), 32 activations sans désactivation, equity quasi-plat (-$0.05). Erreurs transitoires éparses (ReadTimeout refresh allMids), aucun type ≥50. drift_window déjà abaissé à 600 au dernier audit.
+**Changes** : aucun
+**Code proposals** : aucune (submit-sell 06-02 et spike emergency 06-07 toujours pending)
+**Alerts** : aucun
