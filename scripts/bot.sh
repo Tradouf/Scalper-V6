@@ -100,6 +100,25 @@ cmd_logs() {
     tail -f "$LOG_FILE"
 }
 
+# 2026-06-07 — bascule systemd : sdm-main gère le bot V7 (Restart=always).
+# start/stop/restart DOIVENT passer par systemctl, sinon : start = double
+# instance, stop = annulé par le Restart automatique de systemd.
+if systemctl --user list-unit-files sdm-main.service 2>/dev/null | grep -q "sdm-main.*enabled"; then
+    case "${1:-status}" in
+        start|stop|restart)
+            echo "ℹ️ Bot géré par systemd → systemctl --user ${1} sdm-main"
+            exec systemctl --user "${1}" sdm-main
+            ;;
+        status)
+            systemctl --user status sdm-main --no-pager | head -5
+            exit 0
+            ;;
+        logs)
+            exec journalctl --user -u sdm-main -f -o cat
+            ;;
+    esac
+fi
+
 case "${1:-status}" in
     start)   cmd_start ;;
     stop)    cmd_stop ;;
