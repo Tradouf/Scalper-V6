@@ -249,10 +249,10 @@ class V7Bot:
     def _drive_grid(self, market, regime, prices) -> None:
         """Pilote le grid_engine : activation conditionnelle + tick FSM.
 
-        2026-06-02 — EXCLUSIF : la grille est la stratégie active en HIGH_VOL
-        (pas serrés + renouvellement rapide pour récolter l'oscillation). Elle
-        ne s'active plus en range (c'est mean_reversion qui prend le range).
-        Désactivation : régime hors high_vol OU breakout/drift OU sécurité vol.
+        2026-06-07 — la grille est active en HIGH_VOL (profil resserré) ET en
+        RANGE (moissonneuse de fond, biais momentum 24h, priorité MR par
+        préemption). Désactivation : régime trend OU breakout/drift OU sécurité
+        vol OU préemption MR sur le symbole.
         """
         from regime.features import atr as compute_atr
         from core.types import Regime
@@ -311,6 +311,12 @@ class V7Bot:
                         self.logger.warning("GRID SÉCURITÉ deactivate %s: %r", sym, e)
 
         for sym in self.cfg.symbols:
+            # Heartbeat watchdog (2026-06-07) : l'activation séquentielle de
+            # 8 grilles (~20s de fetch candles chacune) dépassait les 180s du
+            # watchdog au boot → re-exec en plein vol + double batch d'ordres
+            # (observé 10:48). On signale la progression ; un vrai hang HTTP
+            # à l'intérieur d'une itération déclenche toujours après 180s.
+            self._last_tick_ts = time.time()
             # Configure le budget côté grid (info pour le Signal généré ensuite)
             try:
                 self.grid.set_budget(sym, budget_per_sym)
