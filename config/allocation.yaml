@@ -41,6 +41,15 @@ allocation:
       momentum: 0.0
       supertrend: 1.0
     range:
+      # 2026-06-07 — range partagé avec PRIORITÉ MR (décision francois) :
+      # la grille moissonne le range par défaut ; dès que MR a un setup
+      # (|z|≥entry_z, hl valide) sur un symbole, la grille y est PRÉEMPTÉE
+      # (flat + cancel) et MR entre avec sa taille/levier propres.
+      # Exclusivité par symbole préservée (jamais les deux sur le même coin).
+      # NB : grid reste à 0.0 ICI car la grille est hors allocateur (elle gère
+      # son book via sa FSM) — poids MR plein = taille MR intacte (pas de
+      # division par la normalisation). Le budget grille en range est gouverné
+      # par strategies.grid.range_budget_frac.
       grid: 0.0
       mean_reversion: 1.0
       momentum: 0.0

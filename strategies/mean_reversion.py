@@ -71,6 +71,12 @@ class MeanReversionStrategy:
     def strategy_id(self) -> str:
         return self._strategy_id
 
+    def engaged_symbols(self) -> set:
+        """Symboles où MR est engagée : position tenue OU intention active.
+        Utilisé par la préemption range (2026-06-07) — la grille ne doit ni
+        rester ni se réactiver sur ces symboles tant que MR les occupe."""
+        return set(self._positions) | set(self._intent)
+
     def generate_signals(self, market: MarketSnapshot) -> list[Signal]:
         signals: list[Signal] = []
         now = market.timestamp.timestamp() if isinstance(market.timestamp, dt.datetime) else time.time()

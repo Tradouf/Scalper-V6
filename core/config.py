@@ -119,6 +119,10 @@ class GridStrategyConfig(BaseModel):
     # SOUTENUE (le timer se reset si le prix revient en zone) = signal de trend.
     drift_window_sec: int = Field(900, ge=300, le=86400)
     health_check_sec: int = Field(300, ge=15, le=3600)  # min abaissé pour renouvellement rapide en high_vol
+    # 2026-06-07 — range partagé priorité MR : fraction d'equity allouée à la
+    # grille en RANGE (hors allocateur, qui reste 100% MR pour préserver la
+    # taille des entrées MR). En high_vol, le budget vient du poids allocateur.
+    range_budget_frac: float = Field(0.5, ge=0.0, le=1.0)
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
     # Garde bas-prix : spacing minimum exprimé en ticks HL. Empêche que plusieurs
     # niveaux ne s'arrondissent au même prix sur les actifs à petit prix (DOGE

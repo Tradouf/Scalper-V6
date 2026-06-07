@@ -259,12 +259,25 @@ class V7Bot:
         weights = self.allocator.get_weights(regime, self.scorer.scores())
         grid_w = weights.get("grid", 0.0)
         equity = max(self.portfolio.equity, 100.0)
-        grid_total_budget = grid_w * equity
+        # Budget grille : poids allocateur en high_vol (inchangé) ; en RANGE,
+        # fraction dédiée range_budget_frac — la grille est hors allocateur
+        # (matrice range = 100% MR) pour ne pas diluer la taille des entrées MR.
+        if regime.label == Regime.RANGE:
+            grid_total_budget = self.cfg.strategies.grid.range_budget_frac * equity
+        else:
+            grid_total_budget = grid_w * equity
         n_syms = max(len(self.cfg.symbols), 1)
         budget_per_sym = grid_total_budget / n_syms
-        # La grille s'active en HIGH_VOL (sa vocation exclusive) avec budget suffisant.
+        # La grille s'active en HIGH_VOL (profil encadré) et, depuis 2026-06-07,
+        # en RANGE comme moissonneuse de fond — avec PRIORITÉ MR : elle s'efface
+        # (préemption plus bas) des symboles où MR est engagée.
         is_high_vol = regime.label == Regime.HIGH_VOL
-        hv_factor = float(getattr(self.cfg.strategies.grid, "high_vol_atr_factor", 0.25))
+        is_grid_regime = is_high_vol or regime.label == Regime.RANGE
+        # Profil resserré uniquement en high_vol ; en range, ATR factor standard.
+        hv_factor = (
+            float(getattr(self.cfg.strategies.grid, "high_vol_atr_factor", 0.25))
+            if is_high_vol else float(self.cfg.strategies.grid.atr_factor)
+        )
 
         # Enveloppe de sécurité : si la vol réalisée explose (> mult × médiane), la
         # grille high_vol se ferait rincer → pause + flat (hystérésis : reprise <0.8×).
@@ -281,10 +294,12 @@ class V7Bot:
             self.logger.info("GRID SÉCURITÉ : vol revenue (%.2f×) → reprise autorisée", vol_ratio)
 
         should_activate = (
-            is_high_vol
+            is_grid_regime
             and not self._grid_safety_pause
             and budget_per_sym >= self.cfg.strategies.grid.activation_threshold_usdc
         )
+        # Priorité MR (2026-06-07) : symboles occupés par MR interdits à la grille.
+        mr_engaged = self.mr.engaged_symbols()
         # En pause sécurité : on flatte les grilles encore actives (position incluse).
         if self._grid_safety_pause:
             with self._grid_lock:
@@ -304,7 +319,13 @@ class V7Bot:
             is_active = self.grid_engine.is_active(sym)
             try:
                 with self._grid_lock:
-                    if not is_active and should_activate:
+                    # Préemption MR : grille active sur un symbole où MR vient de
+                    # s'engager → flat immédiat (position fermée, ordres annulés).
+                    # MR entre ensuite via l'allocateur avec sa taille propre.
+                    if is_active and sym in mr_engaged:
+                        self.grid_engine.deactivate(sym, cancel=True, close_position=True)
+                        self.logger.info("GRID %s PRÉEMPTÉE par MR (flat + cancel, priorité MR)", sym)
+                    elif not is_active and should_activate and sym not in mr_engaged:
                         candles = market.candles.get(sym, [])
                         if len(candles) < 30:
                             continue
@@ -318,7 +339,7 @@ class V7Bot:
                         if atr_val is None or atr_val <= 0:
                             continue
                         if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor):
-                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f (high_vol)", sym, mid, atr_val, hv_factor, budget_per_sym)
+                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, regime.label.value)
                     elif is_active and not should_activate:
                         self.grid_engine.deactivate(sym, cancel=True)
                         self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
@@ -487,8 +508,14 @@ class V7Bot:
         # 4. Perf scores
         perf_scores = self.scorer.scores()
 
-        # 5. Allocate
-        target = self.allocator.allocate(all_signals, regime, self.portfolio, perf_scores)
+        # 5. Allocate — les signaux grid sont EXCLUS : la grille gère son book
+        # via sa propre FSM (limits + TP). Les laisser passer faisait dupliquer
+        # par l'engine une fraction (poids×conf) de l'inventaire grille en
+        # position parallèle → cause racine des 203 HyperliquidClientError
+        # "Notional < $10" du 2026-06-02 (audit) : l'engine tentait de
+        # refléter ~$7-8 d'inventaire et HL rejetait.
+        directional_signals = [s for s in all_signals if s.strategy_id != self.grid.strategy_id]
+        target = self.allocator.allocate(directional_signals, regime, self.portfolio, perf_scores)
 
         # 6. Risk project
         from risk.state import RiskStateImpl
