@@ -20,3 +20,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (proposition submit-sell du 06-02 toujours pending)
 **Alerts** : aucun
+
+## 2026-06-07 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=7 (3 error/1 ValueError/1 ReadTimeoutError/1 HyperliquidClientError/1 AttributeError), equity=$693.84→$693.84
+**Diagnostic** : Aucun pattern net. Régime 99% range (709/716 ticks), 8 activations grille sans aucune désactivation/DRIFT/frozen, equity strictement plat. Erreurs transitoires éparses (ReadTimeout/get_open_orders sur refresh HL), aucun type ≥50. BootReconciler: 10 ghosts orphelins au boot (informatif).
+**Changes** : aucun
+**Code proposals** : aucune (proposition submit-sell du 06-02 toujours pending)
+**Alerts** : aucun
