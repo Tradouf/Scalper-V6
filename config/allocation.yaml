@@ -91,6 +91,8 @@ strategies:
     atr_factor: 0.5
     levels: 5
     notional_per_level_usdc: 15.0
+    bias_momentum_pct: 0.01       # 2026-06-07 : |mom 24h| > 1% → grille biaisée
+                                  # (long-only en hausse, short-only en baisse)
     drift_k: 3.0
     drift_window_sec: 900         # 2026-06-01 : 3600→900. Sinon la grille fade une
                                   # tendance 1h avant de lâcher (cas BNB short en rallye)

@@ -123,6 +123,9 @@ class GridStrategyConfig(BaseModel):
     # grille en RANGE (hors allocateur, qui reste 100% MR pour préserver la
     # taille des entrées MR). En high_vol, le budget vient du poids allocateur.
     range_budget_frac: float = Field(0.5, ge=0.0, le=1.0)
+    # 2026-06-07 — biais directionnel : momentum 24h > seuil → grille long-only
+    # (buy ladder seul, sells = TP), < -seuil → short-only, sinon symétrique.
+    bias_momentum_pct: float = Field(0.01, ge=0.0, le=0.2)
     activation_threshold_usdc: float = Field(20.0, ge=5.0, le=500.0, description="Budget min pour activer le grid")
     # Garde bas-prix : spacing minimum exprimé en ticks HL. Empêche que plusieurs
     # niveaux ne s'arrondissent au même prix sur les actifs à petit prix (DOGE

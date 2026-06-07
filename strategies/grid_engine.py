@@ -138,11 +138,17 @@ class GridEngine:
             return False
         return True
 
-    def activate(self, symbol: str, center: float, atr: float, atr_factor: Optional[float] = None) -> bool:
+    def activate(self, symbol: str, center: float, atr: float, atr_factor: Optional[float] = None,
+                 bias: str = "neutral") -> bool:
         """Place N niveaux de chaque côté du center. Retourne True si succès.
 
         atr_factor : override optionnel (mode high_vol = pas resserrés). None =
         valeur de config par défaut.
+
+        bias (2026-06-07) : "long" → buy ladder uniquement (les sells n'existent
+        que comme TP des buys remplis, jamais de short sec) ; "short" → inverse ;
+        "neutral" → symétrique. Décidé par le momentum 24h côté main (un marché
+        qui repart en hausse ne doit pas se faire shorter par la grille).
         """
         if self.is_active(symbol):
             return False
@@ -207,7 +213,8 @@ class GridEngine:
         placed: List[int] = []
 
         # Buy levels sous le center (level 1 = le plus proche, level N = le plus bas)
-        for k in range(1, n_levels + 1):
+        # — sautés si bias=short.
+        for k in range(1, n_levels + 1) if bias != "short" else []:
             price = self._round_px(center - k * spacing, symbol)
             if price <= 0:
                 continue
@@ -230,8 +237,9 @@ class GridEngine:
             placed.append(res.oid)
             levels.append(GridLevel(side="buy", target_px=price, qty=qty, pending_oid=res.oid))
 
-        # Sell levels au-dessus du center
-        for k in range(1, n_levels + 1):
+        # Sell levels au-dessus du center — sautés si bias=long (les sorties
+        # haussières se font via les TP des buys, pas par des shorts secs).
+        for k in range(1, n_levels + 1) if bias != "long" else []:
             price = self._round_px(center + k * spacing, symbol)
             if price <= 0:
                 continue

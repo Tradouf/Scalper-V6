@@ -338,8 +338,20 @@ class V7Bot:
                         )
                         if atr_val is None or atr_val <= 0:
                             continue
-                        if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor):
-                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, regime.label.value)
+                        # Biais directionnel par momentum 24h (2026-06-07) :
+                        # un marché qui repart ne doit pas se faire shorter
+                        # par la grille — long-only en hausse, inverse en baisse.
+                        bias = "neutral"
+                        if len(candles) >= 25:
+                            c24 = float(candles[-25].close)
+                            mom = (mid / c24 - 1.0) if c24 > 0 else 0.0
+                            thr = float(self.cfg.strategies.grid.bias_momentum_pct)
+                            if mom > thr:
+                                bias = "long"
+                            elif mom < -thr:
+                                bias = "short"
+                        if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor, bias=bias):
+                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f bias=%s (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, bias, regime.label.value)
                     elif is_active and not should_activate:
                         self.grid_engine.deactivate(sym, cancel=True)
                         self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
