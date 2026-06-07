@@ -79,6 +79,12 @@ class RiskConfig(BaseModel):
     emergency_exit_enabled: bool = Field(True, description="Active le mécanisme EMERGENCY EXIT (paper l'ignore de toute façon)")
     emergency_exit_roe_pct: float = Field(0.022, ge=0.005, le=0.10, description="Force-close si ROE ≤ -seuil (positions tracées ET orphelines)")
     orphan_grace_sec: float = Field(6.0, ge=1.0, le=60.0, description="Grâce avant force-close d'une orpheline (Fix #8)")
+    # 2026-06-07 — francois prend des positions MANUELLES sur le même compte
+    # (boucle HYPE 10x, swings BTC). Le bot ne doit JAMAIS les toucher :
+    # ni orphan force-close (emergency), ni chargement au boot (sinon le
+    # reconcile les solderait, target=0). Les positions STRATÉGIE sur ces
+    # symboles restent protégées (branche tracée de l'emergency inchangée).
+    manual_symbols: list[str] = Field(default_factory=list, description="Symboles à positions manuelles : exclus de l'orphan force-close et du BootReconciler")
     # Fix 9 PROTOTYPE — trail régime-gaté (port V6, flag OFF par défaut).
     # Tant que regime_gated_trail=False, comportement strictement inchangé.
     # Validation requise : rejouer le backtest sur 1m loggé par data/ohlc_1m/.

@@ -145,7 +145,8 @@ class V7Bot:
         # Sync positions HL + equity + registry (ghost/orphan) avant le 1er tick.
         if not self.cfg.execution.paper_mode:
             from execution.boot_reconciler import BootReconciler
-            br = BootReconciler(self.hl_read, self.exchange, self.portfolio)
+            br = BootReconciler(self.hl_read, self.exchange, self.portfolio,
+                                manual_symbols=self.cfg.risk.manual_symbols)
             summary = br.reconcile()
             self.logger.info(
                 "BootReconciler résumé: positions=%d equity=$%.2f orders=%d ghosts=%d orphans=%d errors=%d",

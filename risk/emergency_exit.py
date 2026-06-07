@@ -117,6 +117,15 @@ class EmergencyExitManager:
 
             # En zone : tracée ou orpheline ?
             is_tracked = asset in portfolio_assets
+            # 2026-06-07 : position manuelle (francois) non tracée → on ne touche
+            # JAMAIS (ni grâce ni force-close). Les positions stratégie sur le
+            # même symbole restent couvertes par la branche tracée ci-dessous.
+            if not is_tracked and asset in set(getattr(self._cfg, "manual_symbols", [])):
+                logger.info(
+                    "EmergencyExit %s : ROE=%.3f%% en zone mais symbole manuel → ignoré",
+                    asset, roe * 100,
+                )
+                continue
             seen_in_zone.add(asset)
 
             if is_tracked:
