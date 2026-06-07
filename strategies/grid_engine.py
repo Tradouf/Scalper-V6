@@ -84,6 +84,7 @@ class GridState:
     qty_per_level: float
     levels: List[GridLevel]
     breakout_limit: float
+    bias: str = "neutral"                    # long|short|neutral (2026-06-07, dashboard)
     created_at: float = field(default_factory=time.time)
     last_update: float = field(default_factory=time.time)
     total_pnl_pct: float = 0.0
@@ -266,10 +267,11 @@ class GridEngine:
             qty_per_level=qty,
             levels=levels,
             breakout_limit=breakout_limit,
+            bias=bias,
         )
         logger.info(
-            "GRID %s ACTIVÉ center=%.4f spacing=%.4f qty=%.6f levels=%d (range %.4f → %.4f)",
-            symbol, center, spacing, qty, n_levels,
+            "GRID %s ACTIVÉ center=%.4f spacing=%.4f qty=%.6f levels=%d bias=%s (range %.4f → %.4f)",
+            symbol, center, spacing, qty, n_levels, bias,
             center - n_levels * spacing, center + n_levels * spacing,
         )
         return True

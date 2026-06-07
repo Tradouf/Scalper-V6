@@ -690,10 +690,22 @@ class V7Bot:
         try:
             with self._grid_lock:
                 grids = dict(getattr(self.grid_engine, "_grids", {}))
+            mids = getattr(self, "_last_mids", {})
             for sym, g in grids.items():
                 states: dict = {}
                 for lvl in g.levels:
                     states[lvl.state] = states.get(lvl.state, 0) + 1
+                # Détail par niveau (échelle dashboard, tri prix décroissant)
+                levels_detail = [
+                    {
+                        "side": lvl.side,
+                        "px": lvl.target_px,
+                        "state": lvl.state,
+                        "fill_px": lvl.fill_px,
+                        "tp_px": lvl.tp_target_px,
+                    }
+                    for lvl in sorted(g.levels, key=lambda l: -l.target_px)
+                ]
                 out[sym] = {
                     "center": g.center,
                     "spacing": g.spacing,
@@ -701,6 +713,12 @@ class V7Bot:
                     "states": states,
                     "drift": getattr(g, "drift_since", None) is not None,
                     "breakout_limit": getattr(g, "breakout_limit", None),
+                    "bias": getattr(g, "bias", "neutral"),
+                    "pnl_cumul_pct": float(getattr(g, "total_pnl_pct", 0.0)),
+                    "trades": int(getattr(g, "trade_count", 0)),
+                    "age_min": (time.time() - getattr(g, "created_at", time.time())) / 60.0,
+                    "mark": float(mids.get(sym, 0.0) or 0.0),
+                    "levels": levels_detail,
                 }
         except Exception as e:
             self.logger.debug("collect_grids: %r", e)

@@ -171,7 +171,7 @@ INDEX_HTML = r"""<!doctype html>
 
   <div class="card" style="grid-column:1/-1">
     <h2>Grilles actives <span style="font-size:11px;color:var(--mut)" id="gridcount"></span></h2>
-    <table id="gridtbl"><thead><tr><th>Asset</th><th>Center</th><th>Spacing</th><th>Niveaux (par état)</th><th>Drift</th></tr></thead><tbody></tbody></table>
+    <div id="gridcards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px"></div>
     <div id="grid_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
   </div>
 
@@ -291,27 +291,53 @@ async function refresh() {
     document.getElementById('logic_note').textContent =
       'Intent = exposition ré-émise chaque tick (maintien anti-whipsaw). Métrique = ce qui justifie la position (z=écart MR, slope=momentum, direction=supertrend).';
 
-    // Grilles actives
+    // Grilles actives — échelle de niveaux par symbole (style V6)
     const grids = st.grids || {};
     const gk = Object.keys(grids).sort();
     document.getElementById('gridcount').textContent = `(${gk.length})`;
-    const tbG = document.querySelector('#gridtbl tbody');
-    tbG.innerHTML = '';
+    const cards = document.getElementById('gridcards');
+    cards.innerHTML = '';
+    const stColor = {pending:'#7a8595', filled:'#38c172', tp_placed:'#4aa3ff', frozen:'#e3342f', done:'#3a4150'};
     gk.forEach(sym => {
       const g = grids[sym];
-      const stm = g.states || {};
-      const order = ['pending','filled','tp_placed','frozen','done'];
-      const colorOf = {pending:'mut',filled:'grn',tp_placed:'grn',frozen:'red',done:'mut'};
-      const statesStr = order.filter(k=>stm[k]).map(k=>`<span class="${colorOf[k]}">${k}:${stm[k]}</span>`).join('  ') || '–';
-      const drift = g.drift ? '<span class="red">⚠ drift</span>' : '<span class="grn">ok</span>';
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${sym}</td><td class="mono">${fmt(g.center,4)}</td><td class="mono">${fmt(g.spacing,4)}</td>`
-        + `<td class="mono" style="font-size:11px">${statesStr}</td><td>${drift}</td>`;
-      tbG.appendChild(tr);
+      const lvls = g.levels || [];
+      const dec = g.center < 1 ? 5 : (g.center < 100 ? 3 : (g.center < 5000 ? 2 : 0));
+      const biasTag = g.bias === 'long' ? '<span class="grn">▲ LONG</span>'
+                   : g.bias === 'short' ? '<span class="red">▼ SHORT</span>'
+                   : '<span class="mut">◆ neutre</span>';
+      const pnl = g.pnl_cumul_pct || 0;
+      const pnlCls = pnl > 0 ? 'grn' : (pnl < 0 ? 'red' : 'mut');
+      const drift = g.drift ? ' · <span class="red">⚠ drift</span>' : '';
+      // Échelle : niveaux + marqueur prix, triés prix décroissant
+      let rows = [];
+      const mark = g.mark || 0;
+      let markInserted = false;
+      lvls.forEach(l => {
+        if (mark > 0 && !markInserted && mark > l.px) {
+          rows.push(`<div style="border-top:1px dashed #e3b341;color:#e3b341;font-size:10px;text-align:right;line-height:1">${fmt(mark,dec)} ◄ prix</div>`);
+          markInserted = true;
+        }
+        const c = stColor[l.state] || '#7a8595';
+        const arrow = l.side === 'buy' ? '▸ buy' : '◂ sell';
+        const tp = (l.state === 'tp_placed' && l.tp_px) ? ` → TP ${fmt(l.tp_px,dec)}` : '';
+        rows.push(`<div class="mono" style="font-size:11px;color:${c};line-height:1.45">`
+          + `${fmt(l.px,dec)} ${arrow} <span style="font-size:10px">[${l.state}]${tp}</span></div>`);
+      });
+      if (mark > 0 && !markInserted)
+        rows.push(`<div style="border-top:1px dashed #e3b341;color:#e3b341;font-size:10px;text-align:right;line-height:1">${fmt(mark,dec)} ◄ prix</div>`);
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#10151d;border:1px solid #232a36;border-radius:8px;padding:8px 10px';
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">`
+        + `<b>${sym}</b>${biasTag}</div>`
+        + `<div style="font-size:10px;color:var(--mut);margin-bottom:6px">center ${fmt(g.center,dec)} · pas ${fmt(g.spacing,dec)}`
+        + ` · <span class="${pnlCls}">${pnl>=0?'+':''}${fmt(pnl,2)}%</span> (${g.trades||0} tr)`
+        + ` · ${fmt(g.age_min,0)}min${drift}</div>`
+        + rows.join('');
+      cards.appendChild(card);
     });
-    if (gk.length === 0) tbG.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mut)">aucune grille active (régime hors range ?)</td></tr>';
+    if (gk.length === 0) cards.innerHTML = '<div style="color:var(--mut);text-align:center;padding:12px">aucune grille active (régime hors range/high_vol ?)</div>';
     document.getElementById('grid_note').textContent =
-      'frozen = TP reduce-only impossible (szi du mauvais côté) ; la boucle grille dédiée (~3s) dégèle dès que szi redevient cohérent.';
+      'gris = limit en attente · vert = fill (TP en pose) · bleu = TP posé · rouge = frozen (szi mauvais côté, dégel auto ~3s) · ligne jaune = prix actuel. Bias ▲ = long-only (momentum 24h > +1%).';
 
     // Allocation
     document.getElementById('tgross').textContent = '$' + fmt(st.target_gross, 2);
