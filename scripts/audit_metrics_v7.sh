@@ -34,8 +34,11 @@ fi
 count() { echo "$WINDOW" | grep -cE "$1" || true; }
 last()  { echo "$WINDOW" | grep -E "$1" | tail -n "${2:-3}" | sed -E 's/^(.{110}).*/\1/' || true; }
 
-EQ_FIRST="$(echo "$WINDOW" | grep -oE 'equity=\$[0-9.]+' | head -1 | tr -d 'equity=$')"
-EQ_LAST="$(echo "$WINDOW" | grep -oE 'equity=\$[0-9.]+' | tail -1 | tr -d 'equity=$')"
+# NB : `|| true` obligatoire — avec pipefail, `head -1` ferme le pipe dès la
+# 1ère ligne → grep meurt en SIGPIPE (141) → set -e tuait le script silencieusement
+# dès que la fenêtre dépassait ~1h de ticks (cause des metrics vides 06-06/06-07).
+EQ_FIRST="$(echo "$WINDOW" | grep -oE 'equity=\$[0-9.]+' | head -1 | tr -d 'equity=$' || true)"
+EQ_LAST="$(echo "$WINDOW" | grep -oE 'equity=\$[0-9.]+' | tail -1 | tr -d 'equity=$' || true)"
 
 cat <<EOF
 # Métriques V7 pré-calculées — fenêtre ${HOURS}h (depuis ${CUTOFF})
