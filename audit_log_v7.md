@@ -21,6 +21,13 @@
 **Code proposals** : aucune (proposition submit-sell du 06-02 toujours pending)
 **Alerts** : aucun
 
+## 2026-06-07 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=3, emergency=15, drift=42, breakout=0, errors=18 (8 error/3 HyperliquidClientError/2 MaxRetryError/2 ConnectTimeoutError/1 ValueError/1 ReadTimeout/1 AttributeError), equity=$693.83→$680.29
+**Diagnostic** : Régime 100% range. Grille subit des mini-trends : 42 DRIFT / 0 BREAKOUT / 0 désactivation, équity en baisse (-$13.54) → match pattern "lâcher plus vite". Surtout : 15 EMERGENCY EXIT multi-symboles (DOGE×5, SUI×3, BTC×2, AAVE×2…) vs 0-3 historique = 5× le niveau habituel et probable cause majeure de la perte d'équity. risk/emergency_exit.py est modifié non-commité → suspicion de régression. szi0/abandons/doublons sous seuils, aucun type d'erreur ≥50.
+**Changes** : - `grid.drift_window_sec`: 900 → 600 — 42 DRIFT/0 BREAKOUT/0 désact en range + équity en baisse, lâcher les mini-trends plus vite
+**Code proposals** : 1 (info — spike EMERGENCY EXIT 15 corrélé aux modifs non-commitées de emergency_exit.py, investigation humaine)
+**Alerts** : 15 EMERGENCY EXIT (vs 0-3 habituel), DOGE récurrent — revue humaine de risk/emergency_exit.py (modifié non-commité) recommandée.
+
 ## 2026-06-07 09:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=7 (3 error/1 ValueError/1 ReadTimeoutError/1 HyperliquidClientError/1 AttributeError), equity=$693.84→$693.84
 **Diagnostic** : Aucun pattern net. Régime 99% range (709/716 ticks), 8 activations grille sans aucune désactivation/DRIFT/frozen, equity strictement plat. Erreurs transitoires éparses (ReadTimeout/get_open_orders sur refresh HL), aucun type ≥50. BootReconciler: 10 ghosts orphelins au boot (informatif).

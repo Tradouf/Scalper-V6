@@ -75,6 +75,10 @@ risk:
   kill_switch_dd_pct: 0.10      # -10% DD → kill switch
   daily_loss_limit_pct: 0.03    # -3% jour → flat
   high_lev_emergency_exempt: true   # Fix 10 Knob A activé (boucle HYPE 10x)
+  manual_symbols: ["HYPE", "BTC"]   # 2026-06-07 : positions manuelles francois —
+                                    # jamais d'orphan force-close ni de boot-load
+                                    # (le reconcile les solderait). Retirer BTC
+                                    # quand le swing manuel sera clos.
 
 # ─── Execution ────────────────────────────────────────────────────────────────
 execution:
@@ -94,8 +98,9 @@ strategies:
     bias_momentum_pct: 0.01       # 2026-06-07 : |mom 24h| > 1% → grille biaisée
                                   # (long-only en hausse, short-only en baisse)
     drift_k: 3.0
-    drift_window_sec: 900         # 2026-06-01 : 3600→900. Sinon la grille fade une
-                                  # tendance 1h avant de lâcher (cas BNB short en rallye)
+    drift_window_sec: 600         # 2026-06-07 : 900→600. 42 DRIFT/0 BREAKOUT/0 désact
+                                  # en range, équity en baisse → lâcher les mini-trends
+                                  # plus vite. (2026-06-01 : 3600→900, cas BNB rallye)
     health_check_sec: 30          # 2026-06-02 : 300→30, renouvellement rapide des
                                   # niveaux 'done' (grille high_vol = récolte oscillation)
     activation_threshold_usdc: 20.0
