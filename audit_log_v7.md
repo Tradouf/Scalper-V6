@@ -41,3 +41,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (submit-sell 06-02 et spike emergency 06-07 toujours pending)
 **Alerts** : aucun
+
+## 2026-06-08 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=15, drift=45, breakout=6, errors=11 (3 HyperliquidClientError/3 error/1 ValueError/1 MaxRetryError/1 exception/1 ConnectTimeout/1 AttributeError), equity=$680.25→$685.54
+**Diagnostic** : Régime 100% range. Grille saine (szi0/abandons/rejets RO=0). DRIFT=45 mais BREAKOUT=6 présent ET équity en HAUSSE (+$5.29) → pattern "lâcher plus vite" NON validé + drift_window vient d'être abaissé à 600 (anti-oscillation). Doublons=12 non ventilés par actif, health_check_sec récemment baissé (cause attendue) → pas de bump min_spacing. EMERGENCY EXIT=15 (SUI/LINK/DOGE×4, SOL×2, AAVE×1) : re-spike après résorption à 0 au dernier audit, MAIS équity en hausse cette fenêtre (vs -$13.54 le 06-07 15:00) → exits non destructeurs d'équity ici. Exception au force-close DOGE (HyperliquidClientError) = même famille que les pending submit-sell (06-02) / spike emergency (06-07). Aucun type d'erreur ≥50.
+**Changes** : aucun
+**Code proposals** : aucune (2 pending couvrent le sujet emergency/submit-exit — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=15 récurrent (0→15) + exception force-close DOGE — revue humaine des 2 propositions pending recommandée (submit-sell 06-02, spike emergency 06-07).
