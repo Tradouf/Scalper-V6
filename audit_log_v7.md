@@ -62,3 +62,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (3 pending couvrent emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-08 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=2 (LINK×2), drift=31, breakout=0, errors=367 dont 146 ReadTimeoutError/51 ConnectionError/157 error/7 NameError/4 HyperliquidClientError, equity=$684.90→$683.95
+**Diagnostic** : Régime mixte (325 trend_up / 264 range). Côté trading RAS : grille saine (szi0/abandons/RO=0), emergency=2<3, equity quasi-plate (-$0.95), doublons=2. DRIFT=31/BREAKOUT=0 mais (1) 55% trend_up où la grille lâche les trends est attendu, (2) equity non en baisse nette, (3) drift_window déjà à 600 (anti-oscillation) → je tiens. SIGNAL : spike réseau 146 ReadTimeoutError + 51 ConnectionError (≥50) sur HL adapter (refresh allMids/candles 1h) vs 0-1 historique → franchit le seuil "≥50 d'un même type → proposition code". Impact bénin cette fenêtre (handled en WARNING) → proposition info (retry/backoff). 7 NameError 'prob_range' = régression déjà pending (réapparue, 0→7), pas de re-proposition.
+**Changes** : aucun
+**Code proposals** : 1 (info — spike ReadTimeout/ConnectionError HL adapter, ajout retry/backoff borné)
+**Alerts** : aucun critique (spike réseau benin ; NameError 'prob_range' réapparu 7× — proposition pending non traitée)

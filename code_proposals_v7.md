@@ -65,3 +65,31 @@
 **Risk si non corrigé** : Activation grille non déterministe (NameError silencieux par symbole) → la grille ne moissonne pas le range sur les symboles affectés (SUI, DOGE…), perte d'opportunité et asymétrie de couverture entre actifs ; risque de masquer d'autres régressions dans le même bloc.
 **Status** : pending
 ---
+
+## 2026-06-08 21:00 — [INFO] Spike ReadTimeout/ConnectionError sur HL adapter (≥50) → pas de retry/backoff sur refresh
+**Severity** : info
+**Files** : exchanges/hl_adapter.py (méthodes refresh allMids + fetch candles 1h ; logger `v7.hl_adapter`)
+**Pattern** : 146 `ReadTimeoutError` + 51 `ConnectionError` + 157 `error` génériques sur la fenêtre 6h (vs 0-1 ReadTimeout historiquement). Échantillons : `HL candles SUI 1h error: ConnectionError(ReadTimeoutError("HTTP…` et `HL allMids refresh error: ReadTimeout(ReadTimeoutError("HTTP…`.
+**Diagnostic** : Pic de timeouts réseau sur les appels HL de refresh (allMids et candles 1h). Les exceptions sont rattrapées en WARNING et l'appel est abandonné sans retry ni backoff → la donnée n'est pas rafraîchie pour ce cycle. Impact observé cette fenêtre BÉNIN (equity plate, grille saine, aucune pathologie szi0/frozen), donc épisode probablement infra/HL transitoire plutôt qu'une régression. MAIS sans retry/backoff borné, un refresh allMids raté = prix/mids potentiellement stale pour le pricing grille/MR et la détection de régime au cycle suivant ; un volume soutenu (~200 erreurs/6h) augmente la fraction de cycles servis sur donnée non rafraîchie. À surveiller : si le compte ≥50 persiste sur plusieurs audits, escalader en warning. Je ne lis pas le code (workflow).
+**Proposed fix** :
+```python
+# Before (schéma — à confirmer dans hl_adapter.py)
+#   try:
+#       mids = self._info.all_mids()
+#   except Exception as e:
+#       logger.warning("HL allMids refresh error: %r", e)
+#       return  # abandon : mids stale ce cycle
+# After
+#   for attempt in range(3):
+#       try:
+#           mids = self._info.all_mids()
+#           break
+#       except (ReadTimeout, ConnectionError) as e:
+#           if attempt == 2:
+#               logger.warning("HL allMids refresh failed after 3 tries: %r", e)
+#               return
+#           time.sleep(0.5 * (2 ** attempt))   # backoff borné 0.5/1.0s
+```
+**Risk si non corrigé** : En cas de dégradation HL prolongée, mids/candles non rafraîchis sans retry → pricing et détection de régime sur données stale, décisions d'allocation/grille dégradées silencieusement.
+**Status** : pending
+---
