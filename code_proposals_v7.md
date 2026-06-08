@@ -45,3 +45,23 @@
 **Risk si non corrigé** : Emergency exits intempestifs réalisent des pertes (équity -2%/6h) et peuvent solder des positions manuelles (BTC) contre l'intention de l'opérateur.
 **Status** : pending
 ---
+
+## 2026-06-08 09:00 — [WARNING] NameError 'prob_range' non défini → activation grille avortée
+**Severity** : warning
+**Files** : main.py (bloc "Grid activation <SYM>", logger `v7.main`) — ligne à localiser (référence `prob_range`)
+**Pattern** : 8 `NameError` sur la fenêtre, échantillon : `2026-06-08 06:04:25 [WARNING] v7.main — Grid activation SUI error: NameError("name 'prob_range' is not defined")` et idem DOGE. 8 activations grille / 0 désactivation sur la fenêtre.
+**Diagnostic** : Le chemin d'activation de la grille référence une variable `prob_range` non définie dans la portée locale (renommage incomplet, ou variable issue du détecteur de régime non propagée jusqu'au bloc d'activation). L'exception est rattrapée en WARNING et l'activation est abandonnée pour le symbole concerné → la grille ne se pose pas sur SUI/DOGE quand le régime range l'autoriserait. Symptôme silencieux : pas d'erreur fatale, mais perte d'opportunité grille + comportement non déterministe (certains symboles activent, d'autres lèvent NameError). Hors périmètre paramètre = régression code. Je ne lis pas le code (workflow) : à l'humain de localiser l'occurrence `prob_range` dans le bloc d'activation et de la définir (probablement la proba de régime range exposée par le détecteur) ou de corriger le nom.
+**Proposed fix** :
+```python
+# Before (schéma — à confirmer dans main.py)
+#   ... bloc Grid activation <SYM> ...
+#   if prob_range > seuil:          # NameError : prob_range non défini ici
+#       activate_grid(symbol, ...)
+# After
+#   prob_range = regime_result.prob_range   # ou le nom réel exposé par le détecteur de régime
+#   if prob_range > seuil:
+#       activate_grid(symbol, ...)
+```
+**Risk si non corrigé** : Activation grille non déterministe (NameError silencieux par symbole) → la grille ne moissonne pas le range sur les symboles affectés (SUI, DOGE…), perte d'opportunité et asymétrie de couverture entre actifs ; risque de masquer d'autres régressions dans le même bloc.
+**Status** : pending
+---

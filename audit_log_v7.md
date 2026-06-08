@@ -48,3 +48,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (2 pending couvrent le sujet emergency/submit-exit — pas de re-proposition)
 **Alerts** : EMERGENCY EXIT=15 récurrent (0→15) + exception force-close DOGE — revue humaine des 2 propositions pending recommandée (submit-sell 06-02, spike emergency 06-07).
+
+## 2026-06-08 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=2, emergency=16, drift=31, breakout=0, errors=28 (12 error/8 NameError/2 HyperliquidClientError/2 Error/1 ValueError/1 ProtocolError/1 HTTPError/1 ConnectionResetError), equity=$685.56→$683.05
+**Diagnostic** : Régime ~99% range. Signal dominant = bug structurel : 8 NameError("name 'prob_range' is not defined") sur l'activation grille (SUI/DOGE) → activation avortée silencieusement = régression code (proposition déposée). DRIFT=31/BREAKOUT=0 equity en légère baisse (-$2.51) matcherait "lâcher plus vite", MAIS (1) drift_window déjà abaissé à 600 le 06-07 (anti-oscillation), (2) l'activation grille est cassée cette fenêtre (NameError) → signal drift contaminé, (3) la baisse d'équity est surtout drainée par les 16 emergency directionnels, pas la grille → je tiens drift_window. EMERGENCY EXIT=16 (SOL×4/SUI×3/ETH×3/LINK×2/BNB×2/AAVE×2) reste sur le niveau spike récurrent mais équity non destructrice ici — déjà couvert par 2 propositions pending (pas de re-proposition). szi0=2/abandons=0/doublons=10 non ventilés sous seuils. Aucun type d'erreur ≥50.
+**Changes** : aucun
+**Code proposals** : 1 (warning — NameError 'prob_range' non défini, activation grille avortée)
+**Alerts** : NameError 'prob_range' = régression code bloquant l'activation grille (SUI/DOGE) — revue humaine recommandée ; EMERGENCY EXIT=16 récurrent (2 propositions pending toujours non traitées).
