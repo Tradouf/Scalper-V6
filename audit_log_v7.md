@@ -83,3 +83,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : aucun critique (réseau en reflux 347→139 ; EMERGENCY EXIT=15 récurrent mais équity en hausse cette fenêtre — 2 propositions emergency pending non traitées).
+
+## 2026-06-09 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=2, emergency=3 (SOL×2/SUI×1), drift=7, breakout=0, errors=2 (1 ValueError/1 AttributeError), equity=$679.45→$678.27
+**Diagnostic** : Régime 100% range (720 ticks). Retour au calme net. (1) Réseau : spike ReadTimeout/ConnError totalement résorbé (347→139→2 erreurs) — épisode infra HL transitoire confirmé, proposition retry/backoff reste pending mais plus d'escalade. (2) EMERGENCY EXIT=3 (au seuil), SOL×2/SUI×1 — aucun sur manual_symbols (BTC/HYPE), équity quasi-plate (-$1.18) → exits non destructeurs, déjà couverts par 2 propositions pending → pas de re-proposition. (3) DRIFT=7<20 + équity quasi-plate → pattern "lâcher plus vite" non validé + drift_window déjà à 600 (anti-oscillation) → je tiens. (4) Grille saine : szi0=2/abandons=1/RO=0 bien sous seuils (150/100), doublons=7<10 non ventilés + health_check récemment baissé (cause attendue) → pas de bump min_spacing. Aucun type d'erreur ≥50.
+**Changes** : aucun
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : aucun
