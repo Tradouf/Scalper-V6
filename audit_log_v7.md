@@ -76,3 +76,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : (1) ReadTimeout/ConnError 347 — ≥50 sur 2 audits consécutifs et en hausse → ESCALADER la proposition pending du 06-08 (info→warning), revue humaine du retry/backoff hl_adapter. (2) EMERGENCY EXIT=12 récurrent AVEC équity en baisse (-$5.11) cette fois → revue humaine prioritaire des 2 propositions emergency pending.
+
+## 2026-06-09 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=7, emergency=15 (SOL×5/SUI×4/ETH×3/LINK×1/BNB×1/AAVE×1), drift=28, breakout=0, errors=124 error/108 ReadTimeoutError/31 ConnectionError/15 HyperliquidClientError/1 ValueError/1 ProtocolError/1 MaxRetryError/1 ConnectTimeout, equity=$678.74→$679.42
+**Diagnostic** : Régime 100% range (645 ticks). (1) Réseau : 108 ReadTimeout + 31 ConnError (139 total) reste ≥50 mais EN NETTE DÉCRUE (347→139, soit 3e audit consécutif mais reflux net) → déjà escaladé/pending (06-08), pas de re-proposition. (2) EMERGENCY EXIT=15 (SOL/SUI/ETH, aucun sur manual_symbols BTC/HYPE) MAIS équity en HAUSSE (+$0.68) → exits non destructeurs cette fenêtre (vs -$5.11 au 03:00) ; déjà couverts par 2 propositions pending → pas de re-proposition. (3) DRIFT=28/BREAKOUT=0 matcherait "lâcher plus vite" MAIS drift_window déjà à 600 (anti-oscillation) + équity non en baisse + grille saine (szi0=7/abandons=6 bien sous seuils 150/100) → je tiens. (4) Doublons=14 non ventilés par actif + health_check_sec récemment baissé (cause attendue) → pas de bump min_spacing.
+**Changes** : aucun
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : aucun critique (réseau en reflux 347→139 ; EMERGENCY EXIT=15 récurrent mais équity en hausse cette fenêtre — 2 propositions emergency pending non traitées).
