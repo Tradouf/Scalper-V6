@@ -98,9 +98,10 @@ strategies:
     bias_momentum_pct: 0.01       # 2026-06-07 : |mom 24h| > 1% → grille biaisée
                                   # (long-only en hausse, short-only en baisse)
     drift_k: 3.0
-    drift_window_sec: 600         # 2026-06-07 : 900→600. 42 DRIFT/0 BREAKOUT/0 désact
-                                  # en range, équity en baisse → lâcher les mini-trends
-                                  # plus vite. (2026-06-01 : 3600→900, cas BNB rallye)
+    drift_window_sec: 300         # 2026-06-09 21:00 : 600→300 (floor). 55 DRIFT (record)
+                                  # /0 BREAKOUT/0 désact en range, équity en baisse
+                                  # (-$6.92) → lâcher les mini-trends au plus vite.
+                                  # (2026-06-07 : 900→600 ; 2026-06-01 : 3600→900)
     health_check_sec: 30          # 2026-06-02 : 300→30, renouvellement rapide des
                                   # niveaux 'done' (grille high_vol = récolte oscillation)
     activation_threshold_usdc: 20.0

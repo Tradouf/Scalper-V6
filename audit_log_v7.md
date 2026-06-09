@@ -90,3 +90,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-09 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=1, emergency=16 (SUI×6/DOGE×5/SOL×3/LINK×1/BNB×1), drift=55, breakout=0, errors=5 (2 HyperliquidClientError/1 ValueError/1 error/1 AttributeError), equity=$678.45→$671.53
+**Diagnostic** : Régime 100% range (719 ticks). (1) Réseau : spike totalement résorbé, 5 erreurs éparses, aucun type ≥50 — épisode infra HL clos. (2) DRIFT=55 = RECORD du log (~2× la norme récente 28-30), 0 BREAKOUT, 36 activations / 0 désactivation, équity en baisse (-$6.92) → trigger le plus net à ce jour de la règle "≥20 DRIFT sans BREAKOUT, equity en baisse". Fenêtre qualitativement pire que les précédentes (45 DRIFT du 06-08 03:00 était venu AVEC breakout=6 + équity en hausse) → je lève l'anti-oscillation et applique le pas prescrit. (3) EMERGENCY EXIT=16 (SUI×6/DOGE×5, aucun sur manual_symbols BTC/HYPE) avec équity en baisse → cas partiellement destructeur mais déjà couvert par 2 propositions pending (submit-sell 06-02, spike emergency 06-07) → pas de re-proposition. (4) Grille saine : szi0=1/abandons=1/RO=0 bien sous seuils, doublons=6<10 + health_check récemment baissé (cause attendue) → pas de bump min_spacing.
+**Changes** : - `grid.drift_window_sec`: 600 → 300 (floor) — 55 DRIFT (record) / 0 BREAKOUT / 0 désact en range + équity en baisse, lâcher les mini-trends au plus vite
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=16 récurrent AVEC équity en baisse (-$6.92), SUI×6/DOGE×5 — revue humaine des 2 propositions emergency pending recommandée.
