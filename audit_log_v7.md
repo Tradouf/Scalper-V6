@@ -69,3 +69,10 @@
 **Changes** : aucun
 **Code proposals** : 1 (info — spike ReadTimeout/ConnectionError HL adapter, ajout retry/backoff borné)
 **Alerts** : aucun critique (spike réseau benin ; NameError 'prob_range' réapparu 7× — proposition pending non traitée)
+
+## 2026-06-09 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=1, emergency=12 (ETH×4/SOL×3/LINK×3/BNB×1/AAVE×1), drift=30, breakout=0, errors=374 dont 280 ReadTimeoutError/67 ConnectionError/13 HyperliquidClientError/1 ValueError/1 AttributeError, equity=$683.92→$678.81
+**Diagnostic** : Régime 100% range (550 ticks). SIGNAL 1 : spike réseau persiste ET s'aggrave — 280 ReadTimeout + 67 ConnectionError (347 vs 197 au 06-08 21:00), soit ≥50 sur 2 audits consécutifs → la condition d'escalade fixée par la proposition pending (06-08, "si ≥50 persiste → escalader en warning") est atteinte. Pas de re-proposition (workflow), escalade signalée en alerte. SIGNAL 2 : EMERGENCY EXIT=12 (ETH/SOL/LINK, aucun sur manual_symbols BTC/HYPE) avec équity en baisse (-$5.11) → cas destructeur (cf. 06-07 15:00), déjà couvert par 2 propositions pending (submit-sell 06-02, spike emergency 06-07) → pas de re-proposition. DRIFT=30/BREAKOUT=0 matcherait "lâcher plus vite" MAIS (1) drift_window déjà à 600 (anti-oscillation), (2) baisse d'équity drainée par les 12 emergency directionnels, pas la grille (grille saine : szi0=1/abandons=0/RO=0) → je tiens drift_window. Doublons=13 non ventilés par actif + health_check_sec récemment baissé (cause attendue) → pas de bump min_spacing.
+**Changes** : aucun
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : (1) ReadTimeout/ConnError 347 — ≥50 sur 2 audits consécutifs et en hausse → ESCALADER la proposition pending du 06-08 (info→warning), revue humaine du retry/backoff hl_adapter. (2) EMERGENCY EXIT=12 récurrent AVEC équity en baisse (-$5.11) cette fois → revue humaine prioritaire des 2 propositions emergency pending.
