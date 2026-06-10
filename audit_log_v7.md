@@ -111,3 +111,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-10 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=3, emergency=14 (SUI×4/SOL×2/LINK×2/ETH×2/DOGE×1/BTC×1/BNB×1/AAVE×1), drift=52, breakout=0, errors=12 (5 HyperliquidClientError/5 error/1 ReadTimeout/1 exception), equity=$667.96→$659.41
+**Diagnostic** : Régime 100% range (716 ticks). (1) DRIFT=52 (proche du record 55) / 0 BREAKOUT / 0 désact + équity en baisse (-$8.55) → trigger net "lâcher plus vite", MAIS `drift_window_sec` est DÉJÀ au floor (300) depuis le 06-09 21:00 → aucune marge paramètre, le pas prescrit est épuisé. (2) EMERGENCY EXIT=14 avec équity en baisse = fenêtre destructrice ; notable : 1 sur BTC qui est dans `manual_symbols` → exactement le risque pointé par la proposition pending du 06-07 (force-close potentiel d'un swing manuel) → déjà couvert, pas de re-proposition mais alerte. (3) Grille saine : szi0=3/abandons=0/RO=0 bien sous seuils, doublons=8<10 + health_check récemment baissé (cause attendue) → pas de bump min_spacing. (4) Réseau bénin : 12 erreurs réparties, aucun type ≥50.
+**Changes** : aucun (drift_window déjà au floor 300, plus de marge paramètre)
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=14 récurrent AVEC équity en baisse (-$8.55), dont 1 sur BTC (manual_symbol) — revue humaine PRIORITAIRE des 2 propositions emergency pending (06-02 submit-sell, 06-07 spike emergency / exemption manual_symbols).
