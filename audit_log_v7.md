@@ -97,3 +97,10 @@
 **Changes** : - `grid.drift_window_sec`: 600 → 300 (floor) — 55 DRIFT (record) / 0 BREAKOUT / 0 désact en range + équity en baisse, lâcher les mini-trends au plus vite
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : EMERGENCY EXIT=16 récurrent AVEC équity en baisse (-$6.92), SUI×6/DOGE×5 — revue humaine des 2 propositions emergency pending recommandée.
+
+## 2026-06-10 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=2, emergency=4 (AAVE×2/SUI×1/BNB×1), drift=32, breakout=0, errors=4 (1 ProtocolError/1 error/1 ConnectionResetError/1 ConnectionError), equity=$670.30→$669.66
+**Diagnostic** : Régime 100% range (591 ticks). Retour au calme. (1) DRIFT=32/BREAKOUT=0/0 désact matcherait "lâcher plus vite" MAIS drift_window est DÉJÀ au floor (300) depuis le dernier audit → plus de marge paramètre, et équity quasi-plate (-$0.64) vs -$6.92 le 06-09 21:00 → le pas prescrit ne s'applique plus (déjà appliqué jusqu'au plancher). (2) EMERGENCY EXIT=4 (au-dessus du seuil mais retombé de 16→4), aucun sur manual_symbols (BTC/HYPE — AAVE non protégé mais équity non destructrice) → exits non destructeurs cette fenêtre, déjà couverts par 2 propositions pending → pas de re-proposition. (3) Réseau totalement résorbé : 4 erreurs éparses, aucun type ≥50 — épisode infra HL clos. (4) Grille saine : szi0=2/abandons=1/RO=0 bien sous seuils (150/100), doublons=6<10 + health_check récemment baissé (cause attendue) → pas de bump min_spacing.
+**Changes** : aucun (drift_window déjà au floor 300, équity quasi-plate)
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : aucun
