@@ -104,3 +104,10 @@
 **Changes** : aucun (drift_window déjà au floor 300, équity quasi-plate)
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-10 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=3 (SUI×2/ETH×1), drift=18, breakout=0, errors=31 (10 error/6 HyperliquidClientError/4 Error/3 ProtocolError/3 ConnectionResetError/3 ConnectionError/2 HTTPError), equity=$669.58→$667.95
+**Diagnostic** : Régime 100% range (716 ticks). Retour au calme, aucun pattern net. (1) DRIFT=18<20 (sous le seuil) + 0 BREAKOUT + 0 désact + équity quasi-plate (-$1.63) → pattern "lâcher plus vite" NON validé, et drift_window déjà au floor (300) → aucune marge paramètre de toute façon. (2) EMERGENCY EXIT=3 (juste au seuil, retombé de 4), SUI×2/ETH×1 — aucun sur manual_symbols (BTC/HYPE), équity non destructrice → exits bénins, déjà couverts par 2 propositions pending → pas de re-proposition. (3) Réseau : pic léger 31 erreurs réparties (ProtocolError/ConnectionReset/ConnectionError sur refresh allMids + 1 submit ETH buy) mais aucun type ≥50 — bien en deçà du seuil, épisode infra transitoire. (4) Grille saine : szi0=0/abandons=0/RO=0, doublons=5<10 → pas de bump min_spacing.
+**Changes** : aucun
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : aucun
