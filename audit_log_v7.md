@@ -139,3 +139,10 @@
 **Changes** : aucun (drift_window déjà au floor 300, plus de marge paramètre)
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : EMERGENCY EXIT=8 dont BTC×1 (manual_symbol, 4e audit consécutif) avec équity en baisse modérée (-$2.67) — le force-close récurrent du swing BTC manuel reste le risque le plus grave ; revue humaine des 2 propositions emergency pending (06-02 submit-sell, 06-07 exemption manual_symbols) toujours recommandée.
+
+## 2026-06-11 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=1, emergency=7 (ETH×2/AAVE×2/SOL×1/BTC×1/BNB×1), drift=6, breakout=0, errors=10 (4 HyperliquidClientError/4 error/1 ReadTimeout/1 exception), equity=$642.62→$636.79
+**Diagnostic** : Régime 100% range (719 ticks). Calme côté grille. (1) DRIFT=6<20 (bien sous le seuil) / 0 BREAKOUT / 29 activations / 0 désact → pattern "lâcher plus vite" NON validé ; de plus `drift_window_sec` est DÉJÀ au floor (300) depuis le 06-09 21:00 → aucune marge paramètre. (2) EMERGENCY EXIT=7 (retombé de 8) AVEC équity en baisse (-$5.83), multi-symboles dispersés (ETH×2/AAVE×2) + BTC×1 (manual_symbol) → 5e audit consécutif avec force-close potentiel sur swing BTC manuel = risque pointé par la proposition pending du 06-07, déjà couvert → alerte. La baisse d'équity est drainée par les emergency directionnels, pas la grille. (3) Grille saine : szi0=1/abandons=0/RO=0 bien sous seuils (150/100), doublons=5<10 → pas de bump min_spacing. (4) Réseau bénin : 10 erreurs éparses, aucun type ≥50.
+**Changes** : aucun (drift_window déjà au floor 300, DRIFT=6 sous seuil)
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=7 dont BTC×1 (manual_symbol, 5e audit consécutif) avec équity en baisse (-$5.83) — le force-close récurrent du swing BTC manuel reste le risque le plus grave ; revue humaine des 2 propositions emergency pending (06-02 submit-sell, 06-07 exemption manual_symbols) toujours recommandée.
