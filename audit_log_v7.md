@@ -132,3 +132,10 @@
 **Changes** : aucun (drift_window déjà au floor 300, plus de marge paramètre)
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : EMERGENCY EXIT=17 récurrent AVEC équity en baisse (-$9.57), SOL×5/AAVE×5 dominants + BTC×1 (manual_symbol, 3e audit consécutif) — revue humaine PRIORITAIRE des 2 propositions emergency pending (06-02 submit-sell, 06-07 spike emergency / exemption manual_symbols) ; le force-close BTC manuel récurrent reste le risque le plus grave.
+
+## 2026-06-11 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=1, emergency=8 (SUI×2/AAVE×2/SOL×1/ETH×1/BTC×1/BNB×1), drift=23, breakout=0, errors~0, equity=$645.34→$642.67
+**Diagnostic** : Régime 100% range (720 ticks). Retour relatif au calme (emergency 17→8, drift 29→23). (1) DRIFT=23 (norme) / 0 BREAKOUT / 14 activations / 0 désact + équity en légère baisse (-$2.67) → matcherait "lâcher plus vite" MAIS `drift_window_sec` est DÉJÀ au floor (300) depuis le 06-09 21:00 → aucune marge paramètre, pas prescrit épuisé. (2) EMERGENCY EXIT=8 (vs 17) AVEC équity en légère baisse, multi-symboles dispersés + BTC×1 (manual_symbol) → 4e audit consécutif avec force-close potentiel sur swing BTC manuel = risque pointé par la proposition pending du 06-07, déjà couvert → alerte. Baisse d'équity modeste, drainée par les emergency directionnels, pas la grille. (3) Grille saine : szi0=1/abandons=2/RO=0 bien sous seuils (150/100), doublons=5<10 → pas de bump min_spacing. (4) Réseau bénin : aucun type d'erreur ≥50.
+**Changes** : aucun (drift_window déjà au floor 300, plus de marge paramètre)
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=8 dont BTC×1 (manual_symbol, 4e audit consécutif) avec équity en baisse modérée (-$2.67) — le force-close récurrent du swing BTC manuel reste le risque le plus grave ; revue humaine des 2 propositions emergency pending (06-02 submit-sell, 06-07 exemption manual_symbols) toujours recommandée.
