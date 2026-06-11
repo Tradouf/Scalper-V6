@@ -146,3 +146,10 @@
 **Changes** : aucun (drift_window déjà au floor 300, DRIFT=6 sous seuil)
 **Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
 **Alerts** : EMERGENCY EXIT=7 dont BTC×1 (manual_symbol, 5e audit consécutif) avec équity en baisse (-$5.83) — le force-close récurrent du swing BTC manuel reste le risque le plus grave ; revue humaine des 2 propositions emergency pending (06-02 submit-sell, 06-07 exemption manual_symbols) toujours recommandée.
+
+## 2026-06-11 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=8 (DOGE×2/AAVE×2/SUI×1/SOL×1/LINK×1/BTC×1), drift=20, breakout=0, errors=2 (1 HyperliquidClientError/1 error), equity=$636.71→$634.04
+**Diagnostic** : Régime 100% range (717 ticks). Calme côté grille. (1) DRIFT=20 pile au seuil / 0 BREAKOUT / 37 activations / 0 désact + équity en légère baisse (-$2.67) → matcherait "lâcher plus vite" MAIS `drift_window_sec` est DÉJÀ au floor (300) depuis le 06-09 21:00 → aucune marge paramètre, pas prescrit épuisé. (2) EMERGENCY EXIT=8 (stable vs 7) AVEC équity en baisse modérée, multi-symboles dispersés (DOGE×2/AAVE×2) + BTC×1 (manual_symbol) → 6e audit consécutif avec force-close potentiel sur swing BTC manuel = risque pointé par la proposition pending du 06-07, déjà couvert → alerte. Baisse d'équity drainée par les emergency directionnels, pas la grille. (3) Grille saine : szi0=0/abandons=0/RO=0, doublons=13 non ventilés par actif + health_check récemment baissé (cause attendue) → pas de bump min_spacing. (4) Réseau bénin : 2 erreurs éparses, aucun type ≥50.
+**Changes** : aucun (drift_window déjà au floor 300, DRIFT=20 sans marge paramètre)
+**Code proposals** : aucune (4 pending couvrent réseau/emergency/submit-exit/NameError — pas de re-proposition)
+**Alerts** : EMERGENCY EXIT=8 dont BTC×1 (manual_symbol, 6e audit consécutif) avec équity en baisse (-$2.67) — le force-close récurrent du swing BTC manuel reste le risque le plus grave ; revue humaine des 2 propositions emergency pending (06-02 submit-sell, 06-07 exemption manual_symbols) toujours recommandée.
