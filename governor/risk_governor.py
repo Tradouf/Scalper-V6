@@ -146,8 +146,14 @@ class RiskGovernor:
         if not text:
             return None
         import re
-        # Greedy : 1er '{' au dernier '}' (qwen peut préfixer du <think>… ; on
-        # veut l'objet complet, pas le 1er sous-objet tronqué).
+        # Strip le bloc raisonnement des modèles reasoning (DeepSeek-R1 :
+        # <think>…</think>) — il peut contenir des accolades qui fausseraient
+        # le regex JSON. On garde ce qui suit le </think>.
+        text = re.sub(r"(?is)<think>.*?</think>", " ", text)
+        if "</think>" in text:           # think non fermé/tronqué
+            text = text.split("</think>")[-1]
+        # Greedy : 1er '{' au dernier '}' (qwen peut préfixer du texte ; on veut
+        # l'objet complet, pas le 1er sous-objet tronqué).
         m = re.search(r"\{.*\}", text, re.DOTALL)
         if not m:
             return None
