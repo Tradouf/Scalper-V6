@@ -303,9 +303,11 @@ class V7Bot:
         while self._running:
             try:
                 feats = self._governor_features()
-                # 1. Noter les décisions passées dont la fenêtre est écoulée.
+                upnl = self._total_upnl()
+                # 1. Noter les décisions passées dont la fenêtre est écoulée
+                #    (attribution fine : réalisé vs dérive marché via upnl).
                 em_ts = list(self._gov_emergency_log)
-                scored = self._gov_journal.score_pending(self.portfolio.equity, em_ts)
+                scored = self._gov_journal.score_pending(self.portfolio.equity, em_ts, upnl_now=upnl)
                 # 2. Réinjecter le palmarès → l'agent apprend de ses erreurs.
                 feedback = self._gov_journal.feedback_text(k=6)
                 dec = self._gov.decide(feats, feedback=feedback)
@@ -313,7 +315,7 @@ class V7Bot:
                 # 3. Journaliser la nouvelle décision pour notation future.
                 self._gov_journal.record(
                     feats, {"emergency_roe_pct": dec.emergency_roe_pct, "size_mult": dec.size_mult},
-                    self.portfolio.equity)
+                    self.portfolio.equity, upnl_now=upnl)
                 if scored:
                     self.logger.info("Governor: %d décision(s) notée(s) ex-post", scored)
             except Exception as e:
@@ -330,14 +332,15 @@ class V7Bot:
         while self._running:
             try:
                 ctx = self._strategist_context()
+                upnl = self._total_upnl()
                 em_ts = list(self._gov_emergency_log)
-                scored = self._strat_journal.score_pending(self.portfolio.equity, em_ts)
+                scored = self._strat_journal.score_pending(self.portfolio.equity, em_ts, upnl_now=upnl)
                 feedback = self._strat_journal.feedback_text(k=5)
                 dec = self._strategist.decide(ctx, feedback=feedback)
                 self._strat_journal.record(
                     ctx, {"posture": dec.risk_posture, "max_size_mult": dec.max_size_mult,
                           "emergency_floor": dec.emergency_floor, "emergency_ceiling": dec.emergency_ceiling},
-                    self.portfolio.equity)
+                    self.portfolio.equity, upnl_now=upnl)
                 if scored:
                     self.logger.info("Strategist: %d enveloppe(s) notée(s) ex-post", scored)
             except Exception as e:
@@ -367,6 +370,15 @@ class V7Bot:
             "tactical_emergency_roe_pct": (gov.emergency_roe_pct if gov else None),
             "tactical_size_mult": (gov.size_mult if gov else None),
         }
+
+    def _total_upnl(self) -> float:
+        """Somme du PnL non-réalisé des positions ouvertes ($). Pour isoler la
+        dérive marché du réalisé dans l'attribution d'apprentissage."""
+        try:
+            return sum(float(info.get("upnl", 0) or 0)
+                       for info in (self.hl_read.get_positions_detailed() or {}).values())
+        except Exception:
+            return 0.0
 
     def _governor_features(self) -> dict:
         """État marché synthétique pour le LLM (lit ce que le tick a capturé)."""

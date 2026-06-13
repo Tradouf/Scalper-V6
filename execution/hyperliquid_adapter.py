@@ -184,6 +184,7 @@ class HyperliquidReadAdapter:
                 "mark_px": mark_px,
                 "leverage": leverage,
                 "roe": roe,
+                "upnl": float(pos.get("unrealizedPnl", 0) or 0),  # $ non-réalisé (attribution gouverneur)
                 "side": "BUY" if szi > 0 else "SELL",
             }
         return out
