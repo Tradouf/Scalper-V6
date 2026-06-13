@@ -50,8 +50,10 @@ Un gouverneur tactique (LLM rapide, toutes les 15min) ajuste finement le seuil d
 stop d'urgence et la taille des positions. TON rôle, moins fréquent : poser
 l'ENVELOPPE de risque dans laquelle le tactique a le droit d'opérer, selon la
 situation d'ensemble (tendance de l'equity, régime, fréquence des coupures).
+Tu APPRENDS de tes enveloppes passées (palmarès ci-dessous) : reproduis ce qui a
+donné BON, corrige ce qui a donné MAUVAIS.
 
-Contexte actuel :
+{feedback_block}Contexte actuel :
 {context}
 
 Décide une posture globale et l'enveloppe correspondante. Réponds UNIQUEMENT en
@@ -141,8 +143,10 @@ class Strategist:
             return None
 
     # ── Décision ─────────────────────────────────────────────────────────────
-    def decide(self, context: dict) -> StrategistDecision:
-        raw = self._call_opus(PROMPT_TMPL.format(context=json.dumps(context, indent=2)))
+    def decide(self, context: dict, feedback: str = "") -> StrategistDecision:
+        fb_block = ("TON HISTORIQUE D'ENVELOPPES (apprends-en) :\n" + feedback + "\n\n") if feedback else ""
+        prompt = PROMPT_TMPL.format(context=json.dumps(context, indent=2), feedback_block=fb_block)
+        raw = self._call_opus(prompt)
         parsed = self._parse(raw) if raw else None
         if parsed is None:
             base = self._last if self._last else None

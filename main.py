@@ -196,8 +196,22 @@ class V7Bot:
         self._equity_boot = float(self.portfolio.equity)  # référence trajectoire (stratège)
         self._strategist = None
         self._strategist_thread = None
+        self._gov_journal = None
+        self._strat_journal = None
         if getattr(self.cfg, "governor", None) and self.cfg.governor.enabled:
             from governor.risk_governor import RiskGovernor
+            from governor.journal import DecisionJournal
+            mem = REPO / "memory"
+            # Mémoire expérientielle : fenêtre tactique = 3× la cadence (≈45min),
+            # stratège = 3× sa cadence (≈3h). Persistante → apprentissage cross-restart.
+            self._gov_journal = DecisionJournal(
+                mem / "governor_journal.jsonl",
+                score_window_sec=3 * self.cfg.governor.interval_sec,
+                equity_ref=float(self.portfolio.equity))
+            self._strat_journal = DecisionJournal(
+                mem / "strategist_journal.jsonl",
+                score_window_sec=3 * self.cfg.governor.strategist_interval_sec,
+                equity_ref=float(self.portfolio.equity))
             # Étage stratège Opus (optionnel) : pose l'enveloppe que le tactique respecte.
             envelope_provider = None
             if self.cfg.governor.strategist_enabled:
@@ -289,8 +303,19 @@ class V7Bot:
         while self._running:
             try:
                 feats = self._governor_features()
-                dec = self._gov.decide(feats)
+                # 1. Noter les décisions passées dont la fenêtre est écoulée.
+                em_ts = list(self._gov_emergency_log)
+                scored = self._gov_journal.score_pending(self.portfolio.equity, em_ts)
+                # 2. Réinjecter le palmarès → l'agent apprend de ses erreurs.
+                feedback = self._gov_journal.feedback_text(k=6)
+                dec = self._gov.decide(feats, feedback=feedback)
                 self._apply_governor(dec)
+                # 3. Journaliser la nouvelle décision pour notation future.
+                self._gov_journal.record(
+                    feats, {"emergency_roe_pct": dec.emergency_roe_pct, "size_mult": dec.size_mult},
+                    self.portfolio.equity)
+                if scored:
+                    self.logger.info("Governor: %d décision(s) notée(s) ex-post", scored)
             except Exception as e:
                 self.logger.warning("Governor loop: %r", e)
             slept = 0.0
@@ -305,7 +330,16 @@ class V7Bot:
         while self._running:
             try:
                 ctx = self._strategist_context()
-                self._strategist.decide(ctx)
+                em_ts = list(self._gov_emergency_log)
+                scored = self._strat_journal.score_pending(self.portfolio.equity, em_ts)
+                feedback = self._strat_journal.feedback_text(k=5)
+                dec = self._strategist.decide(ctx, feedback=feedback)
+                self._strat_journal.record(
+                    ctx, {"posture": dec.risk_posture, "max_size_mult": dec.max_size_mult,
+                          "emergency_floor": dec.emergency_floor, "emergency_ceiling": dec.emergency_ceiling},
+                    self.portfolio.equity)
+                if scored:
+                    self.logger.info("Strategist: %d enveloppe(s) notée(s) ex-post", scored)
             except Exception as e:
                 self.logger.warning("Strategist loop: %r", e)
             slept = 0.0

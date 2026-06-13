@@ -48,6 +48,8 @@ SAFE_DEFAULT = {"emergency_roe_pct": 0.040, "size_mult": 1.0,
 
 SYSTEM_PROMPT = """Tu es le gouverneur de risque d'un bot de trading crypto sur Hyperliquid (levier 3x).
 Ton rôle : choisir les paramètres de risque adaptés à l'état du marché, à chaque cycle.
+Tu APPRENDS de tes décisions passées (ci-dessous) : reproduis ce qui a donné BON,
+évite ce qui a donné MAUVAIS.
 
 Tu reçois des features de marché. Tu réponds UNIQUEMENT en JSON strict, en
 COMMENÇANT par l'accolade, "reason" en 12 mots MAXIMUM :
@@ -115,12 +117,16 @@ class RiskGovernor:
         return self._last
 
     # ── LLM ──────────────────────────────────────────────────────────────────
-    def _call_llm(self, features: dict) -> Optional[str]:
+    def _call_llm(self, features: dict, feedback: str = "") -> Optional[str]:
+        user = ""
+        if feedback:
+            user += "TON HISTORIQUE RÉCENT (apprends-en) :\n" + feedback + "\n\n"
+        user += "Features marché:\n" + json.dumps(features, indent=2)
         payload = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Features marché:\n" + json.dumps(features, indent=2)},
+                {"role": "user", "content": user},
             ],
             "temperature": 0.2,
             "max_tokens": 500,
@@ -152,8 +158,8 @@ class RiskGovernor:
             return None
 
     # ── Décision ─────────────────────────────────────────────────────────────
-    def decide(self, features: dict) -> GovernorDecision:
-        raw = self._call_llm(features)
+    def decide(self, features: dict, feedback: str = "") -> GovernorDecision:
+        raw = self._call_llm(features, feedback=feedback)
         parsed = self._parse(raw) if raw else None
         if parsed is None:
             # Fallback : on garde la dernière bonne décision si on en a une,
