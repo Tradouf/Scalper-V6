@@ -177,6 +177,31 @@ class V7Bot:
         self._grid_thread = None
         self._grid_safety_pause = False  # enveloppe sécurité high_vol (vol ingérable)
 
+        # ── Gouverneur de risque LLM (2026-06-13) ────────────────────────────
+        # Adapte emergency_exit_roe_pct + taille au régime via LLM (bornes dures
+        # en code). Capture les notionals de BASE pour appliquer size_mult sans
+        # dérive cumulative. Features partagées par le tick (régime, vol, emergencies).
+        from collections import deque
+        self._gov = None
+        self._gov_thread = None
+        self._gov_base_notionals = {
+            "mean_reversion": float(self.cfg.strategies.mean_reversion.notional_usdc),
+            "momentum": float(self.cfg.strategies.momentum.notional_usdc),
+            "supertrend": float(self.cfg.strategies.supertrend.notional_max_usdc),
+            "grid_range_frac": float(self.cfg.strategies.grid.range_budget_frac),
+        }
+        self._gov_emergency_log = deque(maxlen=200)   # ts des emergency exits récents
+        self._last_regime = None
+        self._last_vol_ratio = 1.0
+        if getattr(self.cfg, "governor", None) and self.cfg.governor.enabled:
+            from governor.risk_governor import RiskGovernor
+            self._gov = RiskGovernor(self.cfg.governor.llm_endpoint, self.cfg.governor.llm_model)
+            self.logger.warning(
+                "Gouverneur de risque LLM ACTIF (modèle=%s, cadence=%ds) — adapte "
+                "emergency/taille au régime, bornes dures en code",
+                self.cfg.governor.llm_model, self.cfg.governor.interval_sec,
+            )
+
     # ─── Boucle principale ────────────────────────────────────────────────────
 
     def run(self) -> int:
@@ -203,6 +228,11 @@ class V7Bot:
         import threading as _th
         _th.Thread(target=self._watchdog_loop, daemon=True, name="watchdog").start()
 
+        # Thread gouverneur de risque LLM (cadence lente, découplé du tick).
+        if self._gov is not None:
+            self._gov_thread = _th.Thread(target=self._governor_loop, daemon=True, name="governor")
+            self._gov_thread.start()
+
         self.logger.info("V7 boucle démarrée (interval=%ds)", interval)
         while self._running:
             try:
@@ -227,6 +257,64 @@ class V7Bot:
     def _handle_stop(self, *_) -> None:
         self._running = False
         self.logger.info("V7 SIGTERM/SIGINT reçu, arrêt en cours...")
+
+    # ─── Gouverneur de risque LLM ─────────────────────────────────────────────
+    def _governor_loop(self) -> None:
+        """Boucle lente : collecte les features marché, demande au LLM les bons
+        paramètres de risque, les applique LIVE (clampés en code)."""
+        interval = float(self.cfg.governor.interval_sec)
+        time.sleep(20)  # laisser le 1er tick remplir régime/vol
+        while self._running:
+            try:
+                feats = self._governor_features()
+                dec = self._gov.decide(feats)
+                self._apply_governor(dec)
+            except Exception as e:
+                self.logger.warning("Governor loop: %r", e)
+            slept = 0.0
+            while self._running and slept < interval:
+                time.sleep(2); slept += 2
+
+    def _governor_features(self) -> dict:
+        """État marché synthétique pour le LLM (lit ce que le tick a capturé)."""
+        import time as _t
+        now = _t.time()
+        reg = self._last_regime
+        # emergencies sur la dernière heure
+        em_1h = sum(1 for ts in self._gov_emergency_log if now - ts < 3600)
+        # ROE des positions ouvertes
+        roes = []
+        try:
+            for sym, info in (self.hl_read.get_positions_detailed() or {}).items():
+                r = info.get("roe")
+                if r is not None:
+                    roes.append(round(float(r) * 100, 2))
+        except Exception:
+            pass
+        return {
+            "regime": (reg.label.value if reg else "unknown"),
+            "regime_confidence": round(float(reg.confidence), 2) if reg else 0.0,
+            "vol_ratio_vs_median": round(float(self._last_vol_ratio), 2),
+            "emergency_exits_last_1h": em_1h,
+            "open_positions": len(roes),
+            "positions_roe_pct": roes,
+            "equity_usd": round(float(self.portfolio.equity), 2),
+            "current_emergency_roe_pct": round(float(self.cfg.risk.emergency_exit_roe_pct), 4),
+            "leverage": 3,
+        }
+
+    def _apply_governor(self, dec) -> None:
+        """Applique la décision (déjà clampée) aux objets config LIVE."""
+        # 1. Seuil emergency : EmergencyExitManager partage la réf cfg.risk → live.
+        self.cfg.risk.emergency_exit_roe_pct = float(dec.emergency_roe_pct)
+        # 2. Taille des stratégies = base × size_mult (pas de dérive cumulative).
+        m = float(dec.size_mult)
+        b = self._gov_base_notionals
+        self.cfg.strategies.mean_reversion.notional_usdc = round(b["mean_reversion"] * m, 2)
+        self.cfg.strategies.momentum.notional_usdc = round(b["momentum"] * m, 2)
+        self.cfg.strategies.supertrend.notional_max_usdc = round(b["supertrend"] * m, 2)
+        self.cfg.strategies.grid.range_budget_frac = round(
+            min(1.0, b["grid_range_frac"] * m), 3)
 
     def _watchdog_loop(self) -> None:
         """Surveille la progression du tick principal. Si aucun tick depuis
@@ -284,6 +372,7 @@ class V7Bot:
         # grille high_vol se ferait rincer → pause + flat (hystérésis : reprise <0.8×).
         safety_mult = float(getattr(self.cfg.strategies.grid, "high_vol_safety_mult", 2.5))
         vol_ratio = self._avg_vol_ratio(market)
+        self._last_vol_ratio = vol_ratio  # pour le gouverneur de risque
         if not self._grid_safety_pause and vol_ratio > safety_mult:
             self._grid_safety_pause = True
             self.logger.warning(
@@ -488,6 +577,7 @@ class V7Bot:
 
         # 2. Régime
         regime = self.detector.detect(market)
+        self._last_regime = regime  # pour le gouverneur de risque (thread découplé)
 
         # 2.5. Grid driver (séparé du flow Signal car le grid est event-driven).
         # On donne au grid son budget par symbole (= poids grid × equity / N syms),
@@ -548,12 +638,16 @@ class V7Bot:
         # seuil. AVANT reconcile pour laisser submit recomposer après les force-close.
         try:
             em = self.emergency.check_and_exit()
-            if em["tracked_emergency"] + em["orphan_force_closed"] + em["orphan_grace_armed"] > 0:
+            n_forced = em["tracked_emergency"] + em["orphan_force_closed"]
+            if n_forced + em["orphan_grace_armed"] > 0:
                 self.logger.warning(
                     "EmergencyExit tick: tracked_forced=%d orphan_armed=%d orphan_forced=%d (checked=%d)",
                     em["tracked_emergency"], em["orphan_grace_armed"],
                     em["orphan_force_closed"], em["checked"],
                 )
+            # Alimente le gouverneur : horodate chaque force-close réel.
+            for _ in range(n_forced):
+                self._gov_emergency_log.append(time.time())
         except Exception as e:
             self.logger.warning("EmergencyExit error: %r", e)
 
@@ -649,6 +743,13 @@ class V7Bot:
                 # Positions HL réelles (live) : szi/entry/PnL/ROE
                 "hl_positions": self._collect_hl_positions(),
                 "grid_fast_loop": bool(getattr(self.cfg.strategies.grid, "fast_loop_enabled", True)),
+                "governor": ({
+                    "emergency_roe_pct": self._gov.last.emergency_roe_pct,
+                    "size_mult": self._gov.last.size_mult,
+                    "reason": self._gov.last.reason,
+                    "source": self._gov.last.source,
+                    "age_min": (time.time() - self._gov.last.ts) / 60.0,
+                } if (self._gov and self._gov.last) else None),
             }
             (mem / "v7_state.json").write_text(json.dumps(state, indent=2, default=str))
         except Exception as e:

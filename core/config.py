@@ -209,6 +209,16 @@ class PathsConfig(BaseModel):
     logs: Path = Path("logs")
 
 
+class GovernorConfig(BaseModel):
+    """Gouverneur de risque LLM (2026-06-13). Adapte emergency/taille au régime.
+    Bornes dures appliquées en code (governor/risk_governor.py), pas ici."""
+
+    enabled: bool = Field(False, description="Active le gouverneur LLM de risque")
+    interval_sec: int = Field(900, ge=60, le=7200, description="Cadence de décision (défaut 15min)")
+    llm_endpoint: str = Field("http://localhost:8080", description="Endpoint OpenAI-compatible (LocalAI)")
+    llm_model: str = Field("qwen3.5-9b", description="Modèle LLM pour les décisions de risque")
+
+
 class V7Config(BaseModel):
     """Configuration globale V7."""
 
@@ -217,6 +227,7 @@ class V7Config(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     strategies: StrategiesConfig = Field(default_factory=StrategiesConfig)
+    governor: GovernorConfig = Field(default_factory=GovernorConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
     # Symboles tradés (watchlist)

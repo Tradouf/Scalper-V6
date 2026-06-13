@@ -5,12 +5,18 @@
 symbols:
   - BTC
   - ETH
+  - HYPE
   - SOL
+  - ZEC
+  - XRP
+  - TAO
   - BNB
   - AAVE
   - LINK
   - SUI
   - DOGE
+  
+  
 
 # ─── Détecteur de régime ──────────────────────────────────────────────────────
 regime:
@@ -86,6 +92,16 @@ execution:
   dashboard_port: 8082          # 8082 paper, 8081 live (cutover P8)
   exec_bandit_active: false      # bandit exécution OFF — activer quand ≥500 fills
                                  # shadow ET ≥1 bps/ordre d'économie (exec_bandit_shadow.py --report)
+
+# ─── Gouverneur de risque LLM (2026-06-13) ────────────────────────────────────
+# Adapte emergency_exit_roe_pct + taille des positions au régime, via LLM, à
+# chaque cycle. Bornes DURES en code (emergency ∈ [3%,6%], size_mult ∈ [0.5,1.2]).
+# Freins catastrophe (kill_switch, daily_loss_limit) restent hors de sa portée.
+governor:
+  enabled: true
+  interval_sec: 900             # décision toutes les 15 min
+  llm_endpoint: "http://localhost:8080"   # LocalAI (qwen, gratuit/rapide)
+  llm_model: "qwen3.5-9b"
 
 # ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
 strategies:
