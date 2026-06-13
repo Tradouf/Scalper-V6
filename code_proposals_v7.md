@@ -93,3 +93,25 @@
 **Risk si non corrigé** : En cas de dégradation HL prolongée, mids/candles non rafraîchis sans retry → pricing et détection de régime sur données stale, décisions d'allocation/grille dégradées silencieusement.
 **Status** : pending
 ---
+
+## 2026-06-13 15:00 — [WARNING] Drawdown -16 %/6h non arrêté par kill_switch/daily_loss_limit (cascade TAO)
+**Severity** : warning
+**Files** : risk/manager.py (vérif daily_loss_limit_pct / kill_switch_dd_pct) ; risk/emergency_exit.py (TAO) — lignes à localiser
+**Pattern** : équity $629.43→$526.44 = **-$102.99 (-16.4 %)** sur 6h, 100 % régime range, 3 EMERGENCY EXIT tous sur **TAO** (1re apparition, hors manual_symbols), grille saine (toutes pathologies à 0). Drawdown 6h = 1.6× le seuil kill_switch (10 %) et 5× le daily_loss_limit (3 %).
+**Diagnostic** : La perte d'équity (-16 %) dépasse largement les deux freins catastrophe (`daily_loss_limit_pct=0.03`, `kill_switch_dd_pct=0.10`) sans qu'ils aient flatté le book — soit ils ne se déclenchent pas (logique de calcul du DD/PnL jour cassée ou non évaluée à chaque cycle), soit le force-close déclenché échoue à soumettre et la position TAO continue de saigner (cf. proposition pending 06-02 : submit reduce_only échoue silencieusement, 4 HyperliquidClientError cette fenêtre). La concentration sur un seul symbole nouveau (TAO, 3 emergency) suggère une position TAO ouverte et mal maîtrisée. Hors périmètre paramètre (interdiction de toucher les caps) → revue humaine. Je ne lis pas le code (workflow).
+**Proposed fix** :
+```python
+# Schéma de vérification à confirmer dans risk/manager.py :
+# (1) confirmer que le DD intraday/equity-peak et le PnL jour sont recalculés
+#     à CHAQUE cycle et comparés à kill_switch_dd_pct / daily_loss_limit_pct ;
+# (2) confirmer que le franchissement déclenche un flat GLOBAL (toutes positions)
+#     et pas seulement un blocage de nouvelles entrées ;
+# (3) vérifier que le force-close TAO (emergency/kill) confirme le flat réel
+#     (relecture szi post-ordre) et retombe sur market_close si l'ordre est rejeté
+#     (réf. proposition pending 06-02).
+# NE PAS modifier les valeurs des caps (garde-fou audit) — seulement la logique
+# de déclenchement/exécution.
+```
+**Risk si non corrigé** : Si les freins catastrophe ne stoppent pas un drawdown, une seule fenêtre destructrice (-16 % ici) peut se répéter et vider le compte ; un force-close qui échoue laisse une position perdante (TAO) ouverte au-delà des limites de risque.
+**Status** : pending
+---
