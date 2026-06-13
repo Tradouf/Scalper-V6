@@ -41,7 +41,13 @@ SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "AAVE", "LINK", "SUI", "DOGE"]  # = alloc
 DB_PATH = REPO / "data" / "orderflow_hf.db"
 SAMPLE_SEC = 1.0          # cadence snapshot L2
 FLUSH_SEC = 5.0           # batch insert SQLite
-STALE_WS_SEC = 30.0       # aucun message WS depuis N s → reconnexion
+STALE_WS_SEC = 30.0       # aucun message WS depuis N s → tentative de reconnexion
+# 2026-06-13 : si AUCUNE donnée réelle écrite depuis N s malgré les reconnexions,
+# le process est wedgé (WS connecté mais muet — observé 06-08→06-13, 5j de mort
+# silencieuse sous "active"). On sort en erreur → systemd Restart=always relance
+# un process neuf (Info + souscriptions fraîches). Watchdog dur, pas de reconnexion
+# in-process qui s'enlise.
+WATCHDOG_DEAD_SEC = 120.0
 
 logging.basicConfig(
     level=logging.INFO,
@@ -207,6 +213,7 @@ def main() -> None:
     last_flush = time.time()
     n_l2_total = n_tr_total = 0
     last_report = time.time()
+    last_good_ts = time.time()   # dernier instant où des books réels sont arrivés
 
     while STATE.running:
         t0 = time.time()
@@ -220,13 +227,37 @@ def main() -> None:
             tr_rows, STATE.trade_rows = STATE.trade_rows, []
             stale = (t0 - STATE.last_msg_ts) > STALE_WS_SEC
 
+        got_data = False
         for coin, book in books.items():
             row = book_row(coin, book, updates.get(coin, 0), ctxs.get(coin, {}), ts_ms)
             if row:
                 l2_batch.append(row)
+                got_data = True
+        if got_data:
+            last_good_ts = t0
+
+        # Watchdog dur : données réelles absentes trop longtemps → exit, systemd
+        # relance un process neuf (la reconnexion in-process ne re-souscrit pas
+        # fiablement et finit wedgée — cf. incident 06-08→06-13).
+        if t0 - last_good_ts > WATCHDOG_DEAD_SEC:
+            logger.critical(
+                "WATCHDOG : aucune donnée réelle depuis %.0fs (> %.0fs) → exit pour relance systemd",
+                t0 - last_good_ts, WATCHDOG_DEAD_SEC,
+            )
+            # Flush du buffer avant de sortir.
+            try:
+                if l2_batch:
+                    with conn:
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO l2_1s VALUES (" + ",".join("?" * 20) + ")", l2_batch)
+            except sqlite3.Error:
+                pass
+            disconnect(info)
+            conn.close()
+            sys.exit(1)
 
         if stale:
-            logger.warning("WS muet depuis >%ss → reconnexion", STALE_WS_SEC)
+            logger.warning("WS muet depuis >%ss → tentative de reconnexion", STALE_WS_SEC)
             disconnect(info)
             with STATE.lock:
                 STATE.books.clear()

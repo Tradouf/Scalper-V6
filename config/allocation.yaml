@@ -75,10 +75,9 @@ risk:
   kill_switch_dd_pct: 0.10      # -10% DD → kill switch
   daily_loss_limit_pct: 0.03    # -3% jour → flat
   high_lev_emergency_exempt: true   # Fix 10 Knob A activé (boucle HYPE 10x)
-  manual_symbols: ["HYPE", "BTC"]   # 2026-06-07 : positions manuelles francois —
-                                    # jamais d'orphan force-close ni de boot-load
-                                    # (le reconcile les solderait). Retirer BTC
-                                    # quand le swing manuel sera clos.
+  manual_symbols: []                # 2026-06-13 : francois ne trade plus en manuel
+                                    # sur ce compte → filet emergency normal restauré
+                                    # sur tous les symboles (BTC inclus).
 
 # ─── Execution ────────────────────────────────────────────────────────────────
 execution:
@@ -92,7 +91,7 @@ execution:
 strategies:
   grid:
     enabled: true
-    atr_factor: 0.5
+    atr_factor: 0.25
     levels: 5
     notional_per_level_usdc: 15.0
     bias_momentum_pct: 0.01       # 2026-06-07 : |mom 24h| > 1% → grille biaisée

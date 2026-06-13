@@ -737,7 +737,23 @@ class V7Bot:
 
 def main() -> int:
     _setup_logging()
-    bot = V7Bot()
+    log = logging.getLogger("v7.main")
+    # 2026-06-13 : construction du client HL = appels HTTP non bornés (Info()
+    # fetch meta). Un timeout réseau au boot (storm 06-12) faisait remonter
+    # l'exception → exit 1 → crash-loop systemd (301 restarts en 1j). Retry
+    # avec backoff borné : on encaisse les blips réseau sans cycler.
+    delay = 10.0
+    for attempt in range(1, 9):
+        try:
+            bot = V7Bot()
+            break
+        except Exception as e:
+            if attempt == 8:
+                log.critical("Boot échoué après %d tentatives: %r — abandon", attempt, e)
+                raise
+            log.warning("Boot tentative %d échouée (%r) → retry dans %.0fs", attempt, e, delay)
+            time.sleep(delay)
+            delay = min(delay * 1.8, 120.0)
     return bot.run()
 
 
