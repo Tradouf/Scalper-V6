@@ -190,12 +190,29 @@ class V7Bot:
             "supertrend": float(self.cfg.strategies.supertrend.notional_max_usdc),
             "grid_range_frac": float(self.cfg.strategies.grid.range_budget_frac),
         }
-        self._gov_emergency_log = deque(maxlen=200)   # ts des emergency exits récents
+        self._gov_emergency_log = deque(maxlen=500)   # ts des emergency exits récents
         self._last_regime = None
         self._last_vol_ratio = 1.0
+        self._equity_boot = float(self.portfolio.equity)  # référence trajectoire (stratège)
+        self._strategist = None
+        self._strategist_thread = None
         if getattr(self.cfg, "governor", None) and self.cfg.governor.enabled:
             from governor.risk_governor import RiskGovernor
-            self._gov = RiskGovernor(self.cfg.governor.llm_endpoint, self.cfg.governor.llm_model)
+            # Étage stratège Opus (optionnel) : pose l'enveloppe que le tactique respecte.
+            envelope_provider = None
+            if self.cfg.governor.strategist_enabled:
+                from governor.strategist import Strategist
+                self._strategist = Strategist(
+                    model=self.cfg.governor.strategist_model,
+                    budget_usd=self.cfg.governor.strategist_budget_usd,
+                )
+                envelope_provider = self._strategist.envelope
+                self.logger.warning(
+                    "Stratège Opus ACTIF (cadence=%ds, budget=$%.2f) — pose l'enveloppe de risque",
+                    self.cfg.governor.strategist_interval_sec, self.cfg.governor.strategist_budget_usd,
+                )
+            self._gov = RiskGovernor(self.cfg.governor.llm_endpoint, self.cfg.governor.llm_model,
+                                     envelope_provider=envelope_provider)
             self.logger.warning(
                 "Gouverneur de risque LLM ACTIF (modèle=%s, cadence=%ds) — adapte "
                 "emergency/taille au régime, bornes dures en code",
@@ -232,6 +249,11 @@ class V7Bot:
         if self._gov is not None:
             self._gov_thread = _th.Thread(target=self._governor_loop, daemon=True, name="governor")
             self._gov_thread.start()
+        # Thread stratège Opus (cadence très lente, pose l'enveloppe).
+        if self._strategist is not None:
+            self._strategist_thread = _th.Thread(
+                target=self._strategist_loop, daemon=True, name="strategist")
+            self._strategist_thread.start()
 
         self.logger.info("V7 boucle démarrée (interval=%ds)", interval)
         while self._running:
@@ -274,6 +296,43 @@ class V7Bot:
             slept = 0.0
             while self._running and slept < interval:
                 time.sleep(2); slept += 2
+
+    def _strategist_loop(self) -> None:
+        """Boucle très lente : Opus pose l'enveloppe de risque (posture + bornes)
+        à partir d'un contexte large. Le tactique (qwen) opère dedans."""
+        interval = float(self.cfg.governor.strategist_interval_sec)
+        time.sleep(30)  # après le 1er passage tactique
+        while self._running:
+            try:
+                ctx = self._strategist_context()
+                self._strategist.decide(ctx)
+            except Exception as e:
+                self.logger.warning("Strategist loop: %r", e)
+            slept = 0.0
+            while self._running and slept < interval:
+                time.sleep(5); slept += 5
+
+    def _strategist_context(self) -> dict:
+        """Contexte large pour Opus : trajectoire equity + régime + churn."""
+        import time as _t
+        now = _t.time()
+        em_24h = sum(1 for ts in self._gov_emergency_log if now - ts < 86400)
+        em_1h = sum(1 for ts in self._gov_emergency_log if now - ts < 3600)
+        reg = self._last_regime
+        gov = self._gov.last if self._gov else None
+        eq0 = getattr(self, "_equity_boot", None)
+        return {
+            "regime": (reg.label.value if reg else "unknown"),
+            "regime_confidence": round(float(reg.confidence), 2) if reg else 0.0,
+            "vol_ratio_vs_median": round(float(self._last_vol_ratio), 2),
+            "equity_usd": round(float(self.portfolio.equity), 2),
+            "equity_at_boot_usd": (round(float(eq0), 2) if eq0 else None),
+            "emergency_exits_last_24h": em_24h,
+            "emergency_exits_last_1h": em_1h,
+            "open_positions": len(self.portfolio.positions),
+            "tactical_emergency_roe_pct": (gov.emergency_roe_pct if gov else None),
+            "tactical_size_mult": (gov.size_mult if gov else None),
+        }
 
     def _governor_features(self) -> dict:
         """État marché synthétique pour le LLM (lit ce que le tick a capturé)."""
@@ -750,6 +809,15 @@ class V7Bot:
                     "source": self._gov.last.source,
                     "age_min": (time.time() - self._gov.last.ts) / 60.0,
                 } if (self._gov and self._gov.last) else None),
+                "strategist": ({
+                    "risk_posture": self._strategist.last.risk_posture,
+                    "max_size_mult": self._strategist.last.max_size_mult,
+                    "emergency_floor": self._strategist.last.emergency_floor,
+                    "emergency_ceiling": self._strategist.last.emergency_ceiling,
+                    "commentary": self._strategist.last.commentary,
+                    "source": self._strategist.last.source,
+                    "age_min": (time.time() - self._strategist.last.ts) / 60.0,
+                } if (self._strategist and self._strategist.last) else None),
             }
             (mem / "v7_state.json").write_text(json.dumps(state, indent=2, default=str))
         except Exception as e:

@@ -99,15 +99,21 @@ execution:
 # Freins catastrophe (kill_switch, daily_loss_limit) restent hors de sa portée.
 governor:
   enabled: true
-  interval_sec: 900             # décision toutes les 15 min
+  interval_sec: 900             # tactique : décision toutes les 15 min
   llm_endpoint: "http://localhost:8080"   # LocalAI (qwen, gratuit/rapide)
   llm_model: "qwen3.5-9b"
+  # Étage STRATÈGE (Opus, lent, coût négligeable ~5s/appel) : pose l'enveloppe
+  # (posture + bornes emergency/taille) que le tactique qwen respecte.
+  strategist_enabled: true
+  strategist_interval_sec: 3600  # 1h
+  strategist_model: "opus"
+  strategist_budget_usd: 0.5
 
 # ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
 strategies:
   grid:
     enabled: true
-    atr_factor: 0.25
+    atr_factor: 0.3
     levels: 5
     notional_per_level_usdc: 15.0
     bias_momentum_pct: 0.01       # 2026-06-07 : |mom 24h| > 1% → grille biaisée

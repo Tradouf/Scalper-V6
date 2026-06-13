@@ -214,9 +214,15 @@ class GovernorConfig(BaseModel):
     Bornes dures appliquées en code (governor/risk_governor.py), pas ici."""
 
     enabled: bool = Field(False, description="Active le gouverneur LLM de risque")
-    interval_sec: int = Field(900, ge=60, le=7200, description="Cadence de décision (défaut 15min)")
+    interval_sec: int = Field(900, ge=60, le=7200, description="Cadence tactique (défaut 15min)")
     llm_endpoint: str = Field("http://localhost:8080", description="Endpoint OpenAI-compatible (LocalAI)")
-    llm_model: str = Field("qwen3.5-9b", description="Modèle LLM pour les décisions de risque")
+    llm_model: str = Field("qwen3.5-9b", description="Modèle LLM tactique (risque fin)")
+    # Étage stratège (Opus, cadence lente) : pose l'enveloppe que le tactique
+    # respecte. Coût négligeable (~5s/appel via claude -p).
+    strategist_enabled: bool = Field(False, description="Active l'étage stratège Opus")
+    strategist_interval_sec: int = Field(3600, ge=300, le=86400, description="Cadence stratège (défaut 1h)")
+    strategist_model: str = Field("opus", description="Modèle stratège (via claude -p)")
+    strategist_budget_usd: float = Field(0.5, ge=0.05, le=5.0, description="Budget max par appel stratège")
 
 
 class V7Config(BaseModel):

@@ -82,11 +82,33 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 
 class RiskGovernor:
-    def __init__(self, endpoint: str, model: str, timeout: float = 30.0) -> None:
+    def __init__(self, endpoint: str, model: str, timeout: float = 30.0,
+                 envelope_provider=None) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._model = model
         self._timeout = timeout
+        # envelope_provider() -> dict {max_size_mult, emergency_floor, emergency_ceiling}
+        # posé par le stratège Opus. Le tactique INTERSECTE ses bornes dures avec
+        # cette enveloppe (Opus resserre, jamais ne desserre au-delà du code).
+        self._envelope_provider = envelope_provider
         self._last: Optional[GovernorDecision] = self._load_last()
+
+    def _bounds(self) -> tuple[float, float, float, float]:
+        """(emergency_min, emergency_max, size_min, size_max) = code ∩ enveloppe stratège."""
+        em_lo, em_hi, sz_lo, sz_hi = EMERGENCY_MIN, EMERGENCY_MAX, SIZE_MULT_MIN, SIZE_MULT_MAX
+        if self._envelope_provider is not None:
+            try:
+                env = self._envelope_provider() or {}
+                em_lo = max(em_lo, float(env.get("emergency_floor", em_lo)))
+                em_hi = min(em_hi, float(env.get("emergency_ceiling", em_hi)))
+                sz_hi = min(sz_hi, float(env.get("max_size_mult", sz_hi)))
+                if em_lo > em_hi:          # enveloppe dégénérée → on garde le floor
+                    em_hi = em_lo
+                if sz_lo > sz_hi:
+                    sz_lo = sz_hi
+            except Exception:
+                pass
+        return em_lo, em_hi, sz_lo, sz_hi
 
     @property
     def last(self) -> Optional[GovernorDecision]:
@@ -146,8 +168,9 @@ class RiskGovernor:
             self._persist(dec, features)
             return dec
 
-        em = _clamp(float(parsed["emergency_roe_pct"]), EMERGENCY_MIN, EMERGENCY_MAX)
-        sm = _clamp(float(parsed["size_mult"]), SIZE_MULT_MIN, SIZE_MULT_MAX)
+        em_lo, em_hi, sz_lo, sz_hi = self._bounds()
+        em = _clamp(float(parsed["emergency_roe_pct"]), em_lo, em_hi)
+        sm = _clamp(float(parsed["size_mult"]), sz_lo, sz_hi)
         clamped = (em != float(parsed["emergency_roe_pct"]) or sm != float(parsed["size_mult"]))
         dec = GovernorDecision(
             emergency_roe_pct=round(em, 4), size_mult=round(sm, 3),
