@@ -202,3 +202,10 @@
 **Changes** : aucun (toutes métriques sous seuils, aucun paramètre borné applicable)
 **Code proposals** : aucune (5 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe — pas de re-proposition)
 **Alerts** : aucun critique. NameError 'prob_range' réapparu 12× sur activation grille — régression code (pending 06-08 09:00) non traitée. Cause racine 06-13 15:00 (freins catastrophe) toujours non corrigée — revue humaine des propositions pending recommandée.
+
+## 2026-06-14 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=70 (27 ReadTimeout/17 error/12 HTTPError/12 Error/1 MaxRetryError/1 ConnectTimeout/1 ConnectionError), equity=$621.77→$622.92 (+$1.15 / +0.18 %)
+**Diagnostic** : Régime 100 % range (717 ticks). Fenêtre calme, aucun pattern net franchi. (1) EMERGENCY EXIT=0 (sous seuil), aucun sur manual_symbols → calme directionnel, équity en légère hausse (+0.18 %). (2) Grille saine : toutes pathologies dures à 0 (szi0/abandons/RO/DRIFT/BREAKOUT/doublons), 0 activation/désact → pas de bump min_spacing ; DRIFT=0 → pattern "lâcher plus vite" non déclenché, drift_window reste au floor 300. (3) Réseau bénin : 27 ReadTimeout + 12 HTTPError (502/429 refresh HL clearinghouseState/candles 1h) < seuil 50, aucun type ≥50 — couvert par pending 06-08. (4) Pas de NameError 'prob_range' cette fenêtre (régression non déclenchée, proposition reste pending). (5) Aucun paramètre dans les bornes n'adresse quoi que ce soit (grid 0, emergency 0, drift 0).
+**Changes** : aucun (toutes métriques sous seuils, aucun paramètre borné applicable)
+**Code proposals** : aucune (5 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe — pas de re-proposition)
+**Alerts** : aucun critique. Cause racine 06-13 15:00 (freins catastrophe non déclenchés à -16 %) toujours non corrigée ; 5 propositions pending non traitées — revue humaine recommandée.
