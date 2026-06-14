@@ -108,6 +108,9 @@ governor:
   strategist_interval_sec: 3600  # 1h
   strategist_model: "opus"
   strategist_budget_usd: 0.5
+  # Feeds contextuels (2026-06-14) injectés dans le prompt du stratège Opus :
+  news_feed_enabled: true        # gros titres RSS (CoinDesk/Cointelegraph/Decrypt/TheBlock)
+  onchain_feed_enabled: true     # flux whales Whale Alert (pression exchange)
 
 # ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
 strategies:
