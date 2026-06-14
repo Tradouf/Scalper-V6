@@ -53,7 +53,7 @@ situation d'ensemble (tendance de l'equity, régime, fréquence des coupures).
 Tu APPRENDS de tes enveloppes passées (palmarès ci-dessous) : reproduis ce qui a
 donné BON, corrige ce qui a donné MAUVAIS.
 
-{feedback_block}Contexte actuel :
+{feeds_block}{feedback_block}Contexte marché (chiffres) :
 {context}
 
 Décide une posture globale et l'enveloppe correspondante. Réponds UNIQUEMENT en
@@ -143,9 +143,18 @@ class Strategist:
             return None
 
     # ── Décision ─────────────────────────────────────────────────────────────
-    def decide(self, context: dict, feedback: str = "") -> StrategistDecision:
+    def decide(self, context: dict, feedback: str = "", feeds: Optional[dict] = None) -> StrategistDecision:
         fb_block = ("TON HISTORIQUE D'ENVELOPPES (apprends-en) :\n" + feedback + "\n\n") if feedback else ""
-        prompt = PROMPT_TMPL.format(context=json.dumps(context, indent=2), feedback_block=fb_block)
+        feeds_block = ""
+        if feeds:
+            news = (feeds.get("news") or "").strip()
+            onchain = (feeds.get("onchain") or "").strip()
+            if news:
+                feeds_block += "📰 ACTUALITÉ CRYPTO RÉCENTE (interprète : hack/régulation/macro → defensive ; rien de notable → ignore) :\n" + news + "\n\n"
+            if onchain:
+                feeds_block += "🐋 FLUX ON-CHAIN (pression vendeuse = entrées exchange ; intègre au risque) :\n" + onchain + "\n\n"
+        prompt = PROMPT_TMPL.format(context=json.dumps(context, indent=2),
+                                    feedback_block=fb_block, feeds_block=feeds_block)
         raw = self._call_opus(prompt)
         parsed = self._parse(raw) if raw else None
         if parsed is None:

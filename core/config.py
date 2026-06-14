@@ -223,6 +223,9 @@ class GovernorConfig(BaseModel):
     strategist_interval_sec: int = Field(3600, ge=300, le=86400, description="Cadence stratège (défaut 1h)")
     strategist_model: str = Field("opus", description="Modèle stratège (via claude -p)")
     strategist_budget_usd: float = Field(0.5, ge=0.05, le=5.0, description="Budget max par appel stratège")
+    # Feeds contextuels pour le stratège (2026-06-14) : news RSS + on-chain whales.
+    news_feed_enabled: bool = Field(False, description="Injecte les gros titres RSS dans le contexte stratège")
+    onchain_feed_enabled: bool = Field(False, description="Injecte les flux whales (Whale Alert) dans le contexte stratège")
 
 
 class V7Config(BaseModel):

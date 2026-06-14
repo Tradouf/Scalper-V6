@@ -198,6 +198,8 @@ class V7Bot:
         self._strategist_thread = None
         self._gov_journal = None
         self._strat_journal = None
+        self._news_feed = None
+        self._onchain_feed = None
         if getattr(self.cfg, "governor", None) and self.cfg.governor.enabled:
             from governor.risk_governor import RiskGovernor
             from governor.journal import DecisionJournal
@@ -225,6 +227,18 @@ class V7Bot:
                     "Stratège Opus ACTIF (cadence=%ds, budget=$%.2f) — pose l'enveloppe de risque",
                     self.cfg.governor.strategist_interval_sec, self.cfg.governor.strategist_budget_usd,
                 )
+                # Feeds contextuels (news RSS + on-chain whales) pour le stratège.
+                self._news_feed = None
+                self._onchain_feed = None
+                if self.cfg.governor.news_feed_enabled:
+                    from feeds.news_feed import NewsFeed
+                    self._news_feed = NewsFeed()
+                if self.cfg.governor.onchain_feed_enabled:
+                    from feeds.onchain_feed import OnChainFeed
+                    self._onchain_feed = OnChainFeed()
+                if self._news_feed or self._onchain_feed:
+                    self.logger.warning("Feeds stratège : news=%s on-chain=%s",
+                                        bool(self._news_feed), bool(self._onchain_feed))
             self._gov = RiskGovernor(self.cfg.governor.llm_endpoint, self.cfg.governor.llm_model,
                                      envelope_provider=envelope_provider)
             self.logger.warning(
@@ -336,7 +350,12 @@ class V7Bot:
                 em_ts = list(self._gov_emergency_log)
                 scored = self._strat_journal.score_pending(self.portfolio.equity, em_ts, upnl_now=upnl)
                 feedback = self._strat_journal.feedback_text(k=5)
-                dec = self._strategist.decide(ctx, feedback=feedback)
+                feeds = {}
+                if self._news_feed is not None:
+                    feeds["news"] = self._news_feed.summary()
+                if self._onchain_feed is not None:
+                    feeds["onchain"] = self._onchain_feed.summary()
+                dec = self._strategist.decide(ctx, feedback=feedback, feeds=feeds)
                 self._strat_journal.record(
                     ctx, {"posture": dec.risk_posture, "max_size_mult": dec.max_size_mult,
                           "emergency_floor": dec.emergency_floor, "emergency_ceiling": dec.emergency_ceiling},
