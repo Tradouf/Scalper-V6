@@ -195,3 +195,10 @@
 **Changes** : aucun (toutes métriques sous seuils, aucun paramètre borné applicable)
 **Code proposals** : aucune (5 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe — pas de re-proposition)
 **Alerts** : aucun critique. Cause racine 06-13 15:00 (freins catastrophe non déclenchés à -16 %) toujours non corrigée ; propositions pending non traitées — revue humaine recommandée.
+
+## 2026-06-14 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=66 (30 ReadTimeout/20 error/12 NameError/1 MaxRetryError/1 HTTPError/1 ConnectTimeout), equity=$622.57→$621.78 (-$0.79 / -0.13 %)
+**Diagnostic** : Régime 100 % range (689 ticks). Fenêtre calme, aucun pattern net franchi. (1) EMERGENCY EXIT=0 (sous seuil), aucun sur manual_symbols → calme directionnel, équity quasi-plate (-0.13 %). (2) Grille saine : toutes pathologies dures à 0 (szi0/abandons/RO/DRIFT/BREAKOUT/doublons), 12 activations / 0 désact → pas de bump min_spacing ; DRIFT=0 → pattern "lâcher plus vite" non déclenché, drift_window reste au floor 300. (3) Régression code persistante : 12 NameError("name 'prob_range' is not defined") sur activation grille (record égalé au 06-13 09:00), déjà couverte par la proposition pending 06-08 09:00 → pas de re-proposition, activation grille avortée silencieusement sur les symboles affectés. (4) Réseau bénin : 30 ReadTimeout < seuil 50 (refresh HL allMids/candles 1h), aucun type ≥50 — couvert par pending 06-08. (5) Aucun paramètre dans les bornes n'adresse quoi que ce soit (grid 0, emergency 0, drift 0).
+**Changes** : aucun (toutes métriques sous seuils, aucun paramètre borné applicable)
+**Code proposals** : aucune (5 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe — pas de re-proposition)
+**Alerts** : aucun critique. NameError 'prob_range' réapparu 12× sur activation grille — régression code (pending 06-08 09:00) non traitée. Cause racine 06-13 15:00 (freins catastrophe) toujours non corrigée — revue humaine des propositions pending recommandée.
