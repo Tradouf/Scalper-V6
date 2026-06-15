@@ -115,3 +115,27 @@
 **Risk si non corrigé** : Si les freins catastrophe ne stoppent pas un drawdown, une seule fenêtre destructrice (-16 % ici) peut se répéter et vider le compte ; un force-close qui échoue laisse une position perdante (TAO) ouverte au-delà des limites de risque.
 **Status** : pending
 ---
+
+## 2026-06-15 09:00 — [CRITICAL] Boucle emergency-exit runaway sur HYPE (514/6h) + 6583 submit errors
+**Severity** : critical
+**Files** : risk/emergency_exit.py (déclenchement par symbole) + execution/engine.py:157-164 (submit) — lignes à localiser
+**Pattern** : `EMERGENCY EXIT : 542` sur 6h dont **HYPE×514** (~85/h), vs record historique 21 (06-10). `6583 HyperliquidClientError` + `541 exception` (vs max 203 le 06-02). Échantillons : `ExecutionEngine submit error LINK buy / BTC buy / XRP buy: HyperliquidClientError`.
+**Diagnostic** : Deux pathologies couplées d'ampleur inédite (×25 le record emergency, ×30 le record d'erreurs). (1) **Boucle runaway** : l'emergency exit tire 514 fois sur HYPE en 6h. Mécanisme probable : emergency déclenche un reduce_only sur HYPE, le submit échoue (HyperliquidClientError), la position ne se solde jamais → le cycle suivant ré-évalue la même position encore ouverte et re-tire emergency, sans garde anti-retrigger par symbole ni vérif szi post-ordre. Le filet emergency s'applique désormais à HYPE depuis que `manual_symbols=[]` (06-13), exposant une grosse position 10x au force-close en boucle. (2) **Échec submit systémique** : 6583 HyperliquidClientError, sur des **buys** d'entrée multi-symboles (pas seulement les sorties) → toute la voie d'exécution rejette ce window. Équity quasi-plate (+0.57 %) justement parce que rien ne s'exécute. La cause racine HL reste invisible (repr tronqué — déjà pointé par pending 06-02). Hors périmètre paramètre. Je ne lis pas le code (workflow).
+**Proposed fix** :
+```python
+# Schéma — à confirmer/localiser par l'humain.
+# (A) risk/emergency_exit.py : garde anti-boucle par symbole.
+#   - après un déclenchement emergency sur SYM, poser un cooldown (ex. 60-120 s)
+#     ET re-lire szi(SYM) avant de re-tirer : si un ordre de sortie est déjà
+#     en vol / la position est inchangée et l'ordre précédent a échoué, ne pas
+#     spammer un nouveau reduce_only (back-off borné, compteur de tentatives).
+#   - si N tentatives échouent d'affilée sur SYM → escalader market_close
+#     (réf. pending 06-02) puis alerter, au lieu de boucler indéfiniment.
+# (B) execution/engine.py:157-164 : appliquer le fallback market_close +
+#     log HL complet de la proposition pending 06-02 (toujours non mergée) —
+#     6583 erreurs masquées = cause racine du submit-fail invisible.
+# NE PAS toucher aux caps de risque ni aux flags (garde-fou audit).
+```
+**Risk si non corrigé** : Une position (HYPE 10x) que le système croit en cours de fermeture mais qui ne se solde jamais génère une boucle infinie de force-close ratés (~85/h), sature l'API HL (6583 erreurs → rate-limit, candles/mids stale), et laisse la position réellement exposée au-delà des limites de risque. Le prochain mouvement adverse sur HYPE pourrait infliger une perte non plafonnée pendant que la boucle tourne à vide.
+**Status** : pending
+---
