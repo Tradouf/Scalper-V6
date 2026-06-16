@@ -84,7 +84,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 
 class RiskGovernor:
-    def __init__(self, endpoint: str, model: str, timeout: float = 30.0,
+    def __init__(self, endpoint: str, model: str, timeout: float = 45.0,
                  envelope_provider=None) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._model = model
@@ -129,7 +129,10 @@ class RiskGovernor:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.2,
-            "max_tokens": 500,
+            # Sortie utile = mini-JSON (~50 tokens). qwen3.5-9b plafonne à ~7 tok/s :
+            # 500 tokens ≈ 74s → dépassait le timeout ET monopolisait le worker LocalAI
+            # (ticks principaux à 45s). 160 borne le pire cas à ~25s, marge sous le timeout.
+            "max_tokens": 160,
         }
         try:
             r = requests.post(f"{self._endpoint}/v1/chat/completions",
