@@ -169,6 +169,23 @@ class V7Bot:
             paper_mode=self.cfg.execution.paper_mode,
         )
 
+        # NativeStopManager (2026-06-17) : pose/réconcilie les SL natifs HL des
+        # positions MR à chaque tick. Live + flag uniquement (paper n'a pas de
+        # trigger HL ; flag OFF par défaut = activation délibérée et observée).
+        self.stop_manager = None
+        if not self.cfg.execution.paper_mode and self.cfg.risk.native_sl_enabled:
+            from execution.stop_manager import NativeStopManager
+            self.stop_manager = NativeStopManager(
+                exchange=self.exchange,
+                symbols=self.cfg.symbols,
+                manual_symbols=self.cfg.risk.manual_symbols,
+                price_cb=lambda s: self.hl_read.get_mark_price(s),
+            )
+            self.logger.warning(
+                "NativeStopManager ACTIF — SL natifs HL sur positions MR (watchlist %s)",
+                self.cfg.symbols,
+            )
+
         self._running = True
         self._cycle = 0
         # Verrou partagé : protège grid_engine._grids entre le thread principal
@@ -833,6 +850,21 @@ class V7Bot:
                     except Exception as e:
                         self.logger.warning("Strategy %s on_fill: %r", strat.strategy_id, e)
             self.scorer.on_fill(f)
+
+        # 8.5. SL natifs (2026-06-17) : réconcilie les stop-market HL des positions
+        # MR (entrées + adoptées). APRÈS distribution des fills pour refléter les
+        # positions fraîchement ouvertes/fermées de ce tick.
+        if self.stop_manager is not None:
+            try:
+                summ = self.stop_manager.reconcile(self.mr.desired_stops())
+                if summ["placed"] or summ["cancelled"] or summ["errors"]:
+                    self.logger.info(
+                        "StopManager: posés=%d annulés=%d gardés=%d skip=%d err=%d",
+                        summ["placed"], summ["cancelled"], summ["kept"],
+                        summ["skipped"], summ["errors"],
+                    )
+            except Exception as e:
+                self.logger.warning("StopManager reconcile error: %r", e)
 
         # 9. Log
         active_signals = [s for s in all_signals if s.target_notional > 0]

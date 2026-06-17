@@ -212,6 +212,26 @@ class HyperliquidExchangeClient(ExchangeClient):
     def place_order(self, req: OrderRequest) -> OrderResult:
         is_buy = req.side.lower() == "buy"
 
+        # SL natif (2026-06-17) : stop-market trigger reduce-only. Routé vers
+        # place_stop_market du client bas niveau. Posé par NativeStopManager.
+        if getattr(req, "is_stop", False) and req.trigger_px:
+            result = self._client.place_stop_market(
+                coin=req.symbol,
+                is_buy=is_buy,
+                sz=float(req.qty),
+                trigger_px=float(req.trigger_px),
+            )
+            oid = str(result["oid"]) if result.get("oid") is not None else ""
+            return OrderResult(
+                order_id=oid,
+                symbol=req.symbol,
+                side=req.side,
+                qty=float(req.qty),
+                price=float(req.trigger_px),
+                status="filled" if result.get("filled") else "accepted",
+                raw=result,
+            )
+
         if hasattr(req, "leverage") and req.leverage and req.leverage > 0:
             try:
                 self._client.update_leverage(

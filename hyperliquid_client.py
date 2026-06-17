@@ -643,6 +643,41 @@ class HyperliquidClient:
 
         return self._parse_order_response(result)
 
+    def place_stop_market(
+        self,
+        coin: str,
+        is_buy: bool,
+        sz: float,
+        trigger_px: float,
+    ) -> dict:
+        """Pose un SL natif côté HL : stop-market trigger, reduce_only.
+
+        `is_buy` = sens de l'ORDRE de stop (opposé à la position : SELL pour
+        clôturer un long, BUY pour un short). `trigger_px` = niveau de
+        déclenchement. isMarket=True → exécution au marché au trigger (pas de
+        risque de stop limit non rempli). reduce_only contourne le min $10.
+        (2026-06-17 — câblage SL natif MR.)
+        """
+        self._require_exchange()
+        sz_decimals = self.get_sz_decimals(coin)
+        sz = math.floor(float(sz) * 10**sz_decimals) / 10**sz_decimals
+        if sz <= 0:
+            raise HyperliquidClientError(f"Taille SL invalide après arrondi: {sz}")
+        trigger_px = self.format_price(float(trigger_px), sz_decimals)
+        order_type = {"trigger": {"triggerPx": trigger_px, "isMarket": True, "tpsl": "sl"}}
+        try:
+            result = self.exchange.order(
+                coin,
+                is_buy=is_buy,
+                sz=sz,
+                limit_px=trigger_px,  # requis par la signature ; isMarket l'ignore à l'exécution
+                order_type=order_type,
+                reduce_only=True,
+            )
+        except Exception as e:
+            raise HyperliquidClientError(f"Erreur place_stop_market({coin}): {e}") from e
+        return self._parse_order_response(result)
+
     def place_bulk_orders(self, orders: list[dict]) -> list[dict]:
         self._require_exchange()
 

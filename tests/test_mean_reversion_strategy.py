@@ -325,3 +325,45 @@ def test_adopted_position_closes_on_revert():
     assert len(sigs) == 1
     assert sigs[0].target_notional == 0.0
     assert sigs[0].direction == 0.0
+
+
+# ─── desired_stops (SL natif, 2026-06-17) ────────────────────────────────────
+
+
+def test_desired_stops_from_entry_fill():
+    """Après une entrée (intent porte sl_price), on_fill le copie dans _positions
+    → desired_stops expose le stop pour NativeStopManager."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC"])
+    strat._intent["BTC"] = {"direction": 1.0, "target_notional": 30.0,
+                            "confidence": 0.5, "sl_price": 96.0}
+    strat.on_fill(Fill(order_id="1", asset="BTC", notional=30.0, price=100.0,
+                       fee=0.0, strategy_id="mean_reversion", timestamp=NOW))
+    ds = strat.desired_stops()
+    assert "BTC" in ds
+    assert ds["BTC"]["stop_px"] == 96.0
+    assert ds["BTC"]["side"] == "buy"
+    assert ds["BTC"]["qty"] > 0
+
+
+def test_desired_stops_empty_for_adopted_until_maintained():
+    """Une position adoptée n'a pas encore de sl_price (calculé au 1er maintien
+    via std) → absente de desired_stops tant qu'elle n'est pas maintenue."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC"])
+    strat.adopt_position("BTC", "sell", entry_px=100.0, qty=0.3)
+    assert "BTC" not in strat.desired_stops()
+
+
+def test_desired_stops_after_adopted_maintained():
+    """Après le 1er maintien d'une position adoptée, le SL est calculé/mémorisé
+    → desired_stops l'expose."""
+    np.random.seed(42)
+    strat = MeanReversionStrategy(
+        _cfg(window=30, hl_min=2.0, hl_max=200.0, exit_z=0.0), symbols=["BTC"]
+    )
+    strat.adopt_position("BTC", "sell", entry_px=100.0, qty=0.3)
+    x = [100.0]
+    for _ in range(79):
+        x.append(100.0 + 0.8 * (x[-1] - 100.0) + np.random.normal(0, 1.0))
+    strat.generate_signals(_make_market(x))
+    ds = strat.desired_stops()
+    assert "BTC" in ds and ds["BTC"]["side"] == "sell" and ds["BTC"]["stop_px"] > 100.0

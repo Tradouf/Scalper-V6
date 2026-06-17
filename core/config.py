@@ -84,6 +84,12 @@ class RiskConfig(BaseModel):
     # plat (supertrend flip-only seul actif) : entrée → bruit → coupe à -5% ROE →
     # flip inverse au point bas → re-coupe. 0 = désactivé.
     emergency_cooldown_sec: float = Field(1800.0, ge=0.0, le=86400.0, description="Blocage de ré-entrée sur un symbole pendant N secondes après un force-close emergency (anti-whipsaw, 0 = OFF)")
+    # 2026-06-17 — SL natif (stop-market reduce-only) posé côté HL et réconcilié
+    # à chaque tick par NativeStopManager, à partir des SL souhaités par MR
+    # (entrées ET positions adoptées). Survit aux crashs/restarts, contrairement
+    # au managed-exit logiciel. OFF par défaut : activation délibérée + observée
+    # (1er passage de vrais ordres trigger sur le compte live).
+    native_sl_enabled: bool = Field(False, description="Pose des SL natifs HL (trigger reduce-only) sur les positions MR via NativeStopManager")
     # 2026-06-07 — francois prend des positions MANUELLES sur le même compte
     # (boucle HYPE 10x, swings BTC). Le bot ne doit JAMAIS les toucher :
     # ni orphan force-close (emergency), ni chargement au boot (sinon le

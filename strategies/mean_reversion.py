@@ -103,6 +103,9 @@ class MeanReversionStrategy:
                 "entry_px": fill.price,
                 "qty": abs(fill.notional / fill.price),
                 "opened_ts": fill.timestamp.timestamp() if isinstance(fill.timestamp, dt.datetime) else time.time(),
+                # SL natif (2026-06-17) : niveau calculé à l'entrée, mémorisé dans
+                # l'intent → repris ici pour que NativeStopManager pose le stop.
+                "sl_price": (self._intent.get(sym) or {}).get("sl_price"),
             }
         else:
             # Si direction opposée → close ; sinon agrandit (rare en MR)
@@ -251,6 +254,7 @@ class MeanReversionStrategy:
             "direction": direction,
             "target_notional": notional,
             "confidence": conf,
+            "sl_price": float(sl_price),  # repris par on_fill → desired_stops()
         }
 
         return Signal(
@@ -284,6 +288,7 @@ class MeanReversionStrategy:
                 buf = max(self._cfg.sl_z - self._cfg.entry_z, self._cfg.min_sl_buffer_std) * std
                 stop_price = entry - buf if pos.get("side") == "buy" else entry + buf
                 pos["sl_pending"] = False  # posé une seule fois
+                pos["sl_price"] = float(stop_price)  # → desired_stops() (SL natif)
         return Signal(
             strategy_id=self._strategy_id,
             asset=sym,
@@ -305,6 +310,19 @@ class MeanReversionStrategy:
             return 0.3
         raw = (self._cfg.hl_max - hl) / (self._cfg.hl_max - self._cfg.hl_min)
         return max(0.3, min(1.0, raw))
+
+    def desired_stops(self) -> Dict[str, Dict]:
+        """SL souhaités pour les positions MR tenues, consommé par
+        NativeStopManager (2026-06-17). {sym → {stop_px, side, qty}} où `side`
+        est le sens de la POSITION (l'ordre de stop sera dans le sens opposé,
+        reduce_only). Une position sans sl_price (adoptée pas encore maintenue,
+        ou std indispo) est absente → pas de stop ce tick."""
+        out: Dict[str, Dict] = {}
+        for sym, p in self._positions.items():
+            sl = p.get("sl_price")
+            if sl and sl > 0 and p.get("qty", 0) > 0:
+                out[sym] = {"stop_px": float(sl), "side": p["side"], "qty": float(p["qty"])}
+        return out
 
     # ─── Accès pour dashboard / tests ─────────────────────────────────────────
 

@@ -27,6 +27,11 @@ class OrderRequest:
     reduce_only: bool = False
     client_id: Optional[str] = None
     strategy_id: Optional[str] = None  # NEW V7 : pour attribution PnL
+    # 2026-06-17 — SL natif (stop-market trigger reduce-only). is_stop=True route
+    # vers place_stop_market au lieu de order normal. trigger_px = niveau de
+    # déclenchement. Posé/réconcilié par NativeStopManager (execution/stop_manager).
+    is_stop: bool = False
+    trigger_px: Optional[float] = None
 
 
 @dataclass
