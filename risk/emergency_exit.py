@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
 from execution.types import OrderRequest
 
@@ -49,6 +49,32 @@ class EmergencyExitManager:
         self._paper = paper_mode
         # Fix #8 : timer de grâce par symbole orphelin.
         self._orphan_emergency_since: Dict[str, float] = {}
+        # 2026-06-16 anti-whipsaw : ts du dernier force-close réussi par symbole.
+        # Consulté par main._tick (signaux directionnels) et _drive_grid pour
+        # interdire toute ré-entrée pendant emergency_cooldown_sec.
+        self._last_emergency_ts: Dict[str, float] = {}
+
+    def in_cooldown(self, asset: str, now: Optional[float] = None) -> bool:
+        """True si `asset` a été force-closé il y a moins de emergency_cooldown_sec."""
+        cd = float(getattr(self._cfg, "emergency_cooldown_sec", 0.0) or 0.0)
+        if cd <= 0:
+            return False
+        last = self._last_emergency_ts.get(asset)
+        if last is None:
+            return False
+        if now is None:
+            now = time.time()
+        return (now - last) < cd
+
+    def cooldown_remaining(self, asset: str, now: Optional[float] = None) -> float:
+        """Secondes restantes de cooldown pour `asset` (0 si aucun)."""
+        cd = float(getattr(self._cfg, "emergency_cooldown_sec", 0.0) or 0.0)
+        last = self._last_emergency_ts.get(asset)
+        if cd <= 0 or last is None:
+            return 0.0
+        if now is None:
+            now = time.time()
+        return max(0.0, cd - (now - last))
 
     def _emergency_threshold(self, leverage: float) -> float:
         """Helper Fix 10 Knob A (port V6, flag OFF par défaut).
@@ -189,9 +215,12 @@ class EmergencyExitManager:
             result = self._write.place_order(req)
             status = getattr(result, "status", "?")
             if status in ("filled", "accepted"):
+                # Anti-whipsaw : arme le cooldown de ré-entrée sur ce symbole.
+                self._last_emergency_ts[asset] = time.time()
                 logger.warning(
-                    "EmergencyExit %s force-close %s qty=%.6f status=%s",
+                    "EmergencyExit %s force-close %s qty=%.6f status=%s — cooldown ré-entrée %.0fs",
                     asset, side, qty, status,
+                    float(getattr(self._cfg, "emergency_cooldown_sec", 0.0) or 0.0),
                 )
                 return True
             logger.error(

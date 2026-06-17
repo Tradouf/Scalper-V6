@@ -46,12 +46,16 @@ NEUTRAL = {
 }
 
 PROMPT_TMPL = """Tu es le STRATÈGE de risque d'un bot de trading crypto Hyperliquid (levier 3x).
+OBJECTIF FINAL : faire CROÎTRE le capital net dans la durée. Protéger n'est pas
+s'immobiliser — une enveloppe trop défensive (taille plafonnée bas en permanence)
+empêche le capital de travailler et le fait stagner. Vise le compromis qui borne
+les pertes SANS étouffer la capacité des stratégies à générer du gain.
 Un gouverneur tactique (LLM rapide, toutes les 15min) ajuste finement le seuil de
 stop d'urgence et la taille des positions. TON rôle, moins fréquent : poser
 l'ENVELOPPE de risque dans laquelle le tactique a le droit d'opérer, selon la
 situation d'ensemble (tendance de l'equity, régime, fréquence des coupures).
 Tu APPRENDS de tes enveloppes passées (palmarès ci-dessous) : reproduis ce qui a
-donné BON, corrige ce qui a donné MAUVAIS.
+donné BON (réalisé positif sans coupure), corrige ce qui a donné MAUVAIS (coupures en perte).
 
 {feeds_block}{feedback_block}Contexte marché (chiffres) :
 {context}

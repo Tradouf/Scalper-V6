@@ -131,6 +131,48 @@ class MeanReversionStrategy:
                 self._positions.pop(sym, None)
                 self._intent.pop(sym, None)
 
+    def adopt_position(
+        self,
+        sym: str,
+        side: str,
+        entry_px: float,
+        qty: float,
+        opened_ts: Optional[float] = None,
+        confidence: float = 0.6,
+    ) -> bool:
+        """Adopte une position pré-existante (orpheline après restart) pour la
+        RENDRE GÉRÉE par MR : maintien (HOLD ré-émis à chaque tick), sortie au
+        retour à la moyenne (|z| < exit_z) et SL natif posé au 1er maintien.
+
+        Sans adoption, une position absente de `_positions` est ignorée par
+        `_evaluate_symbol` (« non tracée → ne pas piloter ») et n'est plus coupée
+        qu'au stop d'urgence -5 % (toujours en perte). C'est la cause racine du
+        bleed orphelines V7 (BootReconciler n'hydratait que le portfolio, pas les
+        stratégies — 2026-06-17). Retourne True si adoptée.
+        """
+        side = (side or "").lower()
+        if sym not in self._symbols or side not in ("buy", "sell"):
+            return False
+        entry_px = float(entry_px)
+        qty = abs(float(qty))
+        notional = qty * entry_px
+        if notional <= 0:
+            return False
+        self._positions[sym] = {
+            "side": side,
+            "entry_px": entry_px,
+            "qty": qty,
+            "opened_ts": float(opened_ts) if opened_ts is not None else time.time(),
+            "adopted": True,
+            "sl_pending": True,  # SL natif posé au 1er maintien (_maintain_signal)
+        }
+        self._intent[sym] = {
+            "direction": 1.0 if side == "buy" else -1.0,
+            "target_notional": notional,
+            "confidence": float(confidence),
+        }
+        return True
+
     # ─── Évaluation par symbole ───────────────────────────────────────────────
 
     def _evaluate_symbol(self, sym: str, market: MarketSnapshot, now_ts: float) -> Optional[Signal]:
@@ -226,9 +268,22 @@ class MeanReversionStrategy:
     def _maintain_signal(self, sym: str, intent: Dict, market: MarketSnapshot) -> Signal:
         """Ré-émet l'exposition tenue (HOLD) pour la maintenir dans la cible.
 
-        stop_price=None : le SL natif est posé une fois à l'entrée ; on ne le
-        retouche pas à chaque tick de maintien.
+        stop_price=None en régime normal : le SL natif est posé une fois à
+        l'entrée, on ne le retouche pas à chaque tick. EXCEPTION : une position
+        ADOPTÉE au boot (sl_pending) n'a jamais eu d'entrée dans cette session →
+        on pose son SL natif au 1er maintien, ancré sur le prix d'entrée réel
+        avec le buffer std standard, puis on retombe sur None (2026-06-17).
         """
+        stop_price = None
+        pos = self._positions.get(sym)
+        if pos is not None and pos.get("sl_pending"):
+            m = self._last_metrics.get(sym, {})
+            std = m.get("std")
+            entry = pos.get("entry_px")
+            if std and std > 0 and entry:
+                buf = max(self._cfg.sl_z - self._cfg.entry_z, self._cfg.min_sl_buffer_std) * std
+                stop_price = entry - buf if pos.get("side") == "buy" else entry + buf
+                pos["sl_pending"] = False  # posé une seule fois
         return Signal(
             strategy_id=self._strategy_id,
             asset=sym,
@@ -236,7 +291,7 @@ class MeanReversionStrategy:
             target_notional=float(intent["target_notional"]),
             expected_edge_bps=0.0,
             confidence=float(intent["confidence"]),
-            stop_price=None,
+            stop_price=float(stop_price) if stop_price is not None else None,
             horizon_bars=1,
             timestamp=market.timestamp,
         )

@@ -79,6 +79,11 @@ class RiskConfig(BaseModel):
     emergency_exit_enabled: bool = Field(True, description="Active le mécanisme EMERGENCY EXIT (paper l'ignore de toute façon)")
     emergency_exit_roe_pct: float = Field(0.022, ge=0.005, le=0.10, description="Force-close si ROE ≤ -seuil (positions tracées ET orphelines)")
     orphan_grace_sec: float = Field(6.0, ge=1.0, le=60.0, description="Grâce avant force-close d'une orpheline (Fix #8)")
+    # 2026-06-16 — Anti-whipsaw : après un force-close emergency, un symbole est
+    # interdit de RÉ-ENTRÉE pendant N secondes. Casse la boucle observée en marché
+    # plat (supertrend flip-only seul actif) : entrée → bruit → coupe à -5% ROE →
+    # flip inverse au point bas → re-coupe. 0 = désactivé.
+    emergency_cooldown_sec: float = Field(1800.0, ge=0.0, le=86400.0, description="Blocage de ré-entrée sur un symbole pendant N secondes après un force-close emergency (anti-whipsaw, 0 = OFF)")
     # 2026-06-07 — francois prend des positions MANUELLES sur le même compte
     # (boucle HYPE 10x, swings BTC). Le bot ne doit JAMAIS les toucher :
     # ni orphan force-close (emergency), ni chargement au boot (sinon le

@@ -12,7 +12,9 @@ import json
 import logging
 import math
 import os
+import socket
 import time
+from urllib.parse import urlparse
 
 from hyperliquid.utils.signing import sign_l1_action, get_timestamp_ms
 
@@ -24,6 +26,17 @@ USE_TESTNET = False
 # Timeout HTTP (s) appliqué à TOUS les appels SDK HL (info + exchange). Sans lui,
 # requests.post(timeout=None) peut bloquer indéfiniment → gel total du bot.
 HL_HTTP_TIMEOUT_SEC = float(os.environ.get("HL_HTTP_TIMEOUT_SEC", "15"))
+
+# Init wallet résiliente. Cause racine du runaway emergency du 2026-06-15 :
+# coupure réseau (5G) / maj HL pendant l'init → Exchange=None → 12h de bot en
+# lecture seule (toutes écritures + force-close emergency échouaient en boucle).
+# On vérifie d'abord la connectivité, on réessaie au boot, et on tente une
+# reconnexion paresseuse dès qu'une écriture trouve l'exchange mort.
+HL_INIT_MAX_RETRIES = int(os.environ.get("HL_INIT_MAX_RETRIES", "5"))
+HL_INIT_BACKOFF_SEC = float(os.environ.get("HL_INIT_BACKOFF_SEC", "3"))
+HL_CONNECTIVITY_TIMEOUT_SEC = float(os.environ.get("HL_CONNECTIVITY_TIMEOUT_SEC", "5"))
+# Intervalle min entre 2 tentatives de reconnexion paresseuse (anti-spam).
+HL_REINIT_MIN_INTERVAL_SEC = float(os.environ.get("HL_REINIT_MIN_INTERVAL_SEC", "30"))
 
 logger = logging.getLogger("sdm.hl_client")
 
@@ -58,6 +71,10 @@ class HyperliquidClient:
         self.exchange = None
         self.wallet = None
         self._wallet_address: str | None = None
+        # Conservés pour permettre une reconnexion ultérieure (perte réseau 5G / maj HL).
+        self._wallet_key: str | None = None
+        self._account_addr: str | None = None
+        self._last_init_attempt: float = 0.0
 
         key = wallet_key
         account_addr = None
@@ -112,7 +129,25 @@ class HyperliquidClient:
             logger.warning("Erreur lecture config wallet %s: %s", config_path, e)
             return None, None
 
-    def _init_exchange(self, private_key: str, account_address: str | None = None) -> None:
+    def _check_connectivity(self, timeout: float = HL_CONNECTIVITY_TIMEOUT_SEC) -> bool:
+        """Teste la joignabilité de l'endpoint HL (DNS + TCP:443).
+
+        En 5G les coupures réseau sont fréquentes : on ne tente l'init wallet
+        que si la couche réseau répond, pour éviter un échec « définitif » qui
+        laisse le bot en lecture seule.
+        """
+        host = urlparse(self._api_url).hostname or "api.hyperliquid.xyz"
+        try:
+            sock = socket.create_connection((host, 443), timeout=timeout)
+            sock.close()
+            return True
+        except OSError as e:
+            logger.warning("Connectivité HL indisponible (%s:443): %s", host, e)
+            return False
+
+    def _try_init_exchange_once(self, private_key: str, account_address: str | None) -> bool:
+        """Une tentative d'init de l'Exchange. Retourne True si succès."""
+        self._last_init_attempt = time.monotonic()
         try:
             import eth_account
             from hyperliquid.exchange import Exchange
@@ -136,13 +171,64 @@ class HyperliquidClient:
                 self._wallet_address[:6],
                 self._wallet_address[-4:],
             )
+            return True
         except Exception as e:
             logger.error("Échec initialisation Exchange: %s", e)
             self.exchange = None
             self.wallet = None
             self._wallet_address = None
+            return False
+
+    def _init_exchange(self, private_key: str, account_address: str | None = None) -> None:
+        # Mémorise les credentials pour permettre une reconnexion paresseuse.
+        self._wallet_key = private_key
+        self._account_addr = account_address
+
+        for attempt in range(1, HL_INIT_MAX_RETRIES + 1):
+            if not self._check_connectivity():
+                if attempt < HL_INIT_MAX_RETRIES:
+                    wait = HL_INIT_BACKOFF_SEC * attempt
+                    logger.warning(
+                        "Init wallet: réseau HL injoignable (tentative %d/%d) — retry dans %.0fs",
+                        attempt, HL_INIT_MAX_RETRIES, wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                logger.error(
+                    "Init wallet abandonnée: réseau HL injoignable après %d tentatives — mode public "
+                    "(reconnexion automatique à la 1re écriture)", HL_INIT_MAX_RETRIES,
+                )
+                return
+
+            if self._try_init_exchange_once(private_key, account_address):
+                return
+
+            if attempt < HL_INIT_MAX_RETRIES:
+                wait = HL_INIT_BACKOFF_SEC * attempt
+                logger.warning(
+                    "Init wallet échouée (tentative %d/%d) — retry dans %.0fs",
+                    attempt, HL_INIT_MAX_RETRIES, wait,
+                )
+                time.sleep(wait)
+
+        logger.error(
+            "Échec init wallet après %d tentatives — mode public "
+            "(reconnexion automatique à la 1re écriture)", HL_INIT_MAX_RETRIES,
+        )
 
     def _require_exchange(self) -> None:
+        if self.exchange is not None:
+            return
+        # Reconnexion paresseuse : si l'init a échoué (coupure réseau 5G / maj HL),
+        # toute écriture (ordre, force-close emergency) tente de rétablir le wallet
+        # au lieu d'échouer en boucle pendant des heures. Bornée à 1 essai / intervalle.
+        now = time.monotonic()
+        if self._wallet_key and (now - self._last_init_attempt) >= HL_REINIT_MIN_INTERVAL_SEC:
+            logger.info("Exchange absent — tentative de reconnexion wallet…")
+            if self._check_connectivity():
+                self._try_init_exchange_once(self._wallet_key, self._account_addr)
+            else:
+                self._last_init_attempt = now  # anti-spam même si réseau down
         if self.exchange is None:
             raise HyperliquidClientError(
                 "Exchange non initialisé — wallet requis pour cette opération"

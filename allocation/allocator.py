@@ -44,9 +44,21 @@ class RuleBasedAllocator:
         regime: RegimeState,
         current_portfolio: Portfolio,
         perf_scores: Dict[str, float],
+        regime_by_asset: Dict[str, RegimeState] | None = None,
     ) -> TargetPortfolio:
         # ─── Étape 1-3 : poids par stratégie ─────────────────────────────────
-        weights = self._compute_strategy_weights(regime, perf_scores)
+        # Régime PAR INSTRUMENT (2026-06-16) : les poids stratégie dépendent du
+        # régime de l'ACTIF du signal, pas d'un label global unique. `regime`
+        # reste le fallback (symbole absent du dict). Cache par label pour ne
+        # pas recalculer (un seul jeu de poids par label distinct rencontré).
+        regime_by_asset = regime_by_asset or {}
+        _weights_cache: Dict[Regime, Dict[str, float]] = {}
+
+        def weights_for(asset: str) -> Dict[str, float]:
+            reg = regime_by_asset.get(asset, regime)
+            if reg.label not in _weights_cache:
+                _weights_cache[reg.label] = self._compute_strategy_weights(reg, perf_scores)
+            return _weights_cache[reg.label]
 
         # ─── Étape 4-5 : agrégation par actif ────────────────────────────────
         # contrib_i = weight_i × target_notional × confidence × sign(direction)
@@ -66,7 +78,7 @@ class RuleBasedAllocator:
                 if float(sig.direction) == 0.0 and sig.strategy_id:
                     close_intents[sig.asset] = sig.strategy_id
                 continue
-            w = weights.get(sig.strategy_id, 0.0)
+            w = weights_for(sig.asset).get(sig.strategy_id, 0.0)
             if w <= 0:
                 continue
             contrib = w * sig.target_notional * sig.confidence * float(sig.direction)

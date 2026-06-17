@@ -252,3 +252,76 @@ def test_sl_buffer_minimal_when_z_extreme():
     assert s.direction == 1.0
     # Pour z profond, le SL doit être SOUS le mark (correct pour LONG)
     assert s.stop_price < market.prices["BTC"]
+
+
+# ─── Adoption au boot (orphelines, 2026-06-17) ───────────────────────────────
+
+
+def test_adopt_position_populates_state():
+    """adopt_position remplit _positions + _intent → la position devient gérée."""
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC", "ETH"])
+    assert strat.adopt_position("ETH", "sell", entry_px=1781.0, qty=0.127) is True
+    assert "ETH" in strat._positions
+    assert strat._positions["ETH"]["adopted"] is True
+    assert strat._positions["ETH"]["sl_pending"] is True
+    assert "ETH" in strat.engaged_symbols()
+    intent = strat._intent["ETH"]
+    assert intent["direction"] == -1.0
+    assert intent["target_notional"] == pytest.approx(1781.0 * 0.127)
+
+
+def test_adopt_position_rejects_off_watchlist_and_invalid():
+    strat = MeanReversionStrategy(_cfg(), symbols=["BTC"])
+    # Hors watchlist
+    assert strat.adopt_position("DOGE", "buy", 0.1, 100.0) is False
+    # Notional nul
+    assert strat.adopt_position("BTC", "buy", 0.0, 100.0) is False
+    # Side invalide
+    assert strat.adopt_position("BTC", "flat", 100.0, 1.0) is False
+    assert strat._positions == {}
+
+
+def test_adopted_position_places_sl_once_then_holds():
+    """Une position adoptée pose son SL natif au 1er maintien (sl_pending), puis
+    ne le retouche plus. exit_z=0 force le maintien (jamais de CLOSE)."""
+    np.random.seed(42)
+    strat = MeanReversionStrategy(
+        _cfg(window=30, hl_min=2.0, hl_max=200.0, exit_z=0.0), symbols=["BTC"]
+    )
+    strat.adopt_position("BTC", "sell", entry_px=100.0, qty=0.3)
+    x = [100.0]
+    for _ in range(79):
+        x.append(100.0 + 0.8 * (x[-1] - 100.0) + np.random.normal(0, 1.0))
+    market = _make_market(x)
+
+    # 1er tick : SL posé (stop_price non None, au-dessus de l'entrée pour un short)
+    s1 = strat.generate_signals(market)[0]
+    assert s1.direction == -1.0
+    assert s1.target_notional == pytest.approx(100.0 * 0.3)
+    assert s1.stop_price is not None and s1.stop_price > 100.0
+    assert strat._positions["BTC"]["sl_pending"] is False
+
+    # 2e tick : SL déjà posé → plus retouché
+    s2 = strat.generate_signals(market)[0]
+    assert s2.stop_price is None
+
+
+def test_adopted_position_closes_on_revert():
+    """Adoptée puis retour à la moyenne (|z| < exit_z) → signal CLOSE.
+
+    exit_z très grand → |z| < exit_z toujours vrai → CLOSE déterministe dès que
+    la position est tenue (série AR(1) pour passer le filtre half-life)."""
+    np.random.seed(7)
+    strat = MeanReversionStrategy(
+        _cfg(window=30, hl_min=2.0, hl_max=200.0, exit_z=1.0), symbols=["BTC"]
+    )
+    strat.adopt_position("BTC", "sell", entry_px=100.0, qty=0.3)
+    x = [100.0]
+    for _ in range(79):
+        x.append(100.0 + 0.8 * (x[-1] - 100.0) + np.random.normal(0, 1.0))
+    x[-1] = float(np.mean(x[-31:-1]))  # dernier close = moyenne fenêtre → z ≈ 0
+    market = _make_market(x)
+    sigs = strat.generate_signals(market)
+    assert len(sigs) == 1
+    assert sigs[0].target_notional == 0.0
+    assert sigs[0].direction == 0.0

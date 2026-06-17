@@ -64,55 +64,44 @@ class RuleBasedRegimeDetector:
     def __init__(self, config: RegimeConfig, softmax_temperature: float = 0.5) -> None:
         self._cfg = config
         self._temperature = softmax_temperature
-        # État interne pour l'hystérésis
+        # État interne pour l'hystérésis (label GLOBAL agrégé, cf. detect())
         self._current_label: Optional[Regime] = None
         self._candidate_label: Optional[Regime] = None
         self._candidate_dwell: int = 0
+        # Hystérésis PAR SYMBOLE (cf. detect_per_symbol()) : un marché peut avoir
+        # BTC en trend_up et SOL en range simultanément. Chaque symbole garde son
+        # propre état sticky. clé = symbole → {current, candidate, dwell}.
+        self._sym_hyst: dict[str, dict] = {}
         # Pour le test no-leak et le debug
         self._last_features: dict = {}
 
     # ─── API publique ─────────────────────────────────────────────────────────
 
-    def detect(self, market: MarketSnapshot) -> RegimeState:
-        # 1. Agrégation des features sur tous les symboles disponibles
-        per_symbol: list[dict] = []
-        for sym, candles in market.candles.items():
-            if len(candles) < 30:  # pas assez pour ADX(14)
-                continue
-            h, l, c = _extract_arrays(candles)
-            feat = {
-                "adx": adx(h, l, c, period=14),
-                "hurst": hurst_rs(c, min_chunk=8),
-                "vol_p": vol_percentile(c, window=24, lookback=min(100, len(c) - 25)),
-                "autocorr": autocorr_lag1(c, window=min(50, len(c) - 2)),
-                "slope_z": returns_slope_zscore(c, window=min(48, len(c) - 2)),
-            }
-            # filtre les NaN/None
-            if any(v is None or (isinstance(v, float) and not math.isfinite(v)) for v in feat.values()):
-                continue
-            per_symbol.append(feat)
+    def _symbol_features(self, candles: list[Candle]) -> Optional[dict]:
+        """Calcule le vecteur de features d'un symbole, ou None si insuffisant/NaN."""
+        if len(candles) < 30:  # pas assez pour ADX(14)
+            return None
+        h, l, c = _extract_arrays(candles)
+        feat = {
+            "adx": adx(h, l, c, period=14),
+            "hurst": hurst_rs(c, min_chunk=8),
+            "vol_p": vol_percentile(c, window=24, lookback=min(100, len(c) - 25)),
+            "autocorr": autocorr_lag1(c, window=min(50, len(c) - 2)),
+            "slope_z": returns_slope_zscore(c, window=min(48, len(c) - 2)),
+        }
+        # filtre les NaN/None
+        if any(v is None or (isinstance(v, float) and not math.isfinite(v)) for v in feat.values()):
+            return None
+        return feat
 
-        if not per_symbol:
-            # Pas de données utiles → uniforme + label TREND_UP par défaut
-            uniform = {r: 0.25 for r in Regime}
-            return RegimeState(
-                timestamp=market.timestamp,
-                probabilities=uniform,
-                label=Regime.RANGE,  # défaut prudent
-                confidence=0.25,
-            )
-
-        # Moyenne simple sur les symboles
-        keys = per_symbol[0].keys()
-        avg = {k: float(np.mean([d[k] for d in per_symbol])) for k in keys}
-        self._last_features = avg
-
-        # 2. Scores bruts par régime
-        adx_norm = avg["adx"] / 100.0  # ADX ∈ [0,100] → [0,1]
-        slope = avg["slope_z"]          # signé, magnitude libre (~ -3..+3)
-        hurst = avg["hurst"]            # ~ 0..1 (théorique 0.5 RW)
-        vol_p = avg["vol_p"]            # [0, 1]
-        autoc = avg["autocorr"]         # [-1, 1]
+    def _features_to_probas(self, feat: dict) -> dict[Regime, float]:
+        """Scoring rule-based + softmax sur un vecteur de features (agrégé OU
+        par symbole). Pure fonction de `feat` → probabilités par régime."""
+        adx_norm = feat["adx"] / 100.0  # ADX ∈ [0,100] → [0,1]
+        slope = feat["slope_z"]          # signé, magnitude libre (~ -3..+3)
+        hurst = feat["hurst"]            # ~ 0..1 (théorique 0.5 RW)
+        vol_p = feat["vol_p"]            # [0, 1]
+        autoc = feat["autocorr"]         # [-1, 1]
 
         # Scoring rule-based avec amplification :
         # Sur crypto 1h, le slope_z reste typiquement faible (<0.3 en magnitude)
@@ -153,27 +142,81 @@ class RuleBasedRegimeDetector:
             Regime.RANGE: score_range,
             Regime.HIGH_VOL: score_hv,
         }
+        return _softmax(scores, temperature=self._temperature)
 
-        # 3. Softmax
-        probas = _softmax(scores, temperature=self._temperature)
+    def detect(self, market: MarketSnapshot) -> RegimeState:
+        """Régime GLOBAL agrégé (moyenne des features sur la watchlist).
+
+        Conservé pour le gouverneur de risque, le stratège et le logging — qui
+        raisonnent sur une posture d'ensemble. Le pilotage par instrument
+        (allocation, grille) utilise detect_per_symbol().
+        """
+        # 1. Agrégation des features sur tous les symboles disponibles
+        per_symbol: list[dict] = [
+            feat for candles in market.candles.values()
+            if (feat := self._symbol_features(candles)) is not None
+        ]
+
+        if not per_symbol:
+            # Pas de données utiles → uniforme + label prudent.
+            uniform = {r: 0.25 for r in Regime}
+            return RegimeState(
+                timestamp=market.timestamp,
+                probabilities=uniform,
+                label=Regime.RANGE,  # défaut prudent
+                confidence=0.25,
+            )
+
+        # Moyenne simple sur les symboles
+        keys = per_symbol[0].keys()
+        avg = {k: float(np.mean([d[k] for d in per_symbol])) for k in keys}
+        self._last_features = avg
+
+        probas = self._features_to_probas(avg)
         argmax_label = max(probas, key=probas.get)
-        confidence = probas[argmax_label]
 
-        # 4. Hystérésis sur le label dominant
+        # Hystérésis sur le label dominant. La confidence reportée suit le label
+        # EFFECTIF (sticky), pas l'argmax brut — sinon en transition on affichait
+        # "label=trend_up conf=0.51" où 0.51 était en fait P(range).
         effective_label = self._apply_hysteresis(argmax_label)
 
         return RegimeState(
             timestamp=market.timestamp,
             probabilities=probas,
             label=effective_label,
-            confidence=confidence,
+            confidence=probas[effective_label],
         )
+
+    def detect_per_symbol(self, market: MarketSnapshot) -> dict[str, RegimeState]:
+        """Régime PAR INSTRUMENT : un RegimeState distinct par symbole, chacun
+        avec sa propre hystérésis sticky. Permet à BTC d'être trend_up pendant
+        que SOL est range — l'allocation et la grille gatent alors par symbole.
+
+        Les symboles sans données suffisantes sont absents du dict (l'appelant
+        retombe sur le régime global).
+        """
+        out: dict[str, RegimeState] = {}
+        for sym, candles in market.candles.items():
+            feat = self._symbol_features(candles)
+            if feat is None:
+                continue
+            probas = self._features_to_probas(feat)
+            argmax_label = max(probas, key=probas.get)
+            effective_label = self._apply_hysteresis_sym(sym, argmax_label)
+            out[sym] = RegimeState(
+                timestamp=market.timestamp,
+                probabilities=probas,
+                label=effective_label,
+                confidence=probas[effective_label],
+            )
+        return out
 
     def reset(self) -> None:
         """Reset état interne (pour tests / backtests)."""
         self._current_label = None
         self._candidate_label = None
         self._candidate_dwell = 0
+        self._sym_hyst.clear()
         self._last_features = {}
 
     @property
@@ -217,3 +260,30 @@ class RuleBasedRegimeDetector:
         # Pas encore assez : on garde le label courant (mais on renvoie les
         # probas brutes — c'est le label qui est sticky, pas les probas).
         return self._current_label
+
+    def _apply_hysteresis_sym(self, sym: str, argmax_label: Regime) -> Regime:
+        """Même logique que _apply_hysteresis mais avec un état dédié par symbole
+        (self._sym_hyst[sym]). Évite qu'un symbole hérite du label sticky d'un
+        autre."""
+        st = self._sym_hyst.get(sym)
+        if st is None:
+            # Premier passage sur ce symbole : adopte directement l'argmax.
+            self._sym_hyst[sym] = {"current": argmax_label, "candidate": argmax_label, "dwell": 0}
+            return argmax_label
+
+        if argmax_label == st["current"]:
+            st["candidate"] = argmax_label
+            st["dwell"] = 0
+            return st["current"]
+
+        if argmax_label == st["candidate"]:
+            st["dwell"] += 1
+        else:
+            st["candidate"] = argmax_label
+            st["dwell"] = 1
+
+        if st["dwell"] >= self._cfg.min_dwell_bars:
+            st["current"] = st["candidate"]
+            st["dwell"] = 0
+
+        return st["current"]

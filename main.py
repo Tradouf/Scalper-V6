@@ -146,12 +146,13 @@ class V7Bot:
         if not self.cfg.execution.paper_mode:
             from execution.boot_reconciler import BootReconciler
             br = BootReconciler(self.hl_read, self.exchange, self.portfolio,
-                                manual_symbols=self.cfg.risk.manual_symbols)
+                                manual_symbols=self.cfg.risk.manual_symbols,
+                                mr_strategy=self.mr)
             summary = br.reconcile()
             self.logger.info(
-                "BootReconciler résumé: positions=%d equity=$%.2f orders=%d ghosts=%d orphans=%d errors=%d",
-                summary["positions_loaded"], summary["equity"],
-                summary["orders_live"], summary["ghosts_purged"],
+                "BootReconciler résumé: positions=%d adoptées=%d equity=$%.2f orders=%d ghosts=%d orphans=%d errors=%d",
+                summary["positions_loaded"], summary.get("positions_adopted", 0),
+                summary["equity"], summary["orders_live"], summary["ghosts_purged"],
                 summary["orphans_absorbed"], len(summary["errors"]),
             )
             if summary["errors"]:
@@ -192,6 +193,7 @@ class V7Bot:
         }
         self._gov_emergency_log = deque(maxlen=500)   # ts des emergency exits récents
         self._last_regime = None
+        self._last_regimes_by_sym = {}  # régime par instrument (2026-06-16)
         self._last_vol_ratio = 1.0
         self._equity_boot = float(self.portfolio.equity)  # référence trajectoire (stratège)
         self._strategist = None
@@ -459,38 +461,25 @@ class V7Bot:
                     pass
                 os.execv(sys.executable, [sys.executable, str(REPO / "main.py")])
 
-    def _drive_grid(self, market, regime, prices) -> None:
+    def _drive_grid(self, market, regime, prices, regimes_by_sym=None) -> None:
         """Pilote le grid_engine : activation conditionnelle + tick FSM.
 
         2026-06-07 — la grille est active en HIGH_VOL (profil resserré) ET en
         RANGE (moissonneuse de fond, biais momentum 24h, priorité MR par
         préemption). Désactivation : régime trend OU breakout/drift OU sécurité
         vol OU préemption MR sur le symbole.
+
+        2026-06-16 — gating PAR INSTRUMENT : chaque symbole évalue son propre
+        régime (regimes_by_sym), donc la grille peut tourner sur SOL (range)
+        pendant que BTC (trend_up) la garde éteinte. `regime` reste le fallback.
         """
         from regime.features import atr as compute_atr
         from core.types import Regime
+        regimes_by_sym = regimes_by_sym or {}
         weights = self.allocator.get_weights(regime, self.scorer.scores())
-        grid_w = weights.get("grid", 0.0)
+        grid_w_global = weights.get("grid", 0.0)
         equity = max(self.portfolio.equity, 100.0)
-        # Budget grille : poids allocateur en high_vol (inchangé) ; en RANGE,
-        # fraction dédiée range_budget_frac — la grille est hors allocateur
-        # (matrice range = 100% MR) pour ne pas diluer la taille des entrées MR.
-        if regime.label == Regime.RANGE:
-            grid_total_budget = self.cfg.strategies.grid.range_budget_frac * equity
-        else:
-            grid_total_budget = grid_w * equity
         n_syms = max(len(self.cfg.symbols), 1)
-        budget_per_sym = grid_total_budget / n_syms
-        # La grille s'active en HIGH_VOL (profil encadré) et, depuis 2026-06-07,
-        # en RANGE comme moissonneuse de fond — avec PRIORITÉ MR : elle s'efface
-        # (préemption plus bas) des symboles où MR est engagée.
-        is_high_vol = regime.label == Regime.HIGH_VOL
-        is_grid_regime = is_high_vol or regime.label == Regime.RANGE
-        # Profil resserré uniquement en high_vol ; en range, ATR factor standard.
-        hv_factor = (
-            float(getattr(self.cfg.strategies.grid, "high_vol_atr_factor", 0.25))
-            if is_high_vol else float(self.cfg.strategies.grid.atr_factor)
-        )
 
         # Enveloppe de sécurité : si la vol réalisée explose (> mult × médiane), la
         # grille high_vol se ferait rincer → pause + flat (hystérésis : reprise <0.8×).
@@ -507,13 +496,12 @@ class V7Bot:
             self._grid_safety_pause = False
             self.logger.info("GRID SÉCURITÉ : vol revenue (%.2f×) → reprise autorisée", vol_ratio)
 
-        should_activate = (
-            is_grid_regime
-            and not self._grid_safety_pause
-            and budget_per_sym >= self.cfg.strategies.grid.activation_threshold_usdc
-        )
         # Priorité MR (2026-06-07) : symboles occupés par MR interdits à la grille.
         mr_engaged = self.mr.engaged_symbols()
+        std_atr_factor = float(self.cfg.strategies.grid.atr_factor)
+        hv_atr_factor = float(getattr(self.cfg.strategies.grid, "high_vol_atr_factor", 0.25))
+        activation_threshold = self.cfg.strategies.grid.activation_threshold_usdc
+        range_budget_frac = self.cfg.strategies.grid.range_budget_frac
         # En pause sécurité : on flatte les grilles encore actives (position incluse).
         if self._grid_safety_pause:
             with self._grid_lock:
@@ -531,6 +519,25 @@ class V7Bot:
             # (observé 10:48). On signale la progression ; un vrai hang HTTP
             # à l'intérieur d'une itération déclenche toujours après 180s.
             self._last_tick_ts = time.time()
+            # Régime PROPRE au symbole (fallback = régime global agrégé).
+            reg_sym = regimes_by_sym.get(sym, regime)
+            is_high_vol = reg_sym.label == Regime.HIGH_VOL
+            is_grid_regime = is_high_vol or reg_sym.label == Regime.RANGE
+            # Budget : poids allocateur en high_vol ; en RANGE, fraction dédiée
+            # range_budget_frac (la grille est hors allocateur pour ne pas diluer
+            # la taille des entrées MR). Calculé sur le régime DU symbole.
+            if reg_sym.label == Regime.RANGE:
+                grid_total_budget = range_budget_frac * equity
+            else:
+                grid_total_budget = grid_w_global * equity
+            budget_per_sym = grid_total_budget / n_syms
+            # Profil ATR resserré uniquement en high_vol ; sinon standard.
+            hv_factor = hv_atr_factor if is_high_vol else std_atr_factor
+            should_activate = (
+                is_grid_regime
+                and not self._grid_safety_pause
+                and budget_per_sym >= activation_threshold
+            )
             # Configure le budget côté grid (info pour le Signal généré ensuite)
             try:
                 self.grid.set_budget(sym, budget_per_sym)
@@ -545,7 +552,10 @@ class V7Bot:
                     if is_active and sym in mr_engaged:
                         self.grid_engine.deactivate(sym, cancel=True, close_position=True)
                         self.logger.info("GRID %s PRÉEMPTÉE par MR (flat + cancel, priorité MR)", sym)
-                    elif not is_active and should_activate and sym not in mr_engaged:
+                    elif (
+                        not is_active and should_activate and sym not in mr_engaged
+                        and not self.emergency.in_cooldown(sym)
+                    ):
                         candles = market.candles.get(sym, [])
                         if len(candles) < 30:
                             continue
@@ -571,10 +581,10 @@ class V7Bot:
                             elif mom < -thr:
                                 bias = "short"
                         if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor, bias=bias):
-                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f bias=%s (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, bias, regime.label.value)
+                            self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f bias=%s (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, bias, reg_sym.label.value)
                     elif is_active and not should_activate:
                         self.grid_engine.deactivate(sym, cancel=True)
-                        self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, regime.label.value, prob_range)
+                        self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, reg_sym.label.value, reg_sym.probabilities.get(Regime.RANGE, 0.0))
             except Exception as e:
                 self.logger.warning("Grid activation %s error: %r", sym, e)
 
@@ -699,16 +709,20 @@ class V7Bot:
             prices={s: prices.get(s, 0.0) for s in self.cfg.symbols},
         )
 
-        # 2. Régime
+        # 2. Régime — global agrégé (gouverneur/stratège/log) + PAR INSTRUMENT
+        # (2026-06-16) pour le pilotage allocation/grille : BTC peut être trend_up
+        # pendant que SOL est range. Chaque symbole gate alors selon SON régime.
         regime = self.detector.detect(market)
         self._last_regime = regime  # pour le gouverneur de risque (thread découplé)
+        regimes_by_sym = self.detector.detect_per_symbol(market)
+        self._last_regimes_by_sym = regimes_by_sym
 
         # 2.5. Grid driver (séparé du flow Signal car le grid est event-driven).
         # On donne au grid son budget par symbole (= poids grid × equity / N syms),
         # et on appelle son on_tick pour faire avancer la FSM (fills internes,
         # health check, drift guard...).
         try:
-            self._drive_grid(market, regime, prices)
+            self._drive_grid(market, regime, prices, regimes_by_sym)
         except Exception as e:
             self.logger.warning("Grid driver error: %r", e)
 
@@ -738,6 +752,27 @@ class V7Bot:
             except Exception as e:
                 self.logger.warning("Strategy %s error: %r", strat.strategy_id, e)
 
+        # 3.5. Cooldown post-emergency (anti-whipsaw, 2026-06-16) : un symbole
+        # fraîchement force-closé est interdit de RÉ-ENTRÉE pendant
+        # emergency_cooldown_sec. Casse la boucle entrée→coupe→flip→re-coupe
+        # observée en marché plat (supertrend flip-only seul actif). Les signaux
+        # de FERMETURE (target_notional == 0) passent toujours — on veut pouvoir
+        # solder, jamais ouvrir.
+        if self.cfg.risk.emergency_cooldown_sec > 0:
+            blocked: list[str] = []
+            kept = []
+            for s in all_signals:
+                if s.target_notional > 0 and self.emergency.in_cooldown(s.asset):
+                    blocked.append(s.asset)
+                else:
+                    kept.append(s)
+            if blocked:
+                self.logger.info(
+                    "Cooldown post-emergency : %d entrée(s) bloquée(s) %s",
+                    len(blocked), sorted(set(blocked)),
+                )
+            all_signals = kept
+
         # 4. Perf scores
         perf_scores = self.scorer.scores()
 
@@ -748,7 +783,10 @@ class V7Bot:
         # "Notional < $10" du 2026-06-02 (audit) : l'engine tentait de
         # refléter ~$7-8 d'inventaire et HL rejetait.
         directional_signals = [s for s in all_signals if s.strategy_id != self.grid.strategy_id]
-        target = self.allocator.allocate(directional_signals, regime, self.portfolio, perf_scores)
+        target = self.allocator.allocate(
+            directional_signals, regime, self.portfolio, perf_scores,
+            regime_by_asset=regimes_by_sym,
+        )
 
         # 6. Risk project
         from risk.state import RiskStateImpl
@@ -844,6 +882,11 @@ class V7Bot:
                     "label": regime.label.value,
                     "confidence": regime.confidence,
                     "probabilities": {r.value: p for r, p in regime.probabilities.items()},
+                },
+                # Régime PAR INSTRUMENT (2026-06-16) : sym → label + confidence.
+                "regime_by_symbol": {
+                    sym: {"label": rs.label.value, "confidence": rs.confidence}
+                    for sym, rs in self._last_regimes_by_sym.items()
                 },
                 "weights": self.allocator.get_weights(regime, self.scorer.scores()),
                 "perf_scores": self.scorer.scores(),

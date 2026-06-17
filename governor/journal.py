@@ -20,9 +20,19 @@ le RÉALISÉ + les coupures, pas sur la dérive marché. Le feedback montre les 
 séparément → l'agent apprend de SON impact, pas du bruit de marché.
 
 Verdict d'une décision sur sa fenêtre :
-  - MAUVAIS : >= 3 coupures, OU (réalisé < -0.3% ET >= 1 coupure)
-  - BON     : <= 1 coupure ET réalisé >= -0.1%
-  - NEUTRE  : entre les deux
+  - MAUVAIS : >= 1 coupure, OU réalisé < -0.3%
+  - BON     : ZÉRO coupure ET réalisé >= +0.1%  (productif, pas seulement préservé)
+  - NEUTRE  : entre les deux (zéro coupure, réalisé entre -0.3% et +0.1%)
+Règle dure (exigence francois 2026-06-16) : une coupure emergency = une position
+force-fermée EN PERTE (cf. emergency_roe_pct = seuil de perte). Une position coupée
+en perte est MAUVAISE, quelle qu'en soit la raison → dès >= 1 coupure dans la
+fenêtre, le verdict est MAUVAIS (pas de demi-mesure NEUTRE).
+
+Asymétrie corrigée (francois 2026-06-16) : le but des agents est de FAIRE CROÎTRE
+le capital, pas seulement d'éviter les pertes. "BON" récompense donc un réalisé
+POSITIF (>= +0.1%), pas le simple "rien cassé". Un réglage qui n'ouvre rien (zéro
+coupure, réalisé ~0) reste NEUTRE → l'agent ne peut pas marquer des points en
+s'immobilisant ; il doit laisser le capital travailler.
 """
 from __future__ import annotations
 
@@ -99,9 +109,9 @@ class DecisionJournal:
             realized_pct = realized / ref * 100.0
             drift_pct = drift / ref * 100.0
             # Verdict sur ce que l'agent CONTRÔLE : réalisé + coupures.
-            if cuts >= 3 or (realized_pct < -0.3 and cuts >= 1):
+            if cuts >= 1 or realized_pct < -0.3:
                 verdict = "MAUVAIS"
-            elif cuts <= 1 and realized_pct >= -0.1:
+            elif realized_pct >= 0.1:   # cuts == 0 implicite ; réalisé POSITIF = productif
                 verdict = "BON"
             else:
                 verdict = "NEUTRE"
