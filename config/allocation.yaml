@@ -184,7 +184,8 @@ strategies:
     x_long: 65.0
     x_short: 60.0
     notional_usdc: 30.0
-    tp_pct: 0.012               # TP seul (pas de SL) — à affiner au backtest
+    tp_pct: 0.012               # TP = 2×SL (décision francois 2026-06-18) — à affiner au backtest
+    sl_pct: 0.006              # SL géré : sans lui, le TP seul verrouille le book (backtest)
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:

@@ -307,3 +307,10 @@
 **Changes** : aucun (toutes métriques sous seuils ou sans marge paramètre, aucun paramètre borné applicable)
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway — pas de re-proposition)
 **Alerts** : aucun critique. Runaway emergency-exit toujours résolu (10e audit calme, HYPE absent des emergency). La cause racine 06-13 15:00 (freins catastrophe) et la proposition critical 06-15 09:00 (garde anti-boucle submit-fail) restent non corrigées — merge humain des propositions pending recommandé.
+
+## 2026-06-18 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=33 (11 Error/11 error/10 HTTPError/1 HyperliquidClientError ; aucun type ≥50), equity=$592.27→$590.29 (-$1.98 / -0.33 %)
+**Diagnostic** : Régime 100 % range (720 ticks). Fenêtre calme, aucun pattern net franchi — 11e audit consécutif sans runaway. (1) EMERGENCY EXIT=0, HYPE absent → runaway emergency-exit toujours résolu, équity quasi-plate non destructrice (-0.33 %). (2) Grille totalement inerte : szi0/abandons/RO/DRIFT/BREAKOUT/doublons/activations/désact tous à 0 → pas de bump min_spacing ; DRIFT=0 → pattern "lâcher plus vite" non déclenché, drift_window reste au floor 300. Pas de NameError 'prob_range' (0 activation grille → chemin non exercé). (3) Réseau bénin : 33 erreurs dont 10 HTTPError (429 rate-limit sur candles SUI/AAVE 1h + clearinghouseState), aucun type ≥50 — blips transitoires, couvert par pending 06-08 (retry/backoff). (4) Aucun paramètre dans les bornes n'adresse quoi que ce soit (tout à 0 ; emergency/caps/flags hors périmètre).
+**Changes** : aucun (toutes métriques à 0, aucun paramètre borné applicable)
+**Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway — pas de re-proposition)
+**Alerts** : aucun critique. Runaway emergency-exit toujours résolu (11e audit calme). Cause racine 06-13 15:00 (freins catastrophe) et proposition critical 06-15 09:00 (garde anti-boucle submit-fail) restent non corrigées — merge humain des propositions pending recommandé.
