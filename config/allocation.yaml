@@ -41,11 +41,13 @@ allocation:
       mean_reversion: 0.0
       momentum: 0.0
       supertrend: 1.0
+      awesome_oscillator: 0.0    # hors allocateur (gère BTC en propre), poids 0 partout
     trend_down:
       grid: 0.0
       mean_reversion: 0.0
       momentum: 0.0
       supertrend: 1.0
+      awesome_oscillator: 0.0
     range:
       # 2026-06-07 — range partagé avec PRIORITÉ MR (décision francois) :
       # la grille moissonne le range par défaut ; dès que MR a un setup
@@ -60,11 +62,13 @@ allocation:
       mean_reversion: 1.0
       momentum: 0.0
       supertrend: 0.0
+      awesome_oscillator: 0.0
     high_vol:
       grid: 1.0
       mean_reversion: 0.0
       momentum: 0.0
       supertrend: 0.0
+      awesome_oscillator: 0.0
 
   # Multiplicateur de performance — borné, lent.
   mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
@@ -165,6 +169,22 @@ strategies:
     notional_max_usdc: 500.0
     notional_min_usdc: 10.0
     cooldown_sec: 900
+
+  # Awesome Oscillator (BTC 5m) — 2026-06-18. OFF par défaut : à backtester avant
+  # tout live (cf. AO_STRATEGY_PLAN.md). Hors allocateur ; quand enabled=true, BTC
+  # lui est RÉSERVÉ (retiré des autres stratégies + de la grille). x_long/x_short
+  # = magnitudes (LONG si AO<−x_long, SHORT si AO>+x_short), auto-tunés en Phase 2.
+  awesome_oscillator:
+    enabled: false
+    interval: 5m
+    symbols:
+      - BTC
+    fast: 5
+    slow: 34
+    x_long: 65.0
+    x_short: 60.0
+    notional_usdc: 30.0
+    tp_pct: 0.012               # TP seul (pas de SL) — à affiner au backtest
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
