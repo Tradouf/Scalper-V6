@@ -264,3 +264,58 @@ class HyperliquidReadAdapter:
                 continue
         candles.sort(key=lambda c: c.ts_open)
         return candles
+
+    def get_funding_history(self, coin: str, days: int = 200) -> List[tuple]:
+        """Historique du funding HL (horaire) → liste [(time_ms, funding_rate_float)].
+
+        HL plafonne fundingHistory à ~500 lignes/requête → on pagine par fenêtres.
+        Funding réglé chaque heure ; rate = fraction par heure (cumulable).
+        """
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - days * 24 * 3600 * 1000
+        out: List[tuple] = []
+        cursor = start_ms
+        hour_ms = 3600_000
+        # Fenêtres de ~480h pour rester sous le cap, avec garde anti-boucle infinie.
+        for _ in range(days // 20 + 5):
+            if cursor >= end_ms:
+                break
+            window_end = min(cursor + 480 * hour_ms, end_ms)
+            data = None
+            for attempt in range(5):  # retry/backoff sur 429 (rate limit transitoire)
+                try:
+                    r = requests.post(
+                        HL_API,
+                        json={"type": "fundingHistory", "coin": coin.upper(),
+                              "startTime": cursor, "endTime": window_end},
+                        timeout=self._timeout,
+                    )
+                    if r.status_code == 429:
+                        time.sleep(1.5 * (attempt + 1))
+                        continue
+                    r.raise_for_status()
+                    data = r.json()
+                    break
+                except Exception as e:
+                    if attempt == 4:
+                        self._log_throttled_warning("HL fundingHistory %s error: %r", coin, e)
+                    else:
+                        time.sleep(1.0 * (attempt + 1))
+            if data is None:
+                break
+            if not isinstance(data, list) or not data:
+                cursor = window_end + 1
+                continue
+            for row in data:
+                try:
+                    out.append((int(row.get("time", 0)), float(row.get("fundingRate", 0))))
+                except Exception:
+                    continue
+            # Avance après le dernier point reçu (HL renvoie trié ascendant).
+            cursor = int(data[-1].get("time", window_end)) + 1
+            time.sleep(0.1)  # politesse anti-429 entre pages
+        # Dédoublonne par timestamp (chevauchements de fenêtres), trie.
+        seen = {}
+        for ts, fr in out:
+            seen[ts] = fr
+        return sorted(seen.items())
