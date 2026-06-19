@@ -130,11 +130,14 @@ INDEX_HTML = r"""<!doctype html>
       <div><div class="lbl">Confidence</div><div class="big" id="conf">…</div></div>
     </div>
     <div id="probas"></div>
+    <div class="lbl" style="margin-top:8px">Régime par symbole <span style="color:#7a8595">(gouverne grille + signaux dir.)</span></div>
+    <div id="regbysym" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"></div>
   </div>
 
   <div class="card">
     <h2>Poids stratégies (allocator)</h2>
     <table id="wtbl"><thead><tr><th>Strat</th><th>Poids</th><th>Mult perf</th></tr></thead><tbody></tbody></table>
+    <div id="wt_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
   </div>
 
   <div class="card">
@@ -224,6 +227,17 @@ async function refresh() {
     }).join('');
     document.getElementById('probas').innerHTML = probaHtml;
 
+    // Régime par symbole — chips colorées (montre où les grilles peuvent tourner)
+    const rbs = st.regime_by_symbol || {};
+    const regColor = {trend_up:'#38c172', trend_down:'#e3342f', range:'#4aa3ff', high_vol:'#e3b341'};
+    const grids0 = st.grids || {};
+    document.getElementById('regbysym').innerHTML = Object.keys(rbs).sort().map(sym => {
+      const lbl = (rbs[sym]||{}).label || '?';
+      const c = regColor[lbl] || '#7a8595';
+      const hasGrid = grids0[sym] ? ' ⚙' : '';
+      return `<span class="mono" title="${lbl}" style="font-size:10px;padding:1px 5px;border-radius:3px;border:1px solid ${c};color:${c}">${sym}${hasGrid}</span>`;
+    }).join('');
+
     // Poids stratégies
     const w = st.weights || {};
     const p = st.perf_scores || {};
@@ -231,9 +245,16 @@ async function refresh() {
     tbW.innerHTML = '';
     Object.keys(w).sort().forEach(k => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${k}</td><td>${(w[k]*100).toFixed(1)}%</td><td>${fmt(p[k]||1.0, 2)}</td>`;
+      const isGrid = k === 'grid';
+      const wcell = isGrid ? '<span class="mut">hors alloc.</span>' : `${(w[k]*100).toFixed(1)}%`;
+      tr.innerHTML = `<td>${k}</td><td>${wcell}</td><td>${fmt(p[k]||1.0, 2)}</td>`;
       tbW.appendChild(tr);
     });
+    const nGrids = Object.keys(grids0).length;
+    document.getElementById('wt_note').innerHTML =
+      `Poids du régime <b>global</b> (<span class="mono">${r_.label||'?'}</span>) — gouvernent les stratégies <b>directionnelles</b> (supertrend/MR/momentum). `
+      + `La <b>grille est hors allocateur</b> : gatée par le régime <b>de chaque symbole</b> (range/high_vol), elle gère son book via sa propre FSM. `
+      + `Actuellement <b>${nGrids}</b> grille(s) active(s) ⚙.`;
 
     // Portfolio — en live, on privilégie les positions HL réelles (szi/entry/ROE)
     document.getElementById('equity').innerHTML = '$'+fmt(st.portfolio_equity, 2);
@@ -336,8 +357,9 @@ async function refresh() {
       cards.appendChild(card);
     });
     if (gk.length === 0) cards.innerHTML = '<div style="color:var(--mut);text-align:center;padding:12px">aucune grille active (régime hors range/high_vol ?)</div>';
-    document.getElementById('grid_note').textContent =
-      'gris = limit en attente · vert = fill (TP en pose) · bleu = TP posé · rouge = frozen (szi mauvais côté, dégel auto ~3s) · ligne jaune = prix actuel. Bias ▲ = long-only (momentum 24h > +1%).';
+    document.getElementById('grid_note').innerHTML =
+      'Grille <b>hors allocateur</b> : activée par symbole dès que SON régime est <b>range</b> ou <b>high_vol</b> (indépendant du label global et du panneau poids). '
+      + 'gris = limit en attente · vert = fill (TP en pose) · bleu = TP posé · rouge = frozen (szi mauvais côté, dégel auto ~3s) · ligne jaune = prix actuel. Bias ▲ = long-only (momentum 24h > +1%).';
 
     // Allocation
     document.getElementById('tgross').textContent = '$' + fmt(st.target_gross, 2);
