@@ -22,6 +22,10 @@ memory/shared_memory.json
 memory/scalp_memory.json
 memory/orderflow.db
 memory/v7_state.json
+memory/governor_journal.jsonl
+memory/strategist_journal.jsonl
+memory/strategy_posture.json
+memory/risk_overrides.json
 *.pid
 
 # Audit Opus V7 — run logs (les sorties audit_log_v7.md / code_proposals_v7.md SONT suivies)
