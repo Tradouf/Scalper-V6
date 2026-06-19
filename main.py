@@ -75,6 +75,7 @@ class V7Bot:
         from strategies.mean_reversion import MeanReversionStrategy
         from strategies.momentum import MomentumStrategy
         from strategies.supertrend import SupertrendStrategy
+        from strategies.awesome_oscillator import AwesomeOscillatorStrategy
         from strategies.grid_engine import GridEngine
         from strategies.grid import GridStrategy
         from allocation.allocator import RuleBasedAllocator
@@ -105,17 +106,35 @@ class V7Bot:
             )
 
         # Composants
+        # Awesome Oscillator (2026-06-18) — BTC 5m, hors allocateur. Quand activé,
+        # ses symboles (BTC) sont RÉSERVÉS : retirés des autres stratégies ET de la
+        # grille pour éviter deux stratégies sur le même actif netté (cause des
+        # bugs szi=0). OFF par défaut → `directional_symbols == self.cfg.symbols`
+        # et tout le pipeline AO est court-circuité (comportement strictement inchangé).
+        ao_cfg = self.cfg.strategies.awesome_oscillator
+        self._ao_enabled = bool(ao_cfg.enabled)
+        self._ao_reserved = set(ao_cfg.symbols) if self._ao_enabled else set()
+        directional_symbols = [s for s in self.cfg.symbols if s not in self._ao_reserved]
+        if self._ao_reserved:
+            self.logger.warning(
+                "Awesome Oscillator ACTIF — symboles réservés (retirés des autres "
+                "stratégies + grille) : %s", sorted(self._ao_reserved),
+            )
+
         self.detector = RuleBasedRegimeDetector(self.cfg.regime)
-        self.mr = MeanReversionStrategy(self.cfg.strategies.mean_reversion, self.cfg.symbols)
-        self.momentum = MomentumStrategy(self.cfg.strategies.momentum, self.cfg.symbols)
+        self.mr = MeanReversionStrategy(self.cfg.strategies.mean_reversion, directional_symbols)
+        self.momentum = MomentumStrategy(self.cfg.strategies.momentum, directional_symbols)
         # Supertrend : sizing dynamique, lit l'equity courante via callback
         self.supertrend = SupertrendStrategy(
-            self.cfg.strategies.supertrend, self.cfg.symbols,
+            self.cfg.strategies.supertrend, directional_symbols,
             equity_callback=lambda: self.portfolio.equity,
         )
+        # AO : toujours instancié (no-op si OFF), HORS de self.strategies (timeframe
+        # 5m dédié + routage propre, cf. _tick). Reçoit les fills via la distribution.
+        self.ao = AwesomeOscillatorStrategy(ao_cfg)
         # Grid : utilise notre exchange (paper). Sa FSM placera des limits via paper.
         self.grid_engine = GridEngine(self.exchange, self.cfg.strategies.grid)
-        self.grid = GridStrategy(self.grid_engine, symbols=self.cfg.symbols)
+        self.grid = GridStrategy(self.grid_engine, symbols=directional_symbols)
         self.strategies = [self.mr, self.momentum, self.supertrend, self.grid]
 
         self.allocator = RuleBasedAllocator(self.cfg.allocation)
@@ -530,6 +549,10 @@ class V7Bot:
                         self.logger.warning("GRID SÉCURITÉ deactivate %s: %r", sym, e)
 
         for sym in self.cfg.symbols:
+            # AO (2026-06-18) : symboles réservés à l'Awesome Oscillator exclus de
+            # la grille (évite deux stratégies sur le même actif netté). No-op si OFF.
+            if sym in self._ao_reserved:
+                continue
             # Heartbeat watchdog (2026-06-07) : l'activation séquentielle de
             # 8 grilles (~20s de fetch candles chacune) dépassait les 180s du
             # watchdog au boot → re-exec en plein vol + double batch d'ordres
@@ -763,6 +786,8 @@ class V7Bot:
             for strat in self.strategies:
                 if hasattr(strat, "sync_positions"):
                     strat.sync_positions(net_by_asset)
+            if self._ao_enabled:
+                self.ao.sync_positions(net_by_asset)
         except Exception as e:
             self.logger.warning("sync_positions error: %r", e)
 
@@ -796,6 +821,36 @@ class V7Bot:
                 )
             all_signals = kept
 
+        # 3.7. Awesome Oscillator (2026-06-18) — timeframe 5m DÉDIÉ, HORS allocateur.
+        # Gated (OFF par défaut → bloc entièrement court-circuité). BTC lui est
+        # réservé (retiré des autres stratégies + grille en __init__). Sa cible est
+        # injectée directement dans le TargetPortfolio après allocate (cf. étape 5).
+        ao_signals: list = []
+        if self._ao_enabled:
+            try:
+                ao_candles = {}
+                for sym in self.ao.symbols:
+                    c = self.hl_read.get_candles(
+                        sym, interval=self.cfg.strategies.awesome_oscillator.interval, limit=200
+                    )
+                    if c:
+                        ao_candles[sym] = c
+                if ao_candles:
+                    ao_market = MarketSnapshot(
+                        timestamp=market.timestamp,
+                        candles=ao_candles,
+                        prices={s: prices.get(s, 0.0) for s in self.ao.symbols},
+                    )
+                    ao_signals = self.ao.generate_signals(ao_market)
+                    # Cooldown post-emergency : bloque les ENTRÉES (les closes passent).
+                    if self.cfg.risk.emergency_cooldown_sec > 0:
+                        ao_signals = [
+                            s for s in ao_signals
+                            if not (s.target_notional > 0 and self.emergency.in_cooldown(s.asset))
+                        ]
+            except Exception as e:
+                self.logger.warning("AO generate error: %r", e)
+
         # 4. Perf scores
         perf_scores = self.scorer.scores()
 
@@ -810,6 +865,12 @@ class V7Bot:
             directional_signals, regime, self.portfolio, perf_scores,
             regime_by_asset=regimes_by_sym,
         )
+        # AO hors allocateur : injecte sa cible BTC dans le portefeuille cible
+        # (chaque signal porte son strategy_id → attribution des fills, y compris
+        # les fermetures). Puis l'expose au log/persist via all_signals.
+        if ao_signals:
+            target = self._merge_ao_target(target, ao_signals)
+            all_signals = all_signals + ao_signals
 
         # 6. Risk project
         from risk.state import RiskStateImpl
@@ -855,6 +916,11 @@ class V7Bot:
                         strat.on_fill(f)
                     except Exception as e:
                         self.logger.warning("Strategy %s on_fill: %r", strat.strategy_id, e)
+            if self._ao_enabled and self.ao.strategy_id == f.strategy_id:
+                try:
+                    self.ao.on_fill(f)
+                except Exception as e:
+                    self.logger.warning("AO on_fill: %r", e)
             self.scorer.on_fill(f)
 
         # 8.5. SL natifs (2026-06-17) : réconcilie les stop-market HL des positions
@@ -884,6 +950,37 @@ class V7Bot:
 
         # 10. Persiste l'état pour le dashboard
         self._persist_state(regime, all_signals, target, projected, fills)
+
+    def _merge_ao_target(self, target, ao_signals):
+        """Injecte les cibles AO dans le TargetPortfolio (BTC réservé, hors allocateur).
+
+        signed = direction × target_notional (direction ∈ {−1, 0, +1}). Chaque
+        position porte son strategy_id pour l'attribution du fill — y compris les
+        fermetures (signed=0), sinon le fill de close n'est pas redistribué à l'AO
+        et _positions n'est jamais purgé (désync). Override défensif de tout asset
+        AO déjà présent (ne doit pas arriver, BTC étant réservé)."""
+        from core.types import TargetPortfolio, TargetPosition
+
+        ao_assets = set()
+        ao_positions = []
+        for s in ao_signals:
+            signed = float(s.direction) * float(s.target_notional)
+            ao_assets.add(s.asset)
+            ao_positions.append(TargetPosition(
+                asset=s.asset,
+                target_notional=signed,
+                contributing_strategies={s.strategy_id: signed},
+            ))
+        kept = [p for p in target.positions if p.asset not in ao_assets]
+        positions = kept + ao_positions
+        gross = sum(abs(p.target_notional) for p in positions)
+        net = sum(p.target_notional for p in positions)
+        return TargetPortfolio(
+            timestamp=target.timestamp,
+            positions=positions,
+            gross_exposure=gross,
+            net_exposure=net,
+        )
 
     # ─── Persistence ──────────────────────────────────────────────────────────
 

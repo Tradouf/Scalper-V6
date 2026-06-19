@@ -205,11 +205,34 @@ class SupertrendStrategyConfig(BaseModel):
     cooldown_sec: int = Field(900, ge=60, le=86400, description="Cooldown post-flip (15min par défaut)")
 
 
+class AwesomeOscillatorStrategyConfig(BaseModel):
+    """Awesome Oscillator momentum (BTC 5m). AO = SMA(median,fast) − SMA(median,slow).
+
+    Entrées seuillées sur barre clôturée. Sortie : TP + SL gérés (au mark, comme le
+    trail logiciel). x_long/x_short sont des magnitudes positives : LONG si AO < −x_long,
+    SHORT si AO > +x_short. Livré OFF par défaut, à backtester avant tout live (BTC
+    réservé à l'AO quand activé). x_long/x_short/tp/sl auto-tunés par LLM en Phase 2
+    (cf. AO_STRATEGY_PLAN.md). Le backtest 2026-06-18 a montré que le TP seul (sans SL)
+    verrouille le book sur une position à contre-tendance → SL ajouté (TP = 2×SL par
+    défaut, décision francois)."""
+    enabled: bool = False
+    interval: str = "5m"
+    symbols: list[str] = Field(default_factory=lambda: ["BTC"])
+    fast: int = Field(5, ge=2, le=20, description="Période SMA rapide")
+    slow: int = Field(34, ge=10, le=100, description="Période SMA lente")
+    x_long: float = Field(65.0, ge=0.0, le=100000.0, description="Seuil LONG (AO < −x_long)")
+    x_short: float = Field(60.0, ge=0.0, le=100000.0, description="Seuil SHORT (AO > +x_short)")
+    notional_usdc: float = Field(30.0, ge=5.0, le=2000.0, description="Notional fixe par trade")
+    tp_pct: float = Field(0.012, ge=0.001, le=0.10, description="Take-profit en fraction du prix")
+    sl_pct: float = Field(0.006, ge=0.0, le=0.10, description="Stop-loss en fraction du prix (0 = TP seul, déconseillé). TP=2×SL par défaut")
+
+
 class StrategiesConfig(BaseModel):
     grid: GridStrategyConfig = Field(default_factory=GridStrategyConfig)
     mean_reversion: MeanReversionStrategyConfig = Field(default_factory=MeanReversionStrategyConfig)
     momentum: MomentumStrategyConfig = Field(default_factory=MomentumStrategyConfig)
     supertrend: SupertrendStrategyConfig = Field(default_factory=SupertrendStrategyConfig)
+    awesome_oscillator: AwesomeOscillatorStrategyConfig = Field(default_factory=AwesomeOscillatorStrategyConfig)
 
 
 class PathsConfig(BaseModel):
@@ -266,6 +289,8 @@ class V7Config(BaseModel):
             enabled.add("momentum")
         if self.strategies.supertrend.enabled:
             enabled.add("supertrend")
+        if self.strategies.awesome_oscillator.enabled:
+            enabled.add("awesome_oscillator")
         matrix_strats = set()
         for d in self.allocation.base_weights.values():
             matrix_strats.update(d.keys())
