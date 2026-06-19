@@ -600,8 +600,14 @@ class V7Bot:
                         if self.grid_engine.activate(sym, mid, atr_val, atr_factor=hv_factor, bias=bias):
                             self.logger.info("Grid ACTIVATED %s center=%.4f atr=%.4f factor=%.2f budget=$%.0f bias=%s (%s)", sym, mid, atr_val, hv_factor, budget_per_sym, bias, reg_sym.label.value)
                     elif is_active and not should_activate:
-                        self.grid_engine.deactivate(sym, cancel=True)
-                        self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f)", sym, reg_sym.label.value, reg_sym.probabilities.get(Regime.RANGE, 0.0))
+                        # close_position=True (2026-06-18) : à l'abandon de la grille
+                        # sur bascule de régime, on FERME l'inventaire résiduel (market
+                        # reduce_only). Sans ça, `cancel=True` annulait les TP mais
+                        # laissait l'inventaire orphelin — invisible au portefeuille
+                        # interne, surveillé seulement par le coupe-circuit catastrophe
+                        # (cause des shorts DOGE/SUI/ZEC abandonnés le 06-17).
+                        self.grid_engine.deactivate(sym, cancel=True, close_position=True)
+                        self.logger.info("Grid DEACTIVATED %s (regime=%s prob_range=%.2f) — inventaire fermé", sym, reg_sym.label.value, reg_sym.probabilities.get(Regime.RANGE, 0.0))
             except Exception as e:
                 self.logger.warning("Grid activation %s error: %r", sym, e)
 
