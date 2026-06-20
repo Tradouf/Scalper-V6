@@ -42,12 +42,14 @@ allocation:
       momentum: 0.0
       supertrend: 1.0
       awesome_oscillator: 0.0    # hors allocateur (gère BTC en propre), poids 0 partout
+      tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
     trend_down:
       grid: 0.0
       mean_reversion: 0.0
       momentum: 0.0
       supertrend: 1.0
       awesome_oscillator: 0.0
+      tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
     range:
       # 2026-06-07 — range partagé avec PRIORITÉ MR (décision francois) :
       # la grille moissonne le range par défaut ; dès que MR a un setup
@@ -63,12 +65,14 @@ allocation:
       momentum: 0.0
       supertrend: 0.0
       awesome_oscillator: 0.0
+      tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
     high_vol:
       grid: 1.0
       mean_reversion: 0.0
       momentum: 0.0
       supertrend: 0.0
       awesome_oscillator: 0.0
+      tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
 
   # Multiplicateur de performance — borné, lent.
   mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
@@ -117,9 +121,11 @@ governor:
   onchain_feed_enabled: true     # flux whales Whale Alert (pression exchange)
 
 # ─── Stratégies (paramètres par stratégie) ────────────────────────────────────
+# 2026-06-20 — TOUT EN TSMOM (décision francois) : grid/MR/momentum/supertrend coupés
+# (ne faisaient que saigner, cf. fills live −112$/20j). Seul le TSMOM trade désormais.
 strategies:
   grid:
-    enabled: true
+    enabled: false   # 2026-06-20 coupé (all-in TSMOM)
     atr_factor: 0.3
     levels: 5
     notional_per_level_usdc: 15.0
@@ -145,7 +151,7 @@ strategies:
     fast_loop_sec: 3              # à cadence rapide → évite l'épidémie szi=0/frozen
 
   mean_reversion:
-    enabled: true
+    enabled: false   # 2026-06-20 coupé (all-in TSMOM)
     interval: 1h
     window: 50
     entry_z: 1.5             # 2.0→1.5 pour P7 observation (plus de trades)
@@ -158,14 +164,14 @@ strategies:
     min_sl_buffer_std: 1.5
 
   momentum:
-    enabled: true
+    enabled: false   # 2026-06-20 coupé (all-in TSMOM)
     interval: 1h
     lookback_bars: 48
     entry_zscore: 1.0        # 1.5→1.0 pour P7 observation
     notional_usdc: 200.0
 
   supertrend:
-    enabled: true
+    enabled: false   # 2026-06-20 coupé (all-in TSMOM)
     interval: 1h
     period: 10
     multiplier: 3.0
@@ -190,6 +196,48 @@ strategies:
     notional_usdc: 30.0
     tp_pct: 0.012               # TP = 2×SL (décision francois 2026-06-18) — à affiner au backtest
     sl_pct: 0.006              # SL géré : sans lui, le TP seul verrouille le book (backtest)
+
+  # TSMOM — trend following 1d (2026-06-20). ACTIVÉ (décision francois). Hors allocateur :
+  # ses symboles sont RÉSERVÉS (retirés des autres stratégies + grille) → grid/MR/momentum/
+  # supertrend passent idle dessus (remplacement total voulu). Exempté de l'emergency exit
+  # (tient des semaines), protégé par caps + kill-switch DD. HYPE/ZEC EXCLUS (manuels).
+  # Univers réduit à 12 coins majeurs : à $536 d'equity les 41 coins tombent sous le min HL
+  # $10/position (0/41 viables) ; 12 coins @ vol 20% = 12/12 viables ~$14 chacun. Élargir
+  # quand l'equity grossit (~$2500+ pour les 41).
+  tsmom:
+    enabled: true
+    interval: 1d
+    symbols:
+      - BTC
+      - ETH
+      - SOL
+      - BNB
+      - XRP
+      - DOGE
+      - LINK
+      - AVAX
+      - LTC
+      - AAVE
+      - SUI
+      - ARB
+    # NB 2026-06-20 : HYPE/ZEC/TAO PAS ajoutés — à $536 d'equity, 15 coins diluent le
+    # sizing sous le min HL $10 (ZEC/HYPE trop volatils → flat de toute façon, et ça
+    # ferait tomber AAVE sous $10). 12 coins = max viable. Leurs positions résiduelles
+    # se ferment via reconcile (plus aucune stratégie ne les cible). Élargir si equity ≳$2500.
+    lookback: 30                # actif (single-lookback). Ignoré si lookbacks ci-dessous décommenté.
+    # ENSEMBLE multi-lookback (recherche 2026-06-20, run_tsmom_ensemble.py) — OPT-IN, commenté.
+    # Combine le signe sur 4 horizons (~2 sem→4 mois) → direction continue (conviction). Mesure
+    # honnête (split OOS, 12 coins) : le Sharpe N'est PAS amélioré significativement (Δ dans le
+    # bruit, cohérent avec le null result antérieur) ; gains ROBUSTES = turnover −20..25%/an
+    # (frais) et maxDD plus petit (14%→~9%). Décommenter pour l'activer au prochain restart :
+    # lookbacks: [15, 30, 60, 120]
+    band: 0.0
+    vol_win: 30
+    target_vol_annual: 0.20     # ~12% maxDD, ~0,34× levier (choisir par tolérance DD)
+    scalar_cap: 3.0
+    max_gross_frac: 0.60        # garde-fou dur sur l'exposition brute
+    refresh_sec: 1800           # refetch bougies 1d (anti-429) ; cible maintenue entre deux
+    min_notional_usdc: 10.0     # sous ce notional/coin → flat (HL rejette < $10)
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
