@@ -398,3 +398,10 @@
 **Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; emergency=1 sous seuil non-runaway ; tout sous seuils)
 **Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
 **Alerts** : aucun critique. EMERGENCY EXIT=1 sur ARB (résidu hors univers rotation, non-runaway). Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle) restent en attente de merge humain mais non déclenchées cette fenêtre.
+
+## 2026-06-21 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=24 (11 error/7 ReadTimeout/3 MaxRetry/3 ConnectTimeout ; aucun type ≥50), equity=$535.50→$535.22 (-$0.28 / -0.05 %)
+**Diagnostic** : Régime 100 % range (704 ticks). Fenêtre calme, équity strictement plate. (1) EMERGENCY EXIT=0, HYPE absent → signature runaway éteinte ; aucun résidu fermé cette fenêtre (vs ARB au 15:00). (2) Toutes pathologies grille à 0 : grid/MR/momentum/supertrend `enabled:false` (rotation pilote hors allocateur depuis 06-21) → paramètres inertes ; DRIFT=0/BREAKOUT=0 → pattern "lâcher plus vite" non déclenché. (3) Réseau bénin : 24 erreurs réparties (ReadTimeout/ConnectTimeout/MaxRetry sur candles TAO/AAVE 1h + refresh HL), aucun type ≥50 — blips transitoires, couvert par pending 06-08. Pas de submit-fail/ZEC, pas de NameError. BootReconciler au boot (positions=6, 1 adoptée) = restart routinier, sans incident. (4) **Aucun paramètre borné applicable** : mes seules bornes portent sur grid/MR/momentum désactivés ; rotation/TSMOM/caps/flags hors périmètre.
+**Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; toutes métriques à 0 ou triviales)
+**Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
+**Alerts** : aucun critique. Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle submit-fail) restent en attente de merge humain mais non déclenchées cette fenêtre.
