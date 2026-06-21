@@ -377,3 +377,10 @@
 **Changes** : aucun (stratégies bornées toutes désactivées → paramètres inertes ; toutes métriques à 0 ou triviales)
 **Code proposals** : aucune (rien à signaler cette fenêtre ; pending 06-02/06-08/06-13/06-15 inchangées)
 **Alerts** : aucun critique. Spike ZEC sell (143) et cluster réseau (87 NameResolution) du 06-20 15:00 tous deux résorbés. Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle submit-fail) restent en attente de merge humain mais non déclenchées cette fenêtre.
+
+## 2026-06-21 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=46 (toutes réseau : 20 error/11 ReadTimeout/6 MaxRetry/6 ConnectTimeout/1 HTTP/1 ConnectionError…), equity=$537.70→$535.64
+**Diagnostic** : Fenêtre calme (700 ticks, 100 % range). Toutes pathologies grille à 0, emergency=0, équity quasi-plate (-$2.06, -0,38 %). Grid/MR/momentum/supertrend `enabled:false` (all-in TSMOM) → pathologies grille à 0 attendues (stratégies inertes). Erreurs = bruit réseau pur (ReadTimeout sur candles SUI 1h + ConnectTimeout/MaxRetry sur refresh allMids HL), aucun type ≥50, aucun submit-fail/ZEC. Aucun paramètre borné applicable (mes bornes portent sur des stratégies désactivées).
+**Changes** : aucun
+**Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
+**Alerts** : aucun

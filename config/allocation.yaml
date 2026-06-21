@@ -224,13 +224,13 @@ strategies:
     # sizing sous le min HL $10 (ZEC/HYPE trop volatils → flat de toute façon, et ça
     # ferait tomber AAVE sous $10). 12 coins = max viable. Leurs positions résiduelles
     # se ferment via reconcile (plus aucune stratégie ne les cible). Élargir si equity ≳$2500.
-    lookback: 30                # actif (single-lookback). Ignoré si lookbacks ci-dessous décommenté.
-    # ENSEMBLE multi-lookback (recherche 2026-06-20, run_tsmom_ensemble.py) — OPT-IN, commenté.
-    # Combine le signe sur 4 horizons (~2 sem→4 mois) → direction continue (conviction). Mesure
-    # honnête (split OOS, 12 coins) : le Sharpe N'est PAS amélioré significativement (Δ dans le
-    # bruit, cohérent avec le null result antérieur) ; gains ROBUSTES = turnover −20..25%/an
-    # (frais) et maxDD plus petit (14%→~9%). Décommenter pour l'activer au prochain restart :
-    # lookbacks: [15, 30, 60, 120]
+    lookback: 30                # ignoré quand lookbacks (ensemble) est fourni ci-dessous
+    # ENSEMBLE multi-lookback ACTIVÉ 2026-06-20 (décision francois). Combine le signe sur 4
+    # horizons (~2 sem→4 mois) → direction continue (conviction). Mesure honnête (split OOS,
+    # 12 coins) : Sharpe ≈ inchangé (Δ dans le bruit) ; gains ROBUSTES = turnover −20..25%/an
+    # (frais) et maxDD plus petit (14%→~9%). Au restart, les 12 positions se redimensionnent
+    # par conviction (certaines réduites/flat si les horizons divergent).
+    lookbacks: [15, 30, 60, 120]
     band: 0.0
     vol_win: 30
     target_vol_annual: 0.20     # ~12% maxDD, ~0,34× levier (choisir par tolérance DD)
