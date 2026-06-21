@@ -136,7 +136,7 @@ INDEX_HTML = r"""<!doctype html>
 
   <div class="card">
     <h2>Poids stratégies (allocator)</h2>
-    <table id="wtbl"><thead><tr><th>Strat</th><th>Poids</th><th>Mult perf</th></tr></thead><tbody></tbody></table>
+    <table id="wtbl"><thead><tr><th>Strat</th><th>Poids alloc.</th><th>Statut réel</th></tr></thead><tbody></tbody></table>
     <div id="wt_note" style="font-size:11px;color:#7a8595;margin-top:6px"></div>
   </div>
 
@@ -238,23 +238,52 @@ async function refresh() {
       return `<span class="mono" title="${lbl}" style="font-size:10px;padding:1px 5px;border-radius:3px;border:1px solid ${c};color:${c}">${sym}${hasGrid}</span>`;
     }).join('');
 
-    // Poids stratégies
+    // Poids stratégies. ATTENTION : `weights` = poids NOMINAUX de l'allocateur pour le régime
+    // global. Les stratégies HORS allocateur (grid/AO/tsmom/rotation) ont poids 0 dans la matrice
+    // mais peuvent être celles qui TRADENT réellement → on dérive l'activité réelle des signaux.
+    const HORS_ALLOC = new Set(['grid','awesome_oscillator','tsmom','rotation']);
     const w = st.weights || {};
     const p = st.perf_scores || {};
+    // Activité réelle par stratégie, dérivée de signals_detail (strategy_id des signaux émis).
+    const byStrat = {};
+    (st.signals_detail || []).forEach(s => {
+      const k = s.strategy; if (!k) return;
+      if (!byStrat[k]) byStrat[k] = {n:0, act:0, gross:0};
+      byStrat[k].n++;
+      if (Math.abs(s.target_notional||0) > 0) { byStrat[k].act++; byStrat[k].gross += Math.abs(s.target_notional); }
+    });
     const tbW = document.querySelector('#wtbl tbody');
     tbW.innerHTML = '';
-    Object.keys(w).sort().forEach(k => {
+    const allStrats = Array.from(new Set([...Object.keys(w), ...Object.keys(byStrat)])).sort();
+    allStrats.forEach(k => {
       const tr = document.createElement('tr');
-      const isGrid = k === 'grid';
-      const wcell = isGrid ? '<span class="mut">hors alloc.</span>' : `${(w[k]*100).toFixed(1)}%`;
-      tr.innerHTML = `<td>${k}</td><td>${wcell}</td><td>${fmt(p[k]||1.0, 2)}</td>`;
+      const a = byStrat[k] || {act:0, gross:0};
+      const hors = HORS_ALLOC.has(k);
+      const wcell = hors ? '<span class="mut">hors alloc.</span>' : `${((w[k]||0)*100).toFixed(1)}%`;
+      // Statut réel : ACTIF (signaux>0) en vert ; sinon idle/nominal grisé.
+      let stat;
+      if (a.act > 0) stat = `<span class="grn">▶ ACTIF ${a.act} sig · $${fmt(a.gross,0)}</span>`;
+      else if (!hors && (w[k]||0) > 0) stat = '<span class="mut">nominal (idle)</span>';
+      else stat = '<span class="mut">—</span>';
+      tr.innerHTML = `<td>${k}</td><td>${wcell}</td><td>${stat}</td>`;
       tbW.appendChild(tr);
     });
     const nGrids = Object.keys(grids0).length;
-    document.getElementById('wt_note').innerHTML =
-      `Poids du régime <b>global</b> (<span class="mono">${r_.label||'?'}</span>) — gouvernent les stratégies <b>directionnelles</b> (supertrend/MR/momentum). `
-      + `La <b>grille est hors allocateur</b> : gatée par le régime <b>de chaque symbole</b> (range/high_vol), elle gère son book via sa propre FSM. `
-      + `Actuellement <b>${nGrids}</b> grille(s) active(s) ⚙.`;
+    // Stratégie(s) qui tradent RÉELLEMENT (signaux actifs).
+    const actNames = allStrats.filter(k => (byStrat[k]||{}).act > 0);
+    const horsActive = actNames.filter(k => HORS_ALLOC.has(k) && k !== 'grid');
+    let banner = '';
+    if (horsActive.length) {
+      banner = `<b class="grn">▶ Trade réellement : ${horsActive.join(', ')}</b> (HORS allocateur). `
+        + `Le tableau ci-dessus montre les poids <b>nominaux</b> de l'allocateur pour le régime global `
+        + `(<span class="mono">${r_.label||'?'}</span>) — la stratégie y figurant à 100% peut être <b>désactivée</b> ; `
+        + `c'est l'overlay hors-allocateur qui tient le book. `;
+    } else {
+      banner = `Poids du régime <b>global</b> (<span class="mono">${r_.label||'?'}</span>) — gouvernent les stratégies <b>directionnelles</b>. `;
+    }
+    document.getElementById('wt_note').innerHTML = banner
+      + `La <b>grille</b> (si active) est aussi hors allocateur, gatée par le régime de chaque symbole. `
+      + `Grilles actives : <b>${nGrids}</b> ⚙.`;
 
     // Portfolio — en live, on privilégie les positions HL réelles (szi/entry/ROE)
     document.getElementById('equity').innerHTML = '$'+fmt(st.portfolio_equity, 2);
