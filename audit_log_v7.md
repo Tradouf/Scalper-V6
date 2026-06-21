@@ -384,3 +384,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
 **Alerts** : aucun
+
+## 2026-06-21 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$535.64→$535.69
+**Diagnostic** : Régime 100 % range (720 ticks). Fenêtre totalement calme : toutes pathologies grille à 0, emergency=0, AUCUNE erreur loggée (même pas de bruit réseau), équity strictement plate (+$0.05). Grid/MR/momentum/supertrend `enabled:false` (all-in TSMOM) → pathologies grille à 0 attendues (stratégies inertes). Aucun pattern net, aucun seuil franchi. Aucun paramètre borné applicable (mes bornes portent sur des stratégies désactivées ; TSMOM/caps/flags hors périmètre).
+**Changes** : aucun
+**Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
+**Alerts** : aucun
