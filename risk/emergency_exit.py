@@ -41,12 +41,19 @@ class EmergencyExitManager:
         write_adapter,
         portfolio: "PortfolioImpl",
         paper_mode: bool = True,
+        exempt_symbols: Optional[set] = None,
     ) -> None:
         self._cfg = cfg
         self._read = read_adapter
         self._write = write_adapter
         self._portfolio = portfolio
         self._paper = paper_mode
+        # 2026-06-20 : symboles TOTALEMENT exemptés de l'emergency exit ROE (TSMOM
+        # trend-following 1d : tient des semaines, traverse routinièrement -2,2% de
+        # bruit pour attraper les gros trends → l'emergency le saboterait). Protégé
+        # par les caps globaux + kill-switch DD à la place. ≠ manual_symbols (qui ne
+        # vaut que pour les positions NON tracées).
+        self._exempt = set(exempt_symbols or [])
         # Fix #8 : timer de grâce par symbole orphelin.
         self._orphan_emergency_since: Dict[str, float] = {}
         # 2026-06-16 anti-whipsaw : ts du dernier force-close réussi par symbole.
@@ -128,6 +135,15 @@ class EmergencyExitManager:
 
         for asset, info in positions.items():
             roe = info["roe"]
+            # 2026-06-20 : symbole exempté (TSMOM) → jamais d'emergency exit, quel que
+            # soit le ROE. Protégé par caps globaux + kill-switch DD. Log si en zone.
+            if asset in self._exempt:
+                if roe <= self._emergency_threshold(info.get("leverage", 1.0)):
+                    logger.debug(
+                        "EmergencyExit %s : ROE=%.3f%% en zone mais symbole EXEMPTÉ (TSMOM) → ignoré",
+                        asset, roe * 100,
+                    )
+                continue
             # Fix 10 Knob A : seuil dépend du levier (flag OFF = comportement
             # historique strictement inchangé, cf. _emergency_threshold).
             threshold = self._emergency_threshold(info.get("leverage", 1.0))

@@ -43,6 +43,7 @@ allocation:
       supertrend: 1.0
       awesome_oscillator: 0.0    # hors allocateur (gère BTC en propre), poids 0 partout
       tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
+      rotation: 0.0           # hors allocateur (ensemble contrarian 1d), poids 0 partout
     trend_down:
       grid: 0.0
       mean_reversion: 0.0
@@ -50,6 +51,7 @@ allocation:
       supertrend: 1.0
       awesome_oscillator: 0.0
       tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
+      rotation: 0.0           # hors allocateur (ensemble contrarian 1d), poids 0 partout
     range:
       # 2026-06-07 — range partagé avec PRIORITÉ MR (décision francois) :
       # la grille moissonne le range par défaut ; dès que MR a un setup
@@ -66,6 +68,7 @@ allocation:
       supertrend: 0.0
       awesome_oscillator: 0.0
       tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
+      rotation: 0.0           # hors allocateur (ensemble contrarian 1d), poids 0 partout
     high_vol:
       grid: 1.0
       mean_reversion: 0.0
@@ -73,6 +76,7 @@ allocation:
       supertrend: 0.0
       awesome_oscillator: 0.0
       tsmom: 0.0              # hors allocateur (trend following 1d en propre), poids 0 partout
+      rotation: 0.0           # hors allocateur (ensemble contrarian 1d), poids 0 partout
 
   # Multiplicateur de performance — borné, lent.
   mult_min: 0.3                 # plancher : stratégie en perte n'est pas coupée
@@ -205,7 +209,8 @@ strategies:
   # $10/position (0/41 viables) ; 12 coins @ vol 20% = 12/12 viables ~$14 chacun. Élargir
   # quand l'equity grossit (~$2500+ pour les 41).
   tsmom:
-    enabled: true
+    enabled: false   # 2026-06-21 — REMPLACÉ par la rotation (ensemble-contrarian, version
+                     # diversifiée du même trend-following). Mutuellement exclusif sur les coins.
     interval: 1d
     symbols:
       - BTC
@@ -238,6 +243,39 @@ strategies:
     max_gross_frac: 0.60        # garde-fou dur sur l'exposition brute
     refresh_sec: 1800           # refetch bougies 1d (anti-429) ; cible maintenue entre deux
     min_notional_usdc: 10.0     # sous ce notional/coin → flat (HL rejette < $10)
+
+  # ROTATION — méta-allocateur ensemble-contrarian 1d (2026-06-21, ACTIVÉ décision francois).
+  # Recherche project_strategy_rotation : la perf des stratégies est ANTI-persistante → tenir un
+  # ensemble PROFOND (43 strat : trend/MR/vol/volume/chandelles/oscillateurs) et tilter DOUCEMENT
+  # vers les perdants récents (softmax inverse-perf), vol-targeté comme le TSMOM. Validé walk-forward
+  # (t-stat 4-5, robuste params) + vol-targeted (Sharpe portefeuille ~1,5 / maxDD 4% vs mono-TSMOM
+  # 0,64/14%). Parité backtest exacte. Hors allocateur, REMPLACE le TSMOM sur les 12 coins.
+  rotation:
+    enabled: true
+    interval: 1d
+    pool: deep                  # 43 stratégies (vs 'base' 28)
+    # Univers RÉDUIT à 8 coins (2026-06-21) : la conviction de l'ensemble-contrarian est
+    # FRACTIONNAIRE (|méta|~0,2-0,4, vs ±1 du TSMOM) → à $535 d'equity, 12 coins mettent 11/12
+    # sous le min HL $10 (1/12 actif = dormant). 8 coins → 5/8 actifs, gross ~$73 (0,14×). Élargir
+    # vers 12 quand l'equity grossit (~$900+). Top-8 par liquidité.
+    symbols:
+      - BTC
+      - ETH
+      - SOL
+      - BNB
+      - XRP
+      - DOGE
+      - LINK
+      - AVAX
+    L: 90                       # fenêtre de scoring trailing (Sharpe par stratégie)
+    temp: 1.0                   # température du softmax contrarian
+    vol_win: 30
+    target_vol_annual: 0.20     # même levier/tolérance DD que le TSMOM
+    scalar_cap: 3.0
+    max_gross_frac: 0.60
+    refresh_sec: 1800
+    min_notional_usdc: 10.0
+    candle_limit: 600           # besoin = lookback max 200 + L 90 + marge
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:

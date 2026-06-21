@@ -227,12 +227,108 @@ class AwesomeOscillatorStrategyConfig(BaseModel):
     sl_pct: float = Field(0.006, ge=0.0, le=0.10, description="Stop-loss en fraction du prix (0 = TP seul, déconseillé). TP=2×SL par défaut")
 
 
+class TsmomStrategyConfig(BaseModel):
+    """Time-series momentum (trend following) sur timeframe LONG (1d par défaut).
+
+    Recherche 2026-06-20 (cf. STRATEGY_HYPOTHESES.md #10, mémoire project_tsmom_winner) :
+    1er mécanisme à VRAIE espérance positive nette de frais (walk-forward poolé t=+2,48,
+    P(moy>0)=99,8%, 27× le frais ; 9/12 coins 1d, 12/12 en 4h). Le scalping mourait des
+    frais (round-trip ~0,09 % >> edge brut) ; l'HORIZON 1d les rend négligeables (un trade
+    capture des mouvements multi-jours). Vol-targeted, le Sharpe portefeuille ~0,85 n'écrase
+    PAS le buy&hold en bull, mais son drawdown est 4-5× plus petit (~18 % vs 56 %) → exposition
+    crypto à risque MAÎTRISÉ, pas un alpha standalone.
+
+    Signal : état persistant = signe du rendement trailing sur `lookback` barres (band = zone
+    morte). Sizing : vol-targeting equal-risk — chaque coin pèse 1/N du capital, leveré par
+    target_vol/vol_réalisée (borné). Sortie = retournement du signe (stop-and-reverse), géré
+    par ré-émission de la cible (level-triggered). PAS de TP/SL (le backtest a réfuté la
+    barrière, l'exit est le flip de tendance).
+
+    Livré OFF par défaut. Quand activé, ses symboles sont RÉSERVÉS (retirés des autres
+    stratégies + grille, comme l'AO) pour éviter deux stratégies sur le même actif netté.
+    """
+    enabled: bool = False
+    interval: str = "1d"
+    # Univers ÉLARGI (41 coins, 2026-06-20) — la diversification EST l'edge du trend
+    # following : élargi de 12→41 coins, le t-stat poolé monte +2,48→+4,66, le Sharpe
+    # portefeuille 1,47→1,94 et le maxDD 12%→4% (run_tsmom_pooled/portfolio). Coins choisis
+    # par LIQUIDITÉ + historique 1d ≥ ~800j (PAS par PnL passé = anti-survivorship).
+    # HYPE et ZEC EXCLUS volontairement (positions MANUELLES de francois, cf. risk.manual_symbols).
+    symbols: list[str] = Field(
+        default_factory=lambda: [
+            "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "LINK", "AVAX", "LTC", "AAVE",
+            "SUI", "ARB", "NEAR", "WLD", "UNI", "CRV", "ADA", "TRX", "XLM", "INJ",
+            "ENA", "ONDO", "JTO", "TAO", "JUP", "AXS", "BCH", "APT", "OP", "ATOM",
+            "DOT", "FIL", "TIA", "SEI", "WIF", "XMR", "TON", "LDO", "PENDLE", "FET", "GMX"])
+    lookback: int = Field(30, ge=2, le=400, description="Barres du rendement trailing (signe). Ignoré si `lookbacks` non vide.")
+    # ENSEMBLE multi-lookback (recherche 2026-06-20, run_tsmom_ensemble.py). Combiner le SIGNE
+    # de la tendance sur plusieurs horizons donne une direction CONTINUE dans [-1,+1] (conviction)
+    # qui lisse les retournements → moins de flips. Mesuré sur les 12 coins déployés (split OOS) :
+    # le Sharpe n'est PAS amélioré de façon significative (Δ dans le bruit, SE_Sharpe≈0,8 sur
+    # 1,5 an d'OOS — cohérent avec le null result documenté antérieurement) ; ce qui EST robuste
+    # = turnover −20 à −25%/an (frais) et maxDD plus petit (14%→~9%). DÉFAUT = VIDE (single
+    # `lookback`, comportement live actuel) : ne change rien au restart. Opt-in via allocation.yaml.
+    # Conviction = |moyenne des signes| ∈ [0,1] repliée dans le notional (long sur 3/4 horizons
+    # → 3/4 de la taille).
+    lookbacks: list[int] = Field(
+        default_factory=list,
+        description="Horizons de l'ensemble multi-lookback. Vide → single `lookback` (défaut).")
+    band: float = Field(0.0, ge=0.0, le=0.5, description="Zone morte sur |rendement trailing| (0 = toujours en marché)")
+    vol_win: int = Field(30, ge=5, le=200, description="Fenêtre de vol réalisée (vol-targeting)")
+    target_vol_annual: float = Field(
+        0.20, ge=0.02, le=1.0,
+        description="Vol cible annualisée par position. Choisit le LEVIER par tolérance au "
+                    "drawdown (Sharpe invariant) : 0,20→~12%DD, 0,30→~18%DD, 0,40→~24%DD")
+    scalar_cap: float = Field(3.0, ge=1.0, le=10.0, description="Cap du scalaire vol-target par coin (anti sur-levier en basse vol)")
+    max_gross_frac: float = Field(
+        0.60, ge=0.05, le=3.0,
+        description="Garde-fou DUR : exposition brute totale ≤ max_gross_frac × equity (rescale si dépassé)")
+    refresh_sec: int = Field(
+        1800, ge=60, le=86400,
+        description="Cadence de recalcul des bougies 1d (entre deux, la cible est maintenue). Anti-429.")
+    min_notional_usdc: float = Field(10.0, ge=1.0, le=1000.0, description="Sous ce notional par coin → flat (HL rejette < $10)")
+
+
+class RotationStrategyConfig(BaseModel):
+    """Méta-allocateur d'ensemble de stratégies à tilt CONTRARIAN, vol-targeted (1d).
+
+    Recherche 2026-06-21 (mémoire project_strategy_rotation) : la perf des stratégies est
+    ANTI-persistante → tenir un ensemble PROFOND de stratégies décorrélées (43 : trend, MR,
+    volatilité, volume, chandelles, oscillateurs) et rééquilibrer DOUCEMENT vers les PERDANTS
+    récents (softmax inverse-perf). Empilé sur un panier de coins, vol-targeté comme le TSMOM.
+    Validé walk-forward (12 coins × 4 folds, t-stat 4-5, robuste aux params) puis en cadre
+    vol-targeted : Sharpe portefeuille ~1,5 / maxDD ~4% vs mono-TSMOM 0,64 / 14%.
+
+    SANS ÉTAT (R=1, tout recalculé depuis les bougies). Hors allocateur (symboles réservés,
+    exempté de l'emergency comme le TSMOM). Livré OFF. Mutuellement exclusif avec tsmom sur les
+    mêmes coins (activer l'UN des deux : rotation = version diversifiée du même trend-following).
+    """
+    enabled: bool = False
+    interval: str = "1d"
+    symbols: list[str] = Field(
+        default_factory=lambda: [
+            "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE",
+            "LINK", "AVAX", "LTC", "AAVE", "SUI", "ARB"])
+    pool: str = Field("deep", description="'deep' (43 stratégies) ou 'base' (28)")
+    L: int = Field(90, ge=20, le=400, description="Fenêtre de scoring trailing (Sharpe par stratégie)")
+    temp: float = Field(1.0, ge=0.1, le=10.0, description="Température du softmax contrarian (petit = tilt fort)")
+    vol_win: int = Field(30, ge=5, le=200, description="Fenêtre de vol réalisée (vol-targeting)")
+    target_vol_annual: float = Field(0.20, ge=0.02, le=1.0, description="Vol cible annualisée par coin (choisit le levier par tolérance DD)")
+    scalar_cap: float = Field(3.0, ge=1.0, le=10.0, description="Cap du scalaire vol-target par coin")
+    max_gross_frac: float = Field(0.60, ge=0.05, le=3.0, description="Garde-fou DUR sur l'exposition brute totale")
+    refresh_sec: int = Field(1800, ge=60, le=86400, description="Cadence de recalcul des bougies 1d (anti-429)")
+    min_notional_usdc: float = Field(10.0, ge=1.0, le=1000.0, description="Sous ce notional par coin → flat (HL rejette < $10)")
+    candle_limit: int = Field(600, ge=300, le=2000, description="Bougies 1d à fetcher (besoin = lookback max 200 + L + marge)")
+
+
 class StrategiesConfig(BaseModel):
     grid: GridStrategyConfig = Field(default_factory=GridStrategyConfig)
     mean_reversion: MeanReversionStrategyConfig = Field(default_factory=MeanReversionStrategyConfig)
     momentum: MomentumStrategyConfig = Field(default_factory=MomentumStrategyConfig)
     supertrend: SupertrendStrategyConfig = Field(default_factory=SupertrendStrategyConfig)
     awesome_oscillator: AwesomeOscillatorStrategyConfig = Field(default_factory=AwesomeOscillatorStrategyConfig)
+    tsmom: TsmomStrategyConfig = Field(default_factory=TsmomStrategyConfig)
+    rotation: RotationStrategyConfig = Field(default_factory=RotationStrategyConfig)
 
 
 class PathsConfig(BaseModel):
@@ -291,6 +387,10 @@ class V7Config(BaseModel):
             enabled.add("supertrend")
         if self.strategies.awesome_oscillator.enabled:
             enabled.add("awesome_oscillator")
+        if self.strategies.tsmom.enabled:
+            enabled.add("tsmom")  # hors allocateur (comme l'AO), pas dans base_weights
+        if self.strategies.rotation.enabled:
+            enabled.add("rotation")  # hors allocateur (comme TSMOM)
         matrix_strats = set()
         for d in self.allocation.base_weights.values():
             matrix_strats.update(d.keys())

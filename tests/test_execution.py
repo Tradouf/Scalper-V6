@@ -156,6 +156,23 @@ class TestReconcile:
         orders = engine.reconcile(target, pf)
         assert len(orders) == 1
 
+    def test_sub_min_order_skipped(self):
+        """Ordre sous le min HL ($10) → skippé (rejet garanti). Cas : position résiduelle de $5
+        (au-dessus du dust $2, sous le min $10) qu'on veut fermer → impossible sur HL → pas d'ordre."""
+        engine, ex = self._engine(rebalance_threshold=0.005)
+        pf = PortfolioImpl(_positions={"BTC": 5.0}, _equity=100.0)  # threshold = 0.005×100 = $0.5
+        target = _target([])  # on veut fermer
+        orders = engine.reconcile(target, pf)
+        assert orders == []   # diff $5 > bande $0.5 MAIS < min $10 → skip
+
+    def test_min_order_boundary_kept(self):
+        """Un ordre AU-DESSUS du min HL passe normalement."""
+        engine, ex = self._engine(rebalance_threshold=0.005)
+        pf = PortfolioImpl(_positions={"BTC": 15.0}, _equity=100.0)
+        target = _target([])
+        orders = engine.reconcile(target, pf)
+        assert len(orders) == 1 and orders[0].side == "sell"
+
 
 # ─── PaperExchange ───────────────────────────────────────────────────────────
 

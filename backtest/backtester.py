@@ -39,18 +39,26 @@ class Backtester:
 
     def run_on_df(self, df, symbol, strategy="momentum", tp_pct=0.04, sl_pct=0.02,
                   fast=5, slow=34, x_long=65.0, x_short=60.0, cvd_lookback=20,
+                  rsi_period=14, rsi_thr=55.0, lookback=20, band=0.0,
                   fee_pct=DEFAULT_FEE_PCT, exit_mode="tp_sl", hold_bars=0, trail_pct=0.0):
         """Backtest sur un DataFrame OHLCV déjà chargé (sans fetch réseau).
         Permet au walk-forward de rejouer des tranches sans re-télécharger.
         `exit_mode`/`hold_bars`/`trail_pct` : voir _simulate (sortie alternative)."""
         df = self._add_indicators(df)
         signals = self._signals_for(df, strategy, fast=fast, slow=slow, x_long=x_long,
-                                    x_short=x_short, cvd_lookback=cvd_lookback)
+                                    x_short=x_short, cvd_lookback=cvd_lookback,
+                                    rsi_period=rsi_period, rsi_thr=rsi_thr,
+                                    lookback=lookback, band=band)
         trades = self._simulate(df, signals, tp_pct, sl_pct, fee_pct=fee_pct,
                                 exit_mode=exit_mode, hold_bars=hold_bars, trail_pct=trail_pct)
         return self._compute_result(symbol, strategy, trades)
 
-    def _signals_for(self, df, strategy, fast=5, slow=34, x_long=65.0, x_short=60.0, cvd_lookback=20):
+    def _signals_for(self, df, strategy, fast=5, slow=34, x_long=65.0, x_short=60.0, cvd_lookback=20,
+                     rsi_period=14, rsi_thr=55.0, lookback=20, band=0.0):
+        if strategy == "tsmom":
+            return self._signals_tsmom(df, lookback=lookback, band=band)
+        if strategy == "donchian":
+            return self._signals_donchian(df, lookback=lookback)
         if strategy == "ao":
             return self._signals_ao(df, x_long=x_long, x_short=x_short, fast=fast, slow=slow)
         if strategy == "ao_zerocross":
@@ -59,9 +67,64 @@ class Backtester:
             return self._signals_cvd_divergence(df, lookback=cvd_lookback)
         if strategy == "cvd_breakout":
             return self._signals_cvd_breakout(df, lookback=cvd_lookback)
+        if strategy == "ma_rsi":
+            return self._signals_ma_rsi(df, fast=fast, slow=slow, rsi_period=rsi_period, rsi_thr=rsi_thr)
         if strategy == "momentum":
             return self._signals_momentum(df)
         return self._signals_trend(df)
+
+    def _signals_ma_rsi(self, df, fast=5, slow=34, rsi_period=14, rsi_thr=55.0):
+        """Scalper MA×RSI (croisement de moyennes confirmé par RSI) — version FIXE.
+        LONG  : MA rapide croise AU-DESSUS de la lente ∧ RSI ≥ rsi_thr.
+        SHORT : MA rapide croise EN-DESSOUS ∧ RSI ≤ 100−rsi_thr.
+        Croisement lu en [i,i-1], RSI en [i], entrée au close de [i] → pas de look-ahead.
+        Recette RSI IDENTIQUE à backtest.adaptive_scalper.compute_rsi (EMA com=period-1)."""
+        close = df["close"]
+        ma_fast = close.rolling(fast).mean()
+        ma_slow = close.rolling(slow).mean()
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = (-delta).clip(lower=0)
+        com = max(int(rsi_period) - 1, 1)
+        avg_gain = gain.ewm(com=com, adjust=False).mean()
+        avg_loss = loss.ewm(com=com, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        cross_up = (ma_fast > ma_slow) & (ma_fast.shift(1) <= ma_slow.shift(1))
+        cross_dn = (ma_fast < ma_slow) & (ma_fast.shift(1) >= ma_slow.shift(1))
+        signals = pd.Series(0, index=df.index)
+        signals[cross_up & (rsi >= rsi_thr)] = 1
+        signals[cross_dn & (rsi <= (100.0 - rsi_thr))] = -1
+        return signals
+
+    def _signals_tsmom(self, df, lookback=20, band=0.0):
+        """Time-series momentum (trend following) — ÉTAT PERSISTANT, pas un croisement.
+        Signe du rendement trailing sur `lookback` barres : si le prix est au-dessus de
+        son niveau d'il y a `lookback` barres → tendance haussière → état LONG ; en-dessous
+        → état SHORT. `band` = zone morte (fraction) autour de 0 pour éviter le flip-flop
+        en range : on ne prend position que si |rendement| > band. État porté à CHAQUE barre
+        → avec exit_mode='reverse' = stop-and-reverse (la sortie canonique du TSMOM).
+        ret lu en [i] vs [i-lookback], entrée au close de [i] → pas de look-ahead."""
+        close = df["close"]
+        ret = close / close.shift(lookback) - 1.0
+        signals = pd.Series(0, index=df.index)
+        signals[ret > band] = 1
+        signals[ret < -band] = -1
+        return signals
+
+    def _signals_donchian(self, df, lookback=20):
+        """Breakout de canal Donchian — état persistant. LONG dès que le close dépasse le
+        plus-HAUT des `lookback` barres PRÉCÉDENTES (fenêtre fermée, shift(1)) ; SHORT sous
+        le plus-BAS. Entre deux cassures l'état est maintenu (ffill) → trend follower
+        classique. Avec exit_mode='reverse' = stop-and-reverse sur cassure opposée."""
+        close = df["close"]
+        hi = close.shift(1).rolling(lookback).max()
+        lo = close.shift(1).rolling(lookback).min()
+        raw = pd.Series(np.nan, index=df.index)
+        raw[close > hi] = 1.0
+        raw[close < lo] = -1.0
+        signals = raw.ffill().fillna(0.0).astype(int)
+        return signals
 
     def _signals_cvd_divergence(self, df, lookback=20):
         """Divergence prix/CVD (épuisement d'agresseurs). Sur les `lookback` barres

@@ -114,12 +114,38 @@ class V7Bot:
         ao_cfg = self.cfg.strategies.awesome_oscillator
         self._ao_enabled = bool(ao_cfg.enabled)
         self._ao_reserved = set(ao_cfg.symbols) if self._ao_enabled else set()
-        directional_symbols = [s for s in self.cfg.symbols if s not in self._ao_reserved]
-        if self._ao_reserved:
+        # TSMOM (2026-06-20) — trend following 1d, HORS allocateur, même schéma que l'AO :
+        # ses symboles sont RÉSERVÉS (retirés des autres stratégies + grille) pour éviter
+        # deux stratégies sur le même actif netté. OFF par défaut → bloc court-circuité.
+        tsmom_cfg = self.cfg.strategies.tsmom
+        self._tsmom_enabled = bool(tsmom_cfg.enabled)
+        self._tsmom_reserved = set(tsmom_cfg.symbols) if self._tsmom_enabled else set()
+        # Rotation (2026-06-21) — ensemble-contrarian 1d, HORS allocateur, MÊME schéma que le
+        # TSMOM (version diversifiée du trend-following ; mutuellement exclusif sur les mêmes
+        # coins). OFF par défaut → bloc court-circuité.
+        rotation_cfg = self.cfg.strategies.rotation
+        self._rotation_enabled = bool(rotation_cfg.enabled)
+        self._rotation_reserved = set(rotation_cfg.symbols) if self._rotation_enabled else set()
+        if self._tsmom_reserved & self._rotation_reserved:
             self.logger.warning(
-                "Awesome Oscillator ACTIF — symboles réservés (retirés des autres "
-                "stratégies + grille) : %s", sorted(self._ao_reserved),
+                "CONFLIT tsmom/rotation sur %s — rotation a la priorité (mergée après). "
+                "Activez l'UN des deux sur un coin donné.",
+                sorted(self._tsmom_reserved & self._rotation_reserved),
             )
+        # Ensemble réservé combiné = retiré des stratégies directionnelles ET de la grille.
+        self._reserved_symbols = self._ao_reserved | self._tsmom_reserved | self._rotation_reserved
+        directional_symbols = [s for s in self.cfg.symbols if s not in self._reserved_symbols]
+        if self._reserved_symbols:
+            self.logger.warning(
+                "Symboles RÉSERVÉS (hors allocateur, retirés des autres stratégies + grille) "
+                "— AO=%s TSMOM=%s ROTATION=%s", sorted(self._ao_reserved),
+                sorted(self._tsmom_reserved), sorted(self._rotation_reserved),
+            )
+        # Cache des bougies 1d TSMOM/Rotation (refetch tous les refresh_sec, anti-429).
+        self._tsmom_candles: dict = {}
+        self._tsmom_last_fetch: float = 0.0
+        self._rotation_candles: dict = {}
+        self._rotation_last_fetch: float = 0.0
 
         self.detector = RuleBasedRegimeDetector(self.cfg.regime)
         self.mr = MeanReversionStrategy(self.cfg.strategies.mean_reversion, directional_symbols)
@@ -132,10 +158,34 @@ class V7Bot:
         # AO : toujours instancié (no-op si OFF), HORS de self.strategies (timeframe
         # 5m dédié + routage propre, cf. _tick). Reçoit les fills via la distribution.
         self.ao = AwesomeOscillatorStrategy(ao_cfg)
+        # TSMOM : toujours instancié (no-op si OFF), HORS de self.strategies (timeframe 1d
+        # dédié + routage propre). Sizing vol-targeted lit l'equity courante via callback.
+        from strategies.tsmom import TsmomStrategy
+        self.tsmom = TsmomStrategy(tsmom_cfg, equity_callback=lambda: self.portfolio.equity)
+        # Rotation : toujours instancié (no-op si OFF), HORS de self.strategies (timeframe 1d
+        # dédié + routage propre). Méta-allocateur contrarian vol-targeted, lit l'equity courante.
+        from strategies.rotation import RotationStrategy
+        self.rotation = RotationStrategy(rotation_cfg, equity_callback=lambda: self.portfolio.equity)
         # Grid : utilise notre exchange (paper). Sa FSM placera des limits via paper.
         self.grid_engine = GridEngine(self.exchange, self.cfg.strategies.grid)
         self.grid = GridStrategy(self.grid_engine, symbols=directional_symbols)
-        self.strategies = [self.mr, self.momentum, self.supertrend, self.grid]
+        # 2026-06-20 : respecter le flag `enabled` par stratégie (jusqu'ici self.strategies
+        # était construit en dur → enabled=false était du config MORT en V7). Permet le
+        # « tout en TSMOM » (grid/MR/momentum/supertrend coupés). AO/TSMOM ont leur propre
+        # routage (hors self.strategies).
+        self.strategies = []
+        if self.cfg.strategies.mean_reversion.enabled:
+            self.strategies.append(self.mr)
+        if self.cfg.strategies.momentum.enabled:
+            self.strategies.append(self.momentum)
+        if self.cfg.strategies.supertrend.enabled:
+            self.strategies.append(self.supertrend)
+        self._grid_enabled = bool(self.cfg.strategies.grid.enabled)
+        if self._grid_enabled:
+            self.strategies.append(self.grid)
+        self.logger.info("Stratégies directionnelles actives : %s%s",
+                         [s.strategy_id for s in self.strategies],
+                         "" if self.strategies else " (AUCUNE — all-in hors-allocateur)")
 
         self.allocator = RuleBasedAllocator(self.cfg.allocation)
         self.scorer = PerformanceScorer(
@@ -177,6 +227,23 @@ class V7Bot:
             if summary["errors"]:
                 self.logger.warning("BootReconciler erreurs: %s", summary["errors"])
 
+            # 2026-06-20 — grid désactivé (all-in TSMOM) : annule les ordres LIMITE
+            # résiduels laissés par le grid sur HL. Sans grid actif, plus aucune
+            # stratégie ne pose de limites (TSMOM/reconcile = market, bandit/SL natif OFF)
+            # → tout ordre ouvert restant est un fantôme de grid à nettoyer.
+            if not self._grid_enabled:
+                try:
+                    oo = self.exchange.get_open_orders() or []
+                    n = 0
+                    for o in oo:
+                        oid = o.get("oid")
+                        if oid is not None:
+                            self.exchange.cancel_order(str(oid))
+                            n += 1
+                    self.logger.warning("Grid OFF (all-in TSMOM) — %d ordre(s) limite résiduel(s) annulé(s) au boot", n)
+                except Exception as e:
+                    self.logger.warning("Annulation ordres résiduels (grid OFF) erreur: %r", e)
+
         # EmergencyExitManager : filet de sécurité par-position (port V6 + Fix #8).
         # Instancié toujours mais no-op en paper (PaperExchange ne sync pas HL).
         from risk.emergency_exit import EmergencyExitManager
@@ -186,6 +253,9 @@ class V7Bot:
             write_adapter=self.exchange,
             portfolio=self.portfolio,
             paper_mode=self.cfg.execution.paper_mode,
+            # TSMOM/Rotation (trend following 1d) exemptés de l'emergency exit ROE : ils tiennent
+            # des semaines et doivent traverser le bruit adverse. Protégés par caps + kill-switch DD.
+            exempt_symbols=self._tsmom_reserved | self._rotation_reserved,
         )
 
         # NativeStopManager (2026-06-17) : pose/réconcilie les SL natifs HL des
@@ -294,7 +364,7 @@ class V7Bot:
         interval = 30  # secondes
         # Thread grille dédié (port V6) : pilote la FSM grille à cadence rapide,
         # découplé du tick analytique lent. Évite l'épidémie szi=0→frozen.
-        if getattr(self.cfg.strategies.grid, "fast_loop_enabled", True):
+        if self._grid_enabled and getattr(self.cfg.strategies.grid, "fast_loop_enabled", True):
             import threading
             self._grid_thread = threading.Thread(
                 target=self._grid_loop, daemon=True, name="grid-loop",
@@ -549,9 +619,9 @@ class V7Bot:
                         self.logger.warning("GRID SÉCURITÉ deactivate %s: %r", sym, e)
 
         for sym in self.cfg.symbols:
-            # AO (2026-06-18) : symboles réservés à l'Awesome Oscillator exclus de
-            # la grille (évite deux stratégies sur le même actif netté). No-op si OFF.
-            if sym in self._ao_reserved:
+            # Symboles réservés (AO + TSMOM) exclus de la grille (évite deux stratégies
+            # sur le même actif netté). No-op si les deux sont OFF.
+            if sym in self._reserved_symbols:
                 continue
             # Heartbeat watchdog (2026-06-07) : l'activation séquentielle de
             # 8 grilles (~20s de fetch candles chacune) dépassait les 180s du
@@ -767,10 +837,11 @@ class V7Bot:
         # On donne au grid son budget par symbole (= poids grid × equity / N syms),
         # et on appelle son on_tick pour faire avancer la FSM (fills internes,
         # health check, drift guard...).
-        try:
-            self._drive_grid(market, regime, prices, regimes_by_sym)
-        except Exception as e:
-            self.logger.warning("Grid driver error: %r", e)
+        if self._grid_enabled:
+            try:
+                self._drive_grid(market, regime, prices, regimes_by_sym)
+            except Exception as e:
+                self.logger.warning("Grid driver error: %r", e)
 
         # 2.7. Sync des positions tracées par stratégie avec la réalité exchange.
         # SÉCURITÉ anti-whipsaw : les stratégies ré-émettent leur exposition tant
@@ -851,6 +922,72 @@ class V7Bot:
             except Exception as e:
                 self.logger.warning("AO generate error: %r", e)
 
+        # 3.8. TSMOM (2026-06-20) — trend following 1d DÉDIÉ, HORS allocateur. Gated
+        # (OFF par défaut → bloc court-circuité). Bougies 1d refetchées tous les
+        # refresh_sec (anti-429) puis mises en cache ; entre deux, la cible est
+        # recalculée sur le cache (stable) et MAINTENUE (level-triggered). Cible
+        # injectée dans le TargetPortfolio après allocate (cf. étape 5).
+        tsmom_signals: list = []
+        if self._tsmom_enabled:
+            try:
+                now = time.time()
+                tcfg = self.cfg.strategies.tsmom
+                if now - self._tsmom_last_fetch >= tcfg.refresh_sec or not self._tsmom_candles:
+                    fetched = {}
+                    for sym in self.tsmom.symbols:
+                        c = self.hl_read.get_candles(sym, interval=tcfg.interval, limit=400)
+                        if c:
+                            fetched[sym] = c
+                    if fetched:
+                        self._tsmom_candles = fetched
+                        self._tsmom_last_fetch = now
+                if self._tsmom_candles:
+                    tsmom_market = MarketSnapshot(
+                        timestamp=market.timestamp,
+                        candles=self._tsmom_candles,
+                        prices={s: prices.get(s, 0.0) for s in self.tsmom.symbols},
+                    )
+                    tsmom_signals = self.tsmom.generate_signals(tsmom_market)
+                    # Cooldown post-emergency : bloque les ENTRÉES/renforts (closes passent).
+                    if self.cfg.risk.emergency_cooldown_sec > 0:
+                        tsmom_signals = [
+                            s for s in tsmom_signals
+                            if not (s.target_notional > 0 and self.emergency.in_cooldown(s.asset))
+                        ]
+            except Exception as e:
+                self.logger.warning("TSMOM generate error: %r", e)
+
+        # 3.9. Rotation (2026-06-21) — ensemble-contrarian 1d DÉDIÉ, HORS allocateur. Même schéma
+        # que le TSMOM (cache bougies 1d anti-429, level-triggered, cooldown). OFF par défaut.
+        rotation_signals: list = []
+        if self._rotation_enabled:
+            try:
+                now = time.time()
+                rcfg = self.cfg.strategies.rotation
+                if now - self._rotation_last_fetch >= rcfg.refresh_sec or not self._rotation_candles:
+                    fetched = {}
+                    for sym in self.rotation.symbols:
+                        c = self.hl_read.get_candles(sym, interval=rcfg.interval, limit=rcfg.candle_limit)
+                        if c:
+                            fetched[sym] = c
+                    if fetched:
+                        self._rotation_candles = fetched
+                        self._rotation_last_fetch = now
+                if self._rotation_candles:
+                    rotation_market = MarketSnapshot(
+                        timestamp=market.timestamp,
+                        candles=self._rotation_candles,
+                        prices={s: prices.get(s, 0.0) for s in self.rotation.symbols},
+                    )
+                    rotation_signals = self.rotation.generate_signals(rotation_market)
+                    if self.cfg.risk.emergency_cooldown_sec > 0:
+                        rotation_signals = [
+                            s for s in rotation_signals
+                            if not (s.target_notional > 0 and self.emergency.in_cooldown(s.asset))
+                        ]
+            except Exception as e:
+                self.logger.warning("Rotation generate error: %r", e)
+
         # 4. Perf scores
         perf_scores = self.scorer.scores()
 
@@ -869,8 +1006,18 @@ class V7Bot:
         # (chaque signal porte son strategy_id → attribution des fills, y compris
         # les fermetures). Puis l'expose au log/persist via all_signals.
         if ao_signals:
-            target = self._merge_ao_target(target, ao_signals)
+            target = self._merge_reserved_target(target, ao_signals)
             all_signals = all_signals + ao_signals
+        # TSMOM hors allocateur : injecte ses cibles (signées, vol-targeted) de la même
+        # façon. Chaque signal porte son strategy_id → attribution des fills (closes inclus).
+        if tsmom_signals:
+            target = self._merge_reserved_target(target, tsmom_signals)
+            all_signals = all_signals + tsmom_signals
+        # Rotation hors allocateur : injectée APRÈS le TSMOM (priorité en cas de conflit de coin,
+        # cf. garde-fou au init). Même mécanique d'injection signée vol-targeted.
+        if rotation_signals:
+            target = self._merge_reserved_target(target, rotation_signals)
+            all_signals = all_signals + rotation_signals
 
         # 6. Risk project
         from risk.state import RiskStateImpl
@@ -921,6 +1068,16 @@ class V7Bot:
                     self.ao.on_fill(f)
                 except Exception as e:
                     self.logger.warning("AO on_fill: %r", e)
+            if self._tsmom_enabled and self.tsmom.strategy_id == f.strategy_id:
+                try:
+                    self.tsmom.on_fill(f)
+                except Exception as e:
+                    self.logger.warning("TSMOM on_fill: %r", e)
+            if self._rotation_enabled and self.rotation.strategy_id == f.strategy_id:
+                try:
+                    self.rotation.on_fill(f)
+                except Exception as e:
+                    self.logger.warning("Rotation on_fill: %r", e)
             self.scorer.on_fill(f)
 
         # 8.5. SL natifs (2026-06-17) : réconcilie les stop-market HL des positions
@@ -951,28 +1108,28 @@ class V7Bot:
         # 10. Persiste l'état pour le dashboard
         self._persist_state(regime, all_signals, target, projected, fills)
 
-    def _merge_ao_target(self, target, ao_signals):
-        """Injecte les cibles AO dans le TargetPortfolio (BTC réservé, hors allocateur).
+    def _merge_reserved_target(self, target, reserved_signals):
+        """Injecte les cibles d'une stratégie HORS allocateur (AO, TSMOM) dans le
+        TargetPortfolio. Ses symboles étant réservés, ils ne doivent pas déjà figurer
+        dans le target de l'allocateur ; override défensif sinon.
 
-        signed = direction × target_notional (direction ∈ {−1, 0, +1}). Chaque
-        position porte son strategy_id pour l'attribution du fill — y compris les
-        fermetures (signed=0), sinon le fill de close n'est pas redistribué à l'AO
-        et _positions n'est jamais purgé (désync). Override défensif de tout asset
-        AO déjà présent (ne doit pas arriver, BTC étant réservé)."""
+        signed = direction × target_notional (direction ∈ {−1, 0, +1}). Chaque position
+        porte son strategy_id pour l'attribution du fill — y compris les fermetures
+        (signed=0), sinon le fill de close n'est pas redistribué à la stratégie."""
         from core.types import TargetPortfolio, TargetPosition
 
-        ao_assets = set()
-        ao_positions = []
-        for s in ao_signals:
+        res_assets = set()
+        res_positions = []
+        for s in reserved_signals:
             signed = float(s.direction) * float(s.target_notional)
-            ao_assets.add(s.asset)
-            ao_positions.append(TargetPosition(
+            res_assets.add(s.asset)
+            res_positions.append(TargetPosition(
                 asset=s.asset,
                 target_notional=signed,
                 contributing_strategies={s.strategy_id: signed},
             ))
-        kept = [p for p in target.positions if p.asset not in ao_assets]
-        positions = kept + ao_positions
+        kept = [p for p in target.positions if p.asset not in res_assets]
+        positions = kept + res_positions
         gross = sum(abs(p.target_notional) for p in positions)
         net = sum(p.target_notional for p in positions)
         return TargetPortfolio(

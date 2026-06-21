@@ -39,6 +39,13 @@ class ExecutionEngine:
     # le reduce_only sous min ~$10 → grid figée indéfiniment sur ce symbole).
     DUST_NOTIONAL_USD = 2.0
 
+    # HL rejette tout ordre dont le notional est sous ~$10. Un ordre sous ce seuil (ouverture
+    # OU réduction) sera TOUJOURS rejeté → le soumettre est futile (la position reste identique)
+    # et ne fait que spammer des ERROR + gaspiller des appels API. On le skippe en amont. Cas
+    # typique : une position résiduelle de $2-$10 (au-dessus du filtre dust, sous le min HL) qu'on
+    # voudrait fermer/réduire — impossible sur HL, donc on la laisse telle quelle.
+    MIN_ORDER_NOTIONAL_USD = 10.0
+
     def __init__(
         self,
         exchange: ExchangeClient,
@@ -118,6 +125,14 @@ class ExecutionEngine:
             if qty <= 0:
                 # Cas-limite (rebalance_threshold_pct=0 + dust filtré) : on n'a
                 # rien à exécuter mais on est passé sous la bande non-trade.
+                continue
+            if abs(diff) < self.MIN_ORDER_NOTIONAL_USD:
+                # Sous le min HL → rejet garanti. On skippe (la position reste inchangée,
+                # comme si l'ordre avait été envoyé puis rejeté, mais sans ERROR ni appel API).
+                logger.debug(
+                    "ExecutionEngine %s : ordre %.2f$ < min HL %.2f$ → skip (rejet garanti)",
+                    asset, abs(diff), self.MIN_ORDER_NOTIONAL_USD,
+                )
                 continue
             side = "buy" if diff > 0 else "sell"
             # reduce_only : uniquement si on reste du même côté ET on réduit.

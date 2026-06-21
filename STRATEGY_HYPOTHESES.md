@@ -76,6 +76,13 @@ sévère (≥30 trades OOS, ≥80% folds positifs, PF médian ≥1,05, t-stat �
    le signal. (12 j = 1 régime, mais résultat trop net pour que ce soit la cause.)
 3. **Liquidation cascade fade** — |return| > k×ATR + chute brutale d'OI + spike updates → sur-réaction de
    liquidations → fade. Données présentes (`l2_1s.oi`). Risque : trades rares → peut-être < 30 OOS sur 12 j.
+   **TESTÉ 2026-06-20** (`backtest/liq_cascade.py` + `run_liq_cascade.py`, walk-forward POOLÉ sur les 8 coins
+   pour la puissance — barres 60s, 13 101 barres alignées ≈ 13,6 j, OI depuis `l2_1s`). **REJET FRANC, les DEUX
+   sens** : FADE (reversal) OOS −3,97 %, 2/5 folds, t=−0,91, 91 trades — **et in-sample LUI-MÊME négatif (−2,16 %)**.
+   CONTINUATION (l'inverse, momentum de cascade) pire : OOS −5,83 %, in-sample −6,32 %, t=−1,83. ⇒ un mouvement
+   violent + chute d'OI n'a **aucun pouvoir prédictif** dans un sens ni l'autre (comme le CVD #2). L'in-sample
+   négatif prouve que ce n'est pas un overfit OOS mais une absence d'edge. (13,6 j = 1 régime, mais résultat
+   trop net.) **Abandonné.**
 4. **Book imbalance persistance (baseline XGB L2)** — `imb10` soutenu → pression directionnelle. Énormément de
    trades MAIS edge ténu (AUC ~0,513 ≈ break-even après frais) → susceptible d'échouer au net-de-frais. Effort
    élevé (harnais 1s + frais/slippage réalistes).
@@ -112,6 +119,13 @@ sévère (≥30 trades OOS, ≥80% folds positifs, PF médian ≥1,05, t-stat �
    - **LEAD inattendu** : la version FIGÉE est POSITIVE sur ETH/SOL (+2,5/+3,2 % net 17j). La valeur n'est
      peut-être pas dans la danse mais dans un **scalper MA×RSI simple et FIXE**. À confirmer par un walk-forward
      à paramètres fixes PROPRE (le θ consensus a un léger biais rétrospectif). C'est le seul fil à tirer.
+   - **CONFIRMÉ 2026-06-20 — LE LEAD ÉTAIT UN MIRAGE.** `backtest/run_ma_rsi_fixed.py` passe le MÊME signal
+     MA×RSI (`Backtester._signals_ma_rsi`, dispatch `ma_rsi`) dans le harnais STANDARD `WalkForwardEvaluator`
+     (params choisis sur le TRAIN de chaque fold, jugés OOS, gate calibré — zéro biais rétrospectif). 5m, 17,4 j,
+     5 folds, 144 combos. **REJET sur les 3 symboles** : BTC OOS −0,91 % (t=−0,30, 4/5 folds mais 1 fold
+     −2,55 % coule le tout), **ETH −6,41 %** (t=−2,02, 1/5), SOL −0,49 % (t=−0,58, 3/5). Le +2,5/+3,2 % venait
+     du θ « consensus » de l'adaptatif (choix du θ le plus fréquent sur TOUT l'historique = look-ahead). Une fois
+     le biais retiré, l'edge disparaît. **Le scalper MA×RSI fixe n'a pas d'edge OOS net de frais. Fil clos.**
 
 9. **Stat-arb par cointégration (pairs trading)** ⭐⭐ — VALEUR RELATIVE, market-neutral. Mécanisme :
    deux actifs à facteur commun ont un spread log(pa)−β·log(pb) qui revient à l'équilibre ; celui qui paie
@@ -141,6 +155,35 @@ sévère (≥30 trades OOS, ≥80% folds positifs, PF médian ≥1,05, t-stat �
      frais**, in-sample +5,1 % (overfit 6,5 pts). **VERDICT : mécanisme réel mais edge mangé par les frais
      (comme funding). Le call le plus proche du sprint, mais le test rigoureux le tue. ABANDONNÉ — ne pas
      fisher book=3/8/seuil ADF pour récupérer le +4 % (gate-fishing). Le book est la réponse de principe.**
+
+10. **Time-series momentum / trend following (timeframe LONG)** ⭐⭐⭐ — **LE PREMIER EDGE QUI GAGNE
+    (2026-06-20).** Insight : tous les tests #1-9 portaient sur du SCALPING court terme (1m→1h) où le frais
+    round-trip (~0,09 %) écrase un edge brut minuscule (confirmé par les fills LIVE : brut ~à plat, frais =
+    121 % du brut absolu). **Changer d'HORIZON casse la malédiction** : sur 1d un trade capture des mouvements
+    multi-jours → le frais devient négligeable. TSMOM (Moskowitz/Ooi/Pedersen) = l'anomalie futures la plus
+    documentée, jamais testée au sprint. HL sert ~2100 bougies 1d (≈5,8 ans, MULTI-RÉGIME) = la puissance qui
+    manquait. `backtest/backtester.py::_signals_tsmom` (état persistant = signe du rendement trailing sur
+    `lookback`, `band` = zone morte) + `_signals_donchian`, sortie `reverse` (stop-and-reverse). Runner
+    `run_tsmom.py`, tests `tests/test_tsmom.py`.
+    - **Walk-forward par symbole (1d, 6 folds, gate standard)** : **9/12 coins OOS net POSITIF**, moyenne
+      +160 %, **3 PASS le gate strict** (AAVE t=3,16 ; SUI t=2,02 ; ETH t=1,89).
+    - **Param FIXE unique (lookback 30, partout, toute la série = zéro overfit)** : le côté **SHORT positif sur
+      les 12 coins** (+2557 % total) → **PAS du beta long déguisé** ; bat le buy&hold sur tous les coins
+      non-mooners (LINK +208 % vs −50 % hold, etc.).
+    - **Walk-forward POOLÉ honnête** (lookback choisi/fold, `run_tsmom_pooled.py`) : **1d t=+2,48, bootstrap
+      P(moy>0)=99,8%, +2,47 %/trade = 27× le frais → EDGE SIGNIFICATIF** ; 4h t=+1,67 (positif, sous seuil).
+      4h confirme aussi en breadth : **12/12 coins positifs** (2 timeframes, 2 fenêtres). Win ~35 % = signature
+      saine du TF. ⇒ **réponse définitive du programme : OUI un signal bat les frais, à l'HORIZON 1d.**
+    - **DURCISSEMENT vol-targeting (`run_tsmom_portfolio.py`, francois « durcir avant déploiement »)** : au
+      niveau PORTEFEUILLE vol-targeted (20 %/an, equal-risk), **Sharpe ~0,85 robuste (0,81–0,88 sur lookback
+      20/50/80), maxDD ~18 %** vs **buy&hold Sharpe 1,61, maxDD 56 %**. Le Sharpe 1,47 à lookback=30 = point
+      chanceux non robuste. **TSMOM n'améliore PAS le Sharpe vs hold** sur cet échantillon (bull séculaire = le
+      plus hostile au TF) ; son apport STABLE = **drawdown 4-5× plus petit**.
+    - **VERDICT** : PAS un alpha qui écrase le marché. C'EST une exposition à espérance positive nette de frais
+      RÉELLE (1ʳᵉ du programme) + contrôle de drawdown excellent. Valeur de déploiement crédible = sleeve
+      drawdown-maîtrisé OU **overlay de régime/filtre de risque**, pas un remplaçant standalone du buy&hold en
+      bull. Caveats : biais de survie ; TF 1d ≠ bot scalping 30s (nouveau module, décision archi/francois).
+      RIEN en enabled=true, 0 impact live. **CONCLUSION DU PROGRAMME : le levier était l'HORIZON, pas le signal.**
 
 ## Sortie ≠ coupable (testé 2026-06-18, hypothèse francois « la sortie TP n'est peut-être pas la bonne »)
 
