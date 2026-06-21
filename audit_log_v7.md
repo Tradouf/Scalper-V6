@@ -391,3 +391,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
 **Alerts** : aucun
+
+## 2026-06-21 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=1 (ARB), drift=0, breakout=0, errors=46 (19 ReadTimeout/11 HyperliquidClientError/10 MaxRetry/10 ConnectTimeout ; aucun type ≥50), equity=$535.69→$535.48 (-$0.21 / -0.04 %)
+**Diagnostic** : Régime 100 % range (682 ticks). Fenêtre calme, équity strictement plate. (1) EMERGENCY EXIT=1 (ARB seul) < seuil 3, non-runaway, hors manual_symbols (=[]) ; ARB est dans la liste TSMOM mais PAS dans l'univers rotation 8-coins (BTC/ETH/SOL/BNB/XRP/DOGE/LINK/AVAX) → résidu fermé par reconcile, attendu, non pathologique. HYPE absent → signature runaway toujours éteinte. (2) Toutes pathologies grille à 0 : grid/MR/momentum/supertrend `enabled:false` (rotation pilote hors allocateur depuis 06-21) → paramètres inertes ; DRIFT=0/BREAKOUT=0 → pattern "lâcher plus vite" non déclenché. (3) Réseau bénin : 46 erreurs réparties (ReadTimeout/ConnectTimeout/MaxRetry sur candles BTC 1h + refresh HL), aucun type ≥50 — blips transitoires, couvert par pending 06-08. Pas de submit-fail/ZEC, pas de NameError. (4) **Aucun paramètre borné applicable** : mes seules bornes portent sur grid/MR/momentum désactivés ; rotation/TSMOM/caps/flags hors périmètre.
+**Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; emergency=1 sous seuil non-runaway ; tout sous seuils)
+**Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
+**Alerts** : aucun critique. EMERGENCY EXIT=1 sur ARB (résidu hors univers rotation, non-runaway). Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle) restent en attente de merge humain mais non déclenchées cette fenêtre.
