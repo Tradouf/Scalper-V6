@@ -412,3 +412,10 @@
 **Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; toutes métriques à 0 ou triviales)
 **Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
 **Alerts** : aucun critique. Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle submit-fail) restent en attente de merge humain, non déclenchées cette fenêtre.
+
+## 2026-06-22 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=9 (3 MaxRetryError/3 ConnectTimeoutError/3 error), equity=$535.74→$535.50 (-$0.24 / -0.04 %)
+**Diagnostic** : Régime 100 % range (718 ticks). Fenêtre calme, équity quasi-plate. Toutes pathologies grille à 0 (stratégies bornées grid/MR/momentum/supertrend désactivées — rotation pilote hors allocateur). EMERGENCY EXIT=0, DRIFT=0 → aucun pattern grille/directionnel déclenché ; drift_window reste au floor 300. Erreurs = bruit réseau (9, aucun type ≥50) : ConnectTimeout/MaxRetry sur refresh HL (clearinghouseState/spot equity/allMids), couvert par pending 06-08. Aucun paramètre dans les bornes n'adresse quoi que ce soit (toutes métriques à 0).
+**Changes** : aucun
+**Code proposals** : aucune (pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway — pas de re-proposition)
+**Alerts** : aucun
