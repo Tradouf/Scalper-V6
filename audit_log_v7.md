@@ -405,3 +405,10 @@
 **Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; toutes métriques à 0 ou triviales)
 **Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
 **Alerts** : aucun critique. Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle submit-fail) restent en attente de merge humain mais non déclenchées cette fenêtre.
+
+## 2026-06-22 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=1 (AAVE), drift=0, breakout=0, errors~0, equity=$535.19→$535.77 (+$0.58 / +0.11 %)
+**Diagnostic** : Régime 100 % range (720 ticks). Fenêtre calme, aucun pattern net. (1) EMERGENCY EXIT=1 (AAVE) < seuil 3, hors manual_symbols (vide), non récurrent → bénin, équity quasi-plate. (2) Grille : toutes pathologies à 0 (szi0/abandons/RO/DRIFT/BREAKOUT/doublons) — grid/MR/momentum/supertrend `enabled:false` (all-in rotation hors allocateur depuis 06-21), inertie attendue. (3) Erreurs ~0, aucun type ≥50 — pas de spike réseau. (4) **Aucun paramètre borné applicable** : mes bornes portent sur grid/MR/momentum désactivés ; rotation/caps/flags hors périmètre.
+**Changes** : aucun (stratégies bornées désactivées → paramètres inertes ; toutes métriques à 0 ou triviales)
+**Code proposals** : aucune (pending 06-02/06-08/06-13/06-15 inchangées, non déclenchées cette fenêtre)
+**Alerts** : aucun critique. Causes racines non corrigées (06-13 15:00 freins catastrophe, 06-15 09:00 garde anti-boucle submit-fail) restent en attente de merge humain, non déclenchées cette fenêtre.
