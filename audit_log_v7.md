@@ -440,3 +440,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-23 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=9 (3 error/2 HTTPError/2 Error/1 MaxRetryError/1 ConnectTimeoutError), equity=$416.15→$417.86 (+$1.71 / +0,41 %)
+**Diagnostic** : Régime 100 % range (720 ticks). Fenêtre calme, aucun pattern net. Toutes pathologies grille à 0 (stratégies grid/MR/momentum/supertrend `enabled:false` depuis le 06-20 — rotation pilote hors allocateur → paramètres inertes). EMERGENCY EXIT=0, équity en légère hausse sur capital stable ~$416. Erreurs = bruit réseau bénin (2 HTTPError 429 sur candles AAVE/ETH + 1 ConnectTimeout sur refresh allMids HL), aucun type ≥50 (couvert par pending 06-08). Aucun paramètre dans les bornes n'a de prise (tout à 0).
+**Changes** : aucun (toutes métriques à 0, aucun paramètre borné applicable)
+**Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
+**Alerts** : aucun
