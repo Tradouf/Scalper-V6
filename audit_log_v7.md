@@ -433,3 +433,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (le bug kill_switch/daily_loss INERTES en live reste réel mais déjà couvert par pending 06-13 15:00 — re-proposition interdite ; non re-déclenché par un vrai drawdown cette fenêtre puisque la chute 15:00 était un retrait)
 **Alerts** : aucun (l'alerte CRITIQUE drawdown du 15:00 est requalifiée : retrait capital $120, non une perte)
+
+## 2026-06-23 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$415.76→$416.16 (+$0.40 / +0,10 %)
+**Diagnostic** : Régime 100 % range (719 ticks). Fenêtre calme totale : toutes pathologies grille à 0, emergency=0, errors=0 (échantillon vide), équity plate sur un capital désormais stable ~$416 (post-retrait $120 du 06-22). Stratégies bornées (grid/MR/momentum/supertrend) `enabled:false` depuis le 06-20 (rotation pilote hors allocateur) → paramètres inertes, aucune prise. Aucun pattern net.
+**Changes** : aucun
+**Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
+**Alerts** : aucun
