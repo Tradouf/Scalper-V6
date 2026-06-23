@@ -454,3 +454,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (6 pending inchangées — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-23 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$418.97→$419.15 (+$0.18 / +0,04 %)
+**Diagnostic** : Fenêtre calme. Toutes pathologies grille + emergency + errors à 0, équity quasi-plate sur capital stable ~$419. Régime 99 % trend_down (712/720), 8 ticks range. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation ensemble-contrarian 1d pilote hors allocateur → leviers paramètres inertes. Aucun pattern actionnable.
+**Changes** : aucun
+**Code proposals** : aucune (6 pending inchangées — pas de re-proposition)
+**Alerts** : aucun
