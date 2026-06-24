@@ -476,6 +476,13 @@
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
 **Alerts** : aucun
 
+## 2026-06-24 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$418.80→$422.67 (+$3.87 / +0,92 %)
+**Diagnostic** : Régime mixte (470 trend_down / 250 high_vol). Fenêtre saine : toutes pathologies grille à 0, 0 EMERGENCY EXIT, 0 erreur, équity en légère hausse sur capital stable ~$420. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation ensemble-contrarian 1d pilote hors allocateur → leviers paramètres inertes. Aucun pattern net franchi, aucun paramètre actionnable.
+**Changes** : aucun
+**Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
+**Alerts** : aucun
+
 ## 2026-06-24 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$418.43→$418.81 (+$0.38 / +0,09 %)
 **Diagnostic** : Régime 100 % trend_down (719 ticks). Fenêtre calme, aucun pattern net. Toutes pathologies grille à 0 (szi0/abandons/RO/DRIFT/BREAKOUT/doublons/activations), 0 EMERGENCY EXIT, 0 erreur. Équity quasi-plate sur capital stable ~$418. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation ensemble-contrarian 1d pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable.
