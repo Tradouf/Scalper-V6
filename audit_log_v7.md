@@ -468,3 +468,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-24 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=10 (2 ProtocolError/2 error/2 ConnectionResetError/2 ConnectionError/1 HTTPError/1 Error), equity=$418.34→$418.44 (+$0.10 / +0,02 %)
+**Diagnostic** : Régime 100 % trend_down (720 ticks). Fenêtre calme, aucun pattern net. Toutes pathologies grille à 0 (szi0/abandons/RO/DRIFT/BREAKOUT/doublons/activations), 0 EMERGENCY EXIT. 10 erreurs = bruit réseau transitoire sur fetch candles 1h (DOGE/TAO), dont 1 HTTP 429 (rate-limit ponctuel) — très en dessous du seuil ≥50. Équity strictement plate sur capital stable ~$418. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation ensemble-contrarian 1d pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable.
+**Changes** : aucun
+**Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
+**Alerts** : aucun
