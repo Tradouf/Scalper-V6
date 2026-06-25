@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-25 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 HTTPError/1 Error/1 error), equity=$420.77→$419.64
+**Diagnostic** : Fenêtre saine. 100% high_vol (720 ticks), toutes pathologies grille + emergency à 0. Équity quasi-plate (-$1.13, -0,27%). 3 erreurs = bruit réseau (1 HTTP 429 candles ETH 1h, <50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-01 21:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=1 (BTC), drift=0, breakout=0, errors=5 (2 error/1 ValueError/1 HyperliquidClientError/1 AttributeError), equity=$709.90→$709.83
 **Diagnostic** : Aucun pattern net. Grille saine (toutes pathologies à 0), régime 100% trend_down, equity quasi-plat. Erreurs éparses, aucun type ≥50.
