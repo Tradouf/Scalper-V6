@@ -510,3 +510,10 @@
 **Changes** : aucun
 **Code proposals** : aucune
 **Alerts** : aucun
+
+## 2026-06-25 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$420.39→$422.15 (+$1.76 / +0,42 %)
+**Diagnostic** : Fenêtre saine. Régime 88 % high_vol (633 ticks) / 12 % range (87), toutes pathologies grille + emergency + errors à 0. Équity en légère hausse (+$1.76). Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
