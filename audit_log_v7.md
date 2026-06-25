@@ -489,3 +489,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-06-25 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 ReadTimeout/1 ConnectionError/1 error), equity=$422.60→$420.85 (-$1.75 / -0,41 %)
+**Diagnostic** : Aucun pattern net. Régime 100 % high_vol (720 ticks), toutes pathologies grille + emergency à 0, équity quasi-plate. 3 erreurs = bruit réseau transitoire (candles SUI 1h / ConnectionReset), aucun type ≥50. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
