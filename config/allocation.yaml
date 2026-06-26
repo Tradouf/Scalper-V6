@@ -270,9 +270,10 @@ strategies:
     L: 90                       # fenêtre de scoring trailing (Sharpe par stratégie)
     temp: 1.0                   # température du softmax contrarian
     vol_win: 30
-    target_vol_annual: 0.30     # 2026-06-21 monté 0,20→0,30 (+50% expo, maxDD backtest ~4%→~6%,
-                                # toujours bas). Bonus : positions plus grosses → plus de coins
-                                # au-dessus du min HL $10 à basse equity. Levier = choix tolérance DD.
+    target_vol_annual: 0.40     # 2026-06-26 monté 0,30→0,40 : le retrait ($120) avait fait tomber
+                                # le déploiement à 2/8 actifs à $421. tv=0,40 restaure 5/8 actifs,
+                                # gross 0,07x→0,18x (~$76), maxDD backtest ~6%→~8% (toujours bas).
+                                # Levier = choix tolérance DD (Sharpe invariant). 8 coins inchangés.
     scalar_cap: 3.0
     max_gross_frac: 0.60
     refresh_sec: 1800
