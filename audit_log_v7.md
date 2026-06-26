@@ -517,3 +517,10 @@
 **Changes** : aucun
 **Code proposals** : aucune
 **Alerts** : aucun
+
+## 2026-06-26 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=1 (1 ReadTimeout), equity=$422.13→$421.44 (-$0.69 / -0,16 %)
+**Diagnostic** : Fenêtre saine. Régime 100 % high_vol (720 ticks), toutes pathologies grille + emergency + drift à 0. Équity quasi-plate. 1 ReadTimeout (candles ETH 1h) = bruit réseau, aucun type ≥50. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable ; 6 propositions déjà pending → pas de re-proposition.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
