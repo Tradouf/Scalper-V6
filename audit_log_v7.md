@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-26 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=23 (11 error/8 ReadTimeoutError/2 MaxRetryError/2 ConnectTimeoutError), equity=$421.86→$421.28
+**Diagnostic** : Fenêtre saine. Régime range (706/714 ticks, 8 high_vol), toutes pathologies grille + emergency à 0. Équity quasi-plate (-$0.58, -0,14%). 23 erreurs = bruit réseau (ReadTimeout candles BTC/AAVE 1h sur hl_adapter, aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-26 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=2 (1 ReadTimeoutError/1 error), equity=$421.29→$421.87
 **Diagnostic** : Fenêtre saine. 100% high_vol (720 ticks), toutes pathologies grille + emergency à 0. Équity quasi-plate (+$0.58, +0,14%). 2 erreurs = bruit réseau (1 ReadTimeout candles ETH 1h, <50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
