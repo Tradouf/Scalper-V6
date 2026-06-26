@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-26 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 HTTPError/1 Error/1 error), equity=$421.45→$421.30
+**Diagnostic** : Fenêtre saine. 100% high_vol (720 ticks), toutes pathologies grille + emergency à 0. Équity quasi-plate (-$0.15, -0,04%). 3 erreurs = bruit réseau (1 HTTP 429 candles SOL 1h, <50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-25 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$419.62→$420.41
 **Diagnostic** : Fenêtre saine. 100% high_vol (720 ticks), toutes pathologies grille + emergency + errors à 0. Équity quasi-plate (+$0.79, +0,19%). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
