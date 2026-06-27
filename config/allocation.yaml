@@ -279,6 +279,12 @@ strategies:
     refresh_sec: 1800
     min_notional_usdc: 10.0
     candle_limit: 600           # besoin = lookback max 200 + L 90 + marge
+    # OVERLAY régime high-vol ACTIVÉ 2026-06-27 (recherche run_rotation_regime.py) : le contrarian
+    # n'a quasi aucun edge quand la vol réalisée d'un coin est dans son tiers HAUT (Sharpe 0,02 vs
+    # 0,73 en vol basse) → on passe FLAT là. OOS Sharpe portefeuille 1,44→1,65 (+15%), validé
+    # hors-univers. Un coin est coupé si le percentile de sa vol (rang sur 180 barres) > 0,66.
+    vol_regime_cut_pct: 0.66
+    vol_regime_window: 180
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
