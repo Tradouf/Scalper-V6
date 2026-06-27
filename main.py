@@ -194,6 +194,13 @@ class V7Bot:
             halflife_days=self.cfg.allocation.perf_halflife_days,
         )
         self.risk = RiskManager(self.cfg.risk)
+        # RiskTracker (2026-06-27) : drawdown/daily-PnL flow-aware → réactive kill-switch &
+        # daily-loss (étaient inertes). En paper, pas de ledger (flow_fn=None). Persisté.
+        from risk.risk_tracker import RiskTracker
+        self.risk_tracker = RiskTracker(
+            state_path=REPO / "memory" / "risk_baseline.json",
+            flow_fn=(None if self.cfg.execution.paper_mode else self.hl_read.get_ledger_net_flow),
+        )
         # Bandit d'exécution (2026-06-06) : OFF par défaut (exec_bandit_active).
         # ON → la politique apprise en shadow choisit market vs limit GTC.
         # Fail-open taker intégré à BanditPolicy (état absent, <500 obs, HF stale).
@@ -1024,7 +1031,11 @@ class V7Bot:
         equity = self.hl_read.get_equity() if not self.cfg.execution.paper_mode else self.portfolio.equity
         if equity > 0:
             self.portfolio.set_equity(equity)
-        risk_state = RiskStateImpl(equity=self.portfolio.equity)
+        # 2026-06-27 : drawdown/daily-PnL réellement calculés (flow-aware) → kill-switch &
+        # daily-loss enfin actifs (étaient inertes : current_drawdown jamais peuplé). Les
+        # retraits sont neutralisés via le ledger (sinon faux kill). Fail-safe (0,0) au doute.
+        dd, daily = self.risk_tracker.update(self.portfolio.equity)
+        risk_state = RiskStateImpl(equity=self.portfolio.equity, current_drawdown=dd, daily_pnl_pct=daily)
         projected = self.risk.project(target, risk_state)
 
         # 6.5. EmergencyExit : check ROE positions HL réelles, force-close si dépasse

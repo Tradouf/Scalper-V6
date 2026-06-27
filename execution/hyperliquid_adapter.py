@@ -208,6 +208,38 @@ class HyperliquidReadAdapter:
             self._log_throttled_warning("HL spot equity error: %r", e)
         return 0.0
 
+    def get_ledger_net_flow(self, since_ms: int) -> tuple:
+        """Flux de CAPITAL net (dépôts − retraits) en USDC depuis `since_ms`, via le ledger
+        non-funding HL. Retourne (net_flow_usd, latest_ms) : net>0 = entrée, net<0 = sortie.
+        Sert au RiskTracker à NEUTRALISER les retraits dans le drawdown (sinon un retrait
+        ressemble à une perte → faux kill-switch). Les transferts internes spot↔perp et le
+        funding sont ignorés (n'affectent pas l'equity totale). Fail-safe : (0, since_ms) si erreur."""
+        if not self._addr:
+            return 0.0, since_ms
+        try:
+            r = requests.post(
+                HL_API,
+                json={"type": "userNonFundingLedgerUpdates", "user": self._addr, "startTime": int(since_ms)},
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            net = 0.0
+            latest = int(since_ms)
+            for e in r.json() or []:
+                t = int(e.get("time", 0) or 0)
+                if t > latest:
+                    latest = t
+                d = e.get("delta", {}) or {}
+                typ = d.get("type")
+                if typ == "send":          # transfert sortant (retrait vers wallet externe)
+                    net -= float(d.get("usdcValue", d.get("amount", 0)) or 0)
+                elif typ == "deposit":     # dépôt entrant
+                    net += float(d.get("usdc", d.get("amount", 0)) or 0)
+            return net, latest
+        except Exception as e:
+            self._log_throttled_warning("HL ledger flow error: %r", e)
+            return 0.0, since_ms
+
     # ─── Candles ──────────────────────────────────────────────────────────────
 
     def get_candles(self, coin: str, interval: str = "1h", limit: int = 200) -> List[Candle]:

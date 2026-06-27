@@ -34,6 +34,7 @@ class RiskManager:
 
     def __init__(self, cfg: RiskConfig) -> None:
         self._cfg = cfg
+        self._last_kill_log = 0.0   # throttle du log CRITICAL (le kill se répète chaque tick)
 
     # ─── API publique ────────────────────────────────────────────────────────
 
@@ -47,10 +48,14 @@ class RiskManager:
     def project(self, target: TargetPortfolio, state: RiskStateImpl) -> TargetPortfolio:
         # 1. Kill-switch → vide
         if self.kill_switch_triggered(state):
-            logger.critical(
-                "RISK kill-switch déclenché : DD=%.2f%% daily_pnl=%.2f%% → flat portfolio",
-                state.current_drawdown * 100, state.daily_pnl_pct * 100,
-            )
+            import time as _t
+            if _t.time() - self._last_kill_log > 300:   # throttle 5 min (se répète chaque tick)
+                self._last_kill_log = _t.time()
+                logger.critical(
+                    "RISK kill-switch déclenché : DD=%.2f%% daily_pnl=%.2f%% → flat portfolio "
+                    "(reste flat ; reprise = recovery equity OU `touch memory/RESET_PEAK`)",
+                    state.current_drawdown * 100, state.daily_pnl_pct * 100,
+                )
             return TargetPortfolio(
                 timestamp=target.timestamp,
                 positions=[],
