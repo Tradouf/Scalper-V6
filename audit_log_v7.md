@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-27 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=79 (réseau : 32 error/21 ConnectionError/14 NameResolutionError/14 MaxRetryError/12 ReadTimeoutError/2 HyperliquidClientError/2 HTTPError/2 Error, types chevauchants), equity=$421.11→$421.08
+**Diagnostic** : Fenêtre saine. Régime 100% range (703 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$0.03, -0,01%). Erreurs = bruit réseau (ConnectionError/NameResolution/MaxRetry/ReadTimeout sur HL candles 1h ETH/DOGE + clearinghouseState, hl_adapter ; aucun type ≥50, le max isolé est 32 'error' génériques). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-27 09:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=14 (réseau : NameResolution/MaxRetry/ConnectionError/ReadTimeout/HTTPError, types chevauchants), equity=$421.16→$421.11
 **Diagnostic** : Fenêtre saine. Régime 100% range (714 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$0.05, -0,01%). 14 erreurs = bruit réseau (ConnectionError/MaxRetry/ReadTimeout sur refresh allMids + candles ETH 1h, hl_adapter ; aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
