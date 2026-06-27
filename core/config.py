@@ -320,6 +320,13 @@ class RotationStrategyConfig(BaseModel):
     refresh_sec: int = Field(1800, ge=60, le=86400, description="Cadence de recalcul des bougies 1d (anti-429)")
     min_notional_usdc: float = Field(10.0, ge=1.0, le=1000.0, description="Sous ce notional par coin → flat (HL rejette < $10)")
     candle_limit: int = Field(600, ge=300, le=2000, description="Bougies 1d à fetcher (besoin = lookback max 200 + L + marge)")
+    # OVERLAY RÉGIME high-vol (recherche 2026-06-27, run_rotation_regime.py) : le contrarian n'a
+    # quasi aucun edge quand la vol réalisée est dans son tiers HAUT (Sharpe ~0 vs ~0,7 en vol
+    # basse). Couper l'expo là améliore le Sharpe OOS ~+15% (validé hors-univers). On passe FLAT
+    # sur un coin si le percentile de sa vol réalisée (rang dans `vol_regime_window` barres) dépasse
+    # `vol_regime_cut_pct`. OPT-IN : 1.0 = désactivé (défaut) ; 0.66 = couper le tiers haut.
+    vol_regime_cut_pct: float = Field(1.0, ge=0.50, le=1.0, description="Coupe l'expo si vol-percentile > seuil (1.0 = off)")
+    vol_regime_window: int = Field(180, ge=30, le=730, description="Fenêtre du percentile de vol réalisée")
 
 
 class StrategiesConfig(BaseModel):

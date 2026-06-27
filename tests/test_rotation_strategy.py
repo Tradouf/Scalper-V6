@@ -152,3 +152,38 @@ def test_rotation_xdeep_meta_in_range():
     strat = RotationStrategy(_cfg(pool="xdeep"), equity_callback=lambda: 10_000.0)
     sigs = strat.generate_signals(_market({"BTC": _candles(closes)}))
     assert len(sigs) == 1 and -1.0 <= strat.get_last_metrics()["BTC"]["meta"] <= 1.0
+
+
+# ─── Overlay régime high-vol (#1 2026-06-27) — opt-in, validé +15% OOS ──
+
+def test_vol_overlay_off_by_default_parity():
+    """cut=1.0 (défaut) → overlay inactif : _meta_position inchangé (parité préservée)."""
+    closes = _rng_walk(450, drift=0.0005, seed=41, sigma=0.02)
+    df = _df_from_candles(_candles(closes))
+    strat = RotationStrategy(_cfg(), equity_callback=lambda: 10_000.0)  # cut défaut 1.0
+    assert strat._cfg.vol_regime_cut_pct == 1.0
+    sigs = strat.generate_signals(_market({"BTC": _candles(closes)}))
+    assert strat.get_last_metrics()["BTC"]["vol_pct"] == 0.0   # non calculé quand off
+
+
+def test_vol_overlay_cuts_high_vol():
+    """Coin dont la vol récente est dans le tiers HAUT → cut=0.66 → flat."""
+    calm = _rng_walk(410, drift=0.0006, seed=42, sigma=0.008)
+    wild = _rng_walk(50, drift=0.0006, seed=43, sigma=0.05, start=float(calm[-1]))
+    closes = np.concatenate([calm, wild])
+    strat = RotationStrategy(_cfg(vol_regime_cut_pct=0.66), equity_callback=lambda: 10_000.0)
+    sigs = strat.generate_signals(_market({"BTC": _candles(closes)}))
+    m = strat.get_last_metrics()["BTC"]
+    assert m["vol_pct"] > 0.66            # vol récente au sommet de sa distribution
+    assert m["meta"] == 0.0 and sigs[0].target_notional == 0.0   # → flat
+
+
+def test_vol_overlay_keeps_low_vol():
+    """Coin à vol DÉCROISSANTE (dernier point = vol minimale) → vol_pct bas → cut=0.66 ne coupe pas."""
+    rng = np.random.default_rng(45)
+    n = 460
+    sig = np.linspace(0.05, 0.003, n)                 # vol qui décroît jusqu'au minimum final
+    closes = 100.0 * np.cumprod(1 + 0.0006 + rng.normal(0, 1, n) * sig)
+    strat = RotationStrategy(_cfg(vol_regime_cut_pct=0.66), equity_callback=lambda: 10_000.0)
+    strat.generate_signals(_market({"BTC": _candles(closes)}))
+    assert strat.get_last_metrics()["BTC"]["vol_pct"] < 0.5   # dernière vol parmi les plus basses

@@ -155,18 +155,30 @@ class RotationStrategy:
         meta = self._meta_position(df)
         if meta is None or not np.isfinite(meta):
             return None, 0.0
-        direction = 1.0 if meta > 0 else (-1.0 if meta < 0 else 0.0)
         closes = df["close"].to_numpy(dtype=float)
         rets = np.diff(closes) / closes[:-1]
         realized = float(np.std(rets[-int(self._cfg.vol_win):], ddof=1))
         if not np.isfinite(realized) or realized <= 0.0:
             return None, 0.0
+        # Overlay régime high-vol (opt-in) : le contrarian n'a pas d'edge dans le tiers HAUT de
+        # vol → flat. Percentile causal = rang de la vol réalisée courante dans `vol_regime_window`.
+        cut = float(self._cfg.vol_regime_cut_pct)
+        vol_pct = 0.0
+        if cut < 1.0:
+            vw = int(self._cfg.vol_win)
+            rv = pd.Series(rets).rolling(vw).std().dropna().to_numpy()
+            win = rv[-int(self._cfg.vol_regime_window):]
+            if len(win) >= 30:
+                vol_pct = float((win <= win[-1]).mean())
+                if vol_pct > cut:
+                    meta = 0.0
+        direction = 1.0 if meta > 0 else (-1.0 if meta < 0 else 0.0)
         scalar = min(target_vol_bar / realized, float(self._cfg.scalar_cap))
         notional = equity * weight * scalar * abs(meta)   # conviction repliée dans la taille
         self._last_metrics[sym] = {
             "meta": float(meta), "direction": float(direction),
             "realized_vol_bar": realized, "scalar": float(scalar),
-            "notional": float(direction * notional),
+            "vol_pct": vol_pct, "notional": float(direction * notional),
         }
         return direction, float(notional)
 
