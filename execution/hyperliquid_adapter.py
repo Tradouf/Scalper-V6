@@ -224,18 +224,22 @@ class HyperliquidReadAdapter:
             )
             r.raise_for_status()
             net = 0.0
-            latest = int(since_ms)
+            max_t = -1
             for e in r.json() or []:
                 t = int(e.get("time", 0) or 0)
-                if t > latest:
-                    latest = t
+                if t > max_t:
+                    max_t = t
                 d = e.get("delta", {}) or {}
                 typ = d.get("type")
                 if typ == "send":          # transfert sortant (retrait vers wallet externe)
                     net -= float(d.get("usdcValue", d.get("amount", 0)) or 0)
                 elif typ == "deposit":     # dépôt entrant
                     net += float(d.get("usdc", d.get("amount", 0)) or 0)
-            return net, latest
+            # Curseur STRICTEMENT après la dernière entrée vue : `startTime` HL est INCLUSIF, donc
+            # re-passer la même borne re-renverrait éternellement la même entrée (bug 2026-06-27 :
+            # un retrait re-neutralisé toutes les 10 min). +1 ms garantit qu'on ne la re-somme pas.
+            cursor = (max_t + 1) if max_t >= 0 else int(since_ms)
+            return net, cursor
         except Exception as e:
             self._log_throttled_warning("HL ledger flow error: %r", e)
             return 0.0, since_ms

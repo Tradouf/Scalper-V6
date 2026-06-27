@@ -111,12 +111,18 @@ class RiskTracker:
             try:
                 net, latest = self._flow_fn(self._last_ledger_ms)
                 if net != 0.0:
-                    self._peak = max(1e-9, self._peak + net)
-                    self._day_start = max(1e-9, self._day_start + net)
+                    # Garde anti-corruption : un flux qui viderait la référence (sous 5% de
+                    # l'equity) est suspect (ex. ré-application en boucle) → on re-base sur
+                    # l'equity plutôt que de descendre au plancher (bug 2026-06-27).
+                    floor = 0.05 * equity
+                    new_pk, new_ds = self._peak + net, self._day_start + net
+                    self._peak = new_pk if new_pk > floor else max(equity, self._peak)
+                    self._day_start = new_ds if new_ds > floor else equity
                     logger.warning(
                         "RiskTracker: flux capital net %+.2f$ neutralisé (peak→%.2f, day_start→%.2f)",
                         net, self._peak, self._day_start,
                     )
+                # Avance TOUJOURS le curseur (même si net=0) pour ne jamais re-sommer une entrée.
                 self._last_ledger_ms = max(self._last_ledger_ms, int(latest))
             except Exception as e:
                 logger.debug("RiskTracker flow_fn: %r", e)

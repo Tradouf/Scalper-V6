@@ -101,3 +101,24 @@ def test_persistence_across_instances():
     t2 = RiskTracker(state_path=p, flow_fn=lambda s: (0.0, s), flow_poll_sec=0.0)
     dd, _ = t2.update(1350.0)                  # -10% du peak 1500 chargé
     assert dd == pytest.approx(0.10)
+
+
+def test_flow_guard_rebases_on_absurd_outflow():
+    """Garde anti-corruption (bug 2026-06-27) : un flux qui viderait la référence (re-application
+    en boucle) → re-base sur l'equity au lieu de s'effondrer à ~0."""
+    t, _ = _tracker(flow=lambda s: (-2000.0, s + 1))   # sortie > tout le capital
+    t.update(1000.0)                                    # init peak=day_start=1000
+    dd, daily = t.update(1000.0)                        # flux absurde → re-base
+    assert daily == pytest.approx(0.0)                  # day_start re-basé sur equity
+    assert dd == pytest.approx(0.0)
+    assert t.peak >= 990.0                              # peak NON effondré
+
+
+def test_repeated_same_flow_does_not_compound_to_zero():
+    """Même si le curseur ne bouge pas (flux re-renvoyé), day_start ne tombe jamais à ~0."""
+    t, _ = _tracker(flow=lambda s: (-60.0, s))          # MÊME flux à chaque appel (curseur figé)
+    t.update(1000.0)
+    for _ in range(50):
+        _, daily = t.update(1000.0)
+    assert t.peak > 0.05 * 1000.0                       # jamais effondré au plancher
+    assert t._day_start > 0.05 * 1000.0
