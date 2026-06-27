@@ -33,9 +33,11 @@ import pandas as pd
 
 from core.config import RotationStrategyConfig
 from core.types import Fill, MarketSnapshot, Signal
-from strategies.strategy_pool import build_pool, build_pool_deep, strat_returns
+from strategies.strategy_pool import build_pool, build_pool_deep, build_pool_xdeep, strat_returns
 
 logger = logging.getLogger("v7.strategy.rotation")
+
+_POOL_BUILDERS = {"base": build_pool, "deep": build_pool_deep, "xdeep": build_pool_xdeep}
 
 _BARS_PER_YEAR = {"1d": 365.0, "12h": 2 * 365.0, "4h": 6 * 365.0, "1h": 24 * 365.0}
 
@@ -55,7 +57,7 @@ class RotationStrategy:
         self._equity_cb = equity_callback or (lambda: 0.0)
         self._strategy_id = strategy_id
         self._bars_per_year = _BARS_PER_YEAR.get(cfg.interval, 365.0)
-        self._build_pool = build_pool_deep if cfg.pool == "deep" else build_pool
+        self._build_pool = _POOL_BUILDERS.get(cfg.pool, build_pool_deep)
         self._desired: Dict[str, float] = {}
         self._last_metrics: Dict[str, Dict] = {}
 

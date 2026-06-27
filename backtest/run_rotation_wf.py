@@ -24,15 +24,17 @@ sys.path.insert(0, str(REPO))
 
 from backtest.run_tsmom import fetch_df
 from backtest.run_tsmom_ensemble import DEPLOYED
-from strategies.strategy_pool import build_pool, build_pool_deep, strat_returns
+from strategies.strategy_pool import build_pool, build_pool_deep, build_pool_xdeep, strat_returns
 from backtest.run_rotation import weighted_ensemble, perf
 from execution.hyperliquid_adapter import HyperliquidReadAdapter
 
+_BUILDERS = {"base": build_pool, "deep": build_pool_deep, "xdeep": build_pool_xdeep}
 
-def meta_returns(df, L, R, deep=False):
+
+def meta_returns(df, L, R, pool_name="deep"):
     """Séries de rendement net (causales) des 4 méta-stratégies sur un actif."""
     df = df.reset_index(drop=True)
-    pool = (build_pool_deep if deep else build_pool)(df)
+    pool = _BUILDERS[pool_name](df)
     rets = {nm: strat_returns(df, pos) for nm, pos in pool.items()}
     Pall = pd.concat([pool[nm].reset_index(drop=True) for nm in pool], axis=1).mean(axis=1)
     return {
@@ -53,6 +55,7 @@ def main() -> None:
     ap.add_argument("--R", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=200, help="barres ignorées au début (warmup indicateurs)")
     ap.add_argument("--deep", action="store_true", help="pool élargi (43 stratégies)")
+    ap.add_argument("--pool", default=None, choices=["base", "deep", "xdeep"], help="choix explicite du pool")
     args = ap.parse_args()
 
     symbols = ([s.strip().upper() for s in args.symbols.split(",")] if args.symbols else DEPLOYED)
@@ -66,7 +69,8 @@ def main() -> None:
         df = fetch_df(adapter, sym, args.interval, args.limit)
         if len(df) < args.warmup + args.folds * (args.L + args.R):
             continue
-        mr, n = meta_returns(df, args.L, args.R, args.deep)
+        pool_name = args.pool or ("deep" if args.deep else "base")
+        mr, n = meta_returns(df, args.L, args.R, pool_name)
         usable = range(args.warmup, n)
         idx = list(usable)
         fold_len = len(idx) // args.folds

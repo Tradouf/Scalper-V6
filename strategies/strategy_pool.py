@@ -294,6 +294,89 @@ def strat_returns(df: pd.DataFrame, pos: pd.Series, fee: float = FEE) -> np.ndar
     return p * ret - turn * fee
 
 
+# ─── Familles ORTHOGONALES (xdeep, 2026-06-27) — régime-adaptatives, statistiques, flux ──
+
+def s_drawdown_revert(df, n, thr=0.08):
+    """Fade les extrêmes : long si le prix est > thr SOUS son plus-haut n-barres (dip), short si
+    > thr AU-DESSUS de son plus-bas (rip). Mean-reversion distincte de RSI/Bollinger."""
+    c = df["close"]
+    hi, lo = c.rolling(n).max(), c.rolling(n).min()
+    pos = pd.Series(np.nan, index=c.index)
+    pos[c < hi * (1 - thr)] = 1.0
+    pos[c > lo * (1 + thr)] = -1.0
+    return pos.ffill(limit=n).fillna(0.0)
+
+
+def s_autocorr_switch(df, n, lb):
+    """RÉGIME-ADAPTATIVE : suit la tendance si les rendements sont auto-corrélés positivement
+    (régime trending), la FADE s'ils sont anti-corrélés (régime mean-reverting). Le signe de
+    l'autocorrélation lag-1 sur n barres commute la nature de la stratégie. Très décorrélé."""
+    c = df["close"]
+    r = c.pct_change()
+    ac = r.rolling(n).apply(lambda x: pd.Series(x).autocorr(lag=1) if np.std(x) > 0 else 0.0, raw=False)
+    trend = np.sign(c / c.shift(lb) - 1.0)
+    pos = np.where(ac.fillna(0.0) >= 0, trend, -trend)
+    return pd.Series(pos, index=c.index).fillna(0.0)
+
+
+def s_efficiency_trend(df, n):
+    """Kaufman Efficiency Ratio × sens : ER = |Δnet| / Σ|Δ| ∈[0,1] (trendiness). Position forte
+    quand le marché est efficient/trending, faible quand il est choppy. ER pondère la conviction."""
+    c = df["close"]
+    net = (c - c.shift(n)).abs()
+    vol = c.diff().abs().rolling(n).sum()
+    er = (net / vol.replace(0, np.nan)).clip(0, 1)
+    return (er * np.sign(c - c.shift(n))).fillna(0.0)
+
+
+def s_vol_expansion(df, sn, ln):
+    """Breakout de VOLATILITÉ : quand la vol courte dépasse nettement la vol longue (expansion),
+    suit le sens du mouvement récent ; sinon flat. Capte les départs de tendance."""
+    c = df["close"]; r = c.pct_change()
+    vs, vl = r.rolling(sn).std(), r.rolling(ln).std()
+    ratio = vs / vl.replace(0, np.nan)
+    sig = np.sign(c - c.shift(sn))
+    return pd.Series(np.where(ratio > 1.4, sig, 0.0), index=c.index).fillna(0.0)
+
+
+def s_streak_fade(df, k):
+    """Fade l'épuisement : après k clôtures consécutives dans le même sens → position OPPOSÉE."""
+    c = df["close"]; d = np.sign(c.diff()).fillna(0.0).values
+    out = np.zeros(len(d)); run = 0
+    for i in range(1, len(d)):
+        if d[i] != 0 and d[i] == d[i-1]:
+            run += 1
+        else:
+            run = 1 if d[i] != 0 else 0
+        if run >= k:
+            out[i] = -d[i]
+    return pd.Series(out, index=c.index)
+
+
+def s_cmf(df, n):
+    """Chaikin Money Flow (volume) : Σ MFV / Σ vol sur n, MFV = ((C-L)-(H-C))/(H-L)·vol. Signe =
+    accumulation/distribution. Famille flux, décorrélée du prix pur."""
+    h, l, c, v = df["high"], df["low"], df["close"], df["volume"]
+    mfm = (((c - l) - (h - c)) / (h - l).replace(0, np.nan)).fillna(0.0)
+    cmf = (mfm * v).rolling(n).sum() / v.rolling(n).sum().replace(0, np.nan)
+    return np.sign(cmf).fillna(0.0)
+
+
+def s_pctb_mom(df, n, k):
+    """Momentum du %b de Bollinger : %b = (C-bas)/(haut-bas) ; signe de sa variation sur k →
+    momentum normalisé par la vol (distinct du Bollinger mean-reversion)."""
+    c = df["close"]; m, sd = c.rolling(n).mean(), c.rolling(n).std()
+    pctb = (c - (m - 2 * sd)) / (4 * sd).replace(0, np.nan)
+    return np.sign(pctb - pctb.shift(k)).fillna(0.0)
+
+
+def s_donchian_mid(df, n):
+    """Position vs la MÉDIANE du canal de Donchian ((max+min)/2 sur n) : trend doux centré canal."""
+    h, l, c = df["high"].rolling(n).max(), df["low"].rolling(n).min(), df["close"]
+    mid = (h + l) / 2
+    return np.sign(c - mid).fillna(0.0)
+
+
 def build_pool(df: pd.DataFrame) -> dict[str, pd.Series]:
     """Construit un dictionnaire {nom: position} couvrant trend / MR / chandelles / sorties."""
     pool: dict[str, pd.Series] = {}
@@ -346,4 +429,21 @@ def build_pool_deep(df: pd.DataFrame) -> dict[str, pd.Series]:
     pool["macd_12_26_9"] = s_macd(df, 12, 26, 9)
     pool["wr_14"] = s_williams_r(df, 14)
     pool["cci_20"] = s_cci(df, 20)
+    return pool
+
+
+def build_pool_xdeep(df: pd.DataFrame) -> dict[str, pd.Series]:
+    """Pool ÉTENDU (#2 2026-06-27) : deep + 8 familles ORTHOGONALES (régime-adaptatives,
+    statistiques, flux). Plus de candidats décorrélés → cible un meilleur tilt contrarian
+    (cf. #4 : le contrarian profite d'un pool riche et décorrélé). À VALIDER vs deep avant live."""
+    pool = build_pool_deep(df)
+    pool["ddrev_30"] = s_drawdown_revert(df, 30, 0.08)
+    pool["ddrev_60"] = s_drawdown_revert(df, 60, 0.12)
+    pool["acsw_60_30"] = s_autocorr_switch(df, 60, 30)
+    pool["eff_30"] = s_efficiency_trend(df, 30)
+    pool["volexp_10_60"] = s_vol_expansion(df, 10, 60)
+    pool["streak_4"] = s_streak_fade(df, 4)
+    pool["cmf_20"] = s_cmf(df, 20)
+    pool["pctb_20_5"] = s_pctb_mom(df, 20, 5)
+    pool["donmid_40"] = s_donchian_mid(df, 40)
     return pool

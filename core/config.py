@@ -309,7 +309,8 @@ class RotationStrategyConfig(BaseModel):
         default_factory=lambda: [
             "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE",
             "LINK", "AVAX", "LTC", "AAVE", "SUI", "ARB"])
-    pool: str = Field("deep", description="'deep' (43 stratégies) ou 'base' (28)")
+    pool: str = Field("deep", description="'deep' (43, déployé), 'base' (28), ou 'xdeep' (52, +familles "
+                      "orthogonales — validé 2026-06-27 mais gain dans le bruit vs deep, non déployé)")
     L: int = Field(90, ge=20, le=400, description="Fenêtre de scoring trailing (Sharpe par stratégie)")
     temp: float = Field(1.0, ge=0.1, le=10.0, description="Température du softmax contrarian (petit = tilt fort)")
     vol_win: int = Field(30, ge=5, le=200, description="Fenêtre de vol réalisée (vol-targeting)")

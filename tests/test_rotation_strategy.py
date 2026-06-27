@@ -130,3 +130,25 @@ def test_base_pool_also_works():
     strat = RotationStrategy(_cfg(pool="base"), equity_callback=lambda: 10_000.0)
     sigs = strat.generate_signals(_market({"BTC": _candles(closes)}))
     assert len(sigs) == 1 and -1.0 <= strat.get_last_metrics()["BTC"]["meta"] <= 1.0
+
+
+# ─── Pool xdeep (#2 2026-06-27) — familles orthogonales, validé marginal, NON déployé ──
+
+def test_xdeep_pool_valid():
+    """build_pool_xdeep produit des positions valides (52 strat, ∈[-1,1], finies)."""
+    from strategies.strategy_pool import build_pool_deep, build_pool_xdeep, strat_returns
+    closes = _rng_walk(420, drift=0.0006, seed=31, sigma=0.025)
+    df = _df_from_candles(_candles(closes))
+    deep = build_pool_deep(df); xd = build_pool_xdeep(df)
+    assert len(xd) == len(deep) + 9
+    for nm, pos in xd.items():
+        assert pos.abs().max() <= 1.0 + 1e-9, nm
+        assert np.all(np.isfinite(strat_returns(df, pos))), nm
+
+
+def test_rotation_xdeep_meta_in_range():
+    """RotationStrategy avec pool='xdeep' (config-gated) reste cohérente."""
+    closes = _rng_walk(420, drift=0.001, seed=32)
+    strat = RotationStrategy(_cfg(pool="xdeep"), equity_callback=lambda: 10_000.0)
+    sigs = strat.generate_signals(_market({"BTC": _candles(closes)}))
+    assert len(sigs) == 1 and -1.0 <= strat.get_last_metrics()["BTC"]["meta"] <= 1.0
