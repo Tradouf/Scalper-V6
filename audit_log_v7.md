@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-27 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=5 (2 error/1 ProtocolError/1 ConnectionResetError/1 ConnectionError), equity=$421.07→$361.02
+**Diagnostic** : Fenêtre saine côté trading. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0, 5 erreurs = bruit réseau (ConnectionError candles SUI 1h sur hl_adapter, aucun type ≥50). La chute apparente d'équity -$60.05 (-14,3%) est un **RETRAIT de capital**, PAS une perte : croisement logs confirme un saut DISCRET ~$421→~$361 (aucune valeur intermédiaire ; équity plate avant et après), et le stratège Opus a lui-même tracé "chute -14% = retrait capital, pas perte réelle" (17:38). Trading à plat net des flux (cf. [[project_phantom_drawdown_withdrawals]]). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun (retrait capital $60, non destructeur ; NB le déploiement rotation se redimensionne sur la nouvelle equity $361 — vol_target=0,40 conserve une marge, à surveiller au prochain audit)
+
 ## 2026-06-27 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=79 (réseau : 32 error/21 ConnectionError/14 NameResolutionError/14 MaxRetryError/12 ReadTimeoutError/2 HyperliquidClientError/2 HTTPError/2 Error, types chevauchants), equity=$421.11→$421.08
 **Diagnostic** : Fenêtre saine. Régime 100% range (703 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$0.03, -0,01%). Erreurs = bruit réseau (ConnectionError/NameResolution/MaxRetry/ReadTimeout sur HL candles 1h ETH/DOGE + clearinghouseState, hl_adapter ; aucun type ≥50, le max isolé est 32 'error' génériques). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
