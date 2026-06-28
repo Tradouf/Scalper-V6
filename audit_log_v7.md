@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-28 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=11 (3 error/2 ProtocolError/2 ConnectionResetError/2 ConnectionError/1 HTTPError/1 Error, types chevauchants), equity=$361.20→$361.29
+**Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity stable (+$0.09, +0,02%) → le déploiement rotation tient sur la nouvelle equity post-retrait $361, pas de saignement. 11 erreurs = bruit réseau (HTTPError 429 candles DOGE 1h + ConnectionError clearinghouseState sur hl_adapter, aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-28 03:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=4 (1 ProtocolError/1 error/1 ConnectionResetError/1 ConnectionError), equity=$361.01→$361.20
 **Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity stable (+$0.19, +0,05%) → le redimensionnement de la rotation sur la nouvelle equity post-retrait $361 (surveillé au dernier audit) tient, pas de saignement. 4 erreurs = bruit réseau (ConnectionError candles LINK 1h sur hl_adapter, aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
