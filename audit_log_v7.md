@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-28 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=0, equity=$361.30→$361.23
+**Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout + errors à 0. Équity quasi-plate (-$0.07, -0,02%) → le déploiement rotation tient sur l'equity post-retrait $361, pas de saignement (3e audit consécutif stable à ~$361). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-28 09:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=11 (3 error/2 ProtocolError/2 ConnectionResetError/2 ConnectionError/1 HTTPError/1 Error, types chevauchants), equity=$361.20→$361.29
 **Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity stable (+$0.09, +0,02%) → le déploiement rotation tient sur la nouvelle equity post-retrait $361, pas de saignement. 11 erreurs = bruit réseau (HTTPError 429 candles DOGE 1h + ConnectionError clearinghouseState sur hl_adapter, aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
