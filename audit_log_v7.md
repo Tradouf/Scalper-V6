@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-28 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=4 (1 ProtocolError/1 error/1 ConnectionResetError/1 ConnectionError), equity=$361.01→$361.20
+**Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity stable (+$0.19, +0,05%) → le redimensionnement de la rotation sur la nouvelle equity post-retrait $361 (surveillé au dernier audit) tient, pas de saignement. 4 erreurs = bruit réseau (ConnectionError candles LINK 1h sur hl_adapter, aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-27 21:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=5 (2 error/1 ProtocolError/1 ConnectionResetError/1 ConnectionError), equity=$421.07→$361.02
 **Diagnostic** : Fenêtre saine côté trading. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0, 5 erreurs = bruit réseau (ConnectionError candles SUI 1h sur hl_adapter, aucun type ≥50). La chute apparente d'équity -$60.05 (-14,3%) est un **RETRAIT de capital**, PAS une perte : croisement logs confirme un saut DISCRET ~$421→~$361 (aucune valeur intermédiaire ; équity plate avant et après), et le stratège Opus a lui-même tracé "chute -14% = retrait capital, pas perte réelle" (17:38). Trading à plat net des flux (cf. [[project_phantom_drawdown_withdrawals]]). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
