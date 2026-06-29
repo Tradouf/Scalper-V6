@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-29 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=72 (36 MaxRetryError/36 ConnectTimeoutError, même famille DNS/connexion), equity=$?→$? (0 tick analytique)
+**Diagnostic** : Toutes pathologies grille + emergency + drift/breakout à 0. Particularité : 0 tick analytique sur la fenêtre + equity non mesurée, et les 72 erreurs sont exclusivement MaxRetry/ConnectTimeout APPAIRÉS (36/36 = même échec de connexion HL) → épisode de coupure réseau vers HL pendant une partie de la fenêtre (le bot n'a pas pu joindre l'exchange, d'où l'absence de ticks). Bénin : aucun type ≥50 et la famille est déjà couverte par la proposition pending 06-08 (retry/backoff borné hl_adapter), pas de re-proposition. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun critique (coupure réseau HL transitoire ; si 0-tick persiste sur ≥2 audits → suspecter un arrêt du bot, pas seulement du bruit réseau)
+
 ## 2026-06-28 21:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=91 (31 error/19 ReadTimeoutError/17 MaxRetryError/15 ConnectTimeoutError/7 ConnectionError/2 NewConnectionError, types chevauchants), equity=$361.23→$361.29
 **Diagnostic** : Fenêtre saine. Régime 100% range (594 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$0.06, +0,02%) → 4e audit consécutif stable à ~$361 post-retrait, pas de saignement. 91 erreurs = bruit réseau (ConnectTimeout/MaxRetry sur HL candles 1h BNB/LINK/DOGE, hl_adapter ; aucun type ≥50, max isolé 31 'error' génériques) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
