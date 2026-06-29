@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-29 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=72 (36 MaxRetryError/36 ConnectTimeoutError, appairés 36/36 = même échec de connexion HL), equity=$?→$? (0 tick analytique)
+**Diagnostic** : Métriques quasi-identiques à l'audit 03:00 (0 tick analytique + equity non mesurée + 72 erreurs exclusivement MaxRetry/ConnectTimeout appairées 36/36). C'est le **2e audit 0-tick consécutif** : au 03:00 j'avais posé le garde-fou « si 0-tick persiste sur ≥2 audits → suspecter un arrêt du bot, pas seulement du bruit réseau ». La signature (aucun tick produit + uniquement des erreurs de connexion, zéro autre famille) penche désormais vers un bot inactif/arrêté ou une coupure réseau prolongée (≥12h), PAS un simple épisode transitoire. Aucun levier paramètre : stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur), et la famille réseau est déjà couverte par la proposition pending 06-08 (retry/backoff hl_adapter) → pas de re-proposition.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : **À VÉRIFIER PAR HUMAIN** — 2e fenêtre 0-tick consécutive : contrôler que sdm-main tourne (`systemctl --user status sdm-main`) et la connectivité HL ; si le bot est arrêté, le redémarrer (l'audit ne kill/restart jamais le bot lui-même).
+
 ## 2026-06-29 03:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=72 (36 MaxRetryError/36 ConnectTimeoutError, même famille DNS/connexion), equity=$?→$? (0 tick analytique)
 **Diagnostic** : Toutes pathologies grille + emergency + drift/breakout à 0. Particularité : 0 tick analytique sur la fenêtre + equity non mesurée, et les 72 erreurs sont exclusivement MaxRetry/ConnectTimeout APPAIRÉS (36/36 = même échec de connexion HL) → épisode de coupure réseau vers HL pendant une partie de la fenêtre (le bot n'a pas pu joindre l'exchange, d'où l'absence de ticks). Bénin : aucun type ≥50 et la famille est déjà couverte par la proposition pending 06-08 (retry/backoff borné hl_adapter), pas de re-proposition. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
