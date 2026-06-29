@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-29 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=14 (6 ReadTimeoutError/6 error/2 ConnectionError, types chevauchants), equity=$361.15→$760.15
+**Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. La hausse apparente +$399 (+110%) est un **DÉPÔT de capital**, PAS un gain de trading : la signature est un saut discret (équity plate à ~$361 sur les 5 audits précédents post-retrait 06-27, puis bond), cohérent avec les flux capital francois (cf. [[project_phantom_drawdown_withdrawals]] — toujours croiser un step d'équity avec le ledger non-funding, jamais l'interpréter comme P&L). 14 erreurs = bruit réseau (ReadTimeout/ConnectionError sur allMids + candles ETH 1h, hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08, ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun (dépôt capital ~$399 ; NB la rotation va se redimensionner sur la nouvelle equity $760 — à $760 les 8 coins repassent largement au-dessus du min HL $10, déploiement plus large attendu, à surveiller au prochain audit)
+
 ## 2026-06-29 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=36 (9 error/6 MaxRetryError/6 HTTPError/6 Error/5 ConnectTimeoutError/2 SSLError/1 SSLEOFError/1 ReadTimeoutError, types chevauchants), equity=$361.14→$361.17
 **Diagnostic** : Fenêtre saine, retour à la normale après les 2 audits 0-tick consécutifs (03:00/09:00). 605 ticks analytiques, régime 100% range, équity quasi-plate (+$0.03, +0,01%) → bot bien actif et toujours stable à ~$361 post-retrait. Toutes pathologies grille + emergency + drift/breakout à 0. 36 erreurs = bruit réseau (HTTP 429 candles TAO/SOL 1h + ConnectTimeout/ChunkedEncoding DOGE sur hl_adapter ; aucun type ≥50, max isolé 9 'error' génériques) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
