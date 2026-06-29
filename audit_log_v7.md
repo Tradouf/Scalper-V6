@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-29 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=36 (9 error/6 MaxRetryError/6 HTTPError/6 Error/5 ConnectTimeoutError/2 SSLError/1 SSLEOFError/1 ReadTimeoutError, types chevauchants), equity=$361.14→$361.17
+**Diagnostic** : Fenêtre saine, retour à la normale après les 2 audits 0-tick consécutifs (03:00/09:00). 605 ticks analytiques, régime 100% range, équity quasi-plate (+$0.03, +0,01%) → bot bien actif et toujours stable à ~$361 post-retrait. Toutes pathologies grille + emergency + drift/breakout à 0. 36 erreurs = bruit réseau (HTTP 429 candles TAO/SOL 1h + ConnectTimeout/ChunkedEncoding DOGE sur hl_adapter ; aucun type ≥50, max isolé 9 'error' génériques) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun (l'alerte 0-tick des 2 audits précédents est levée : ticks et equity de nouveau mesurés)
+
 ## 2026-06-29 09:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=72 (36 MaxRetryError/36 ConnectTimeoutError, appairés 36/36 = même échec de connexion HL), equity=$?→$? (0 tick analytique)
 **Diagnostic** : Métriques quasi-identiques à l'audit 03:00 (0 tick analytique + equity non mesurée + 72 erreurs exclusivement MaxRetry/ConnectTimeout appairées 36/36). C'est le **2e audit 0-tick consécutif** : au 03:00 j'avais posé le garde-fou « si 0-tick persiste sur ≥2 audits → suspecter un arrêt du bot, pas seulement du bruit réseau ». La signature (aucun tick produit + uniquement des erreurs de connexion, zéro autre famille) penche désormais vers un bot inactif/arrêté ou une coupure réseau prolongée (≥12h), PAS un simple épisode transitoire. Aucun levier paramètre : stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur), et la famille réseau est déjà couverte par la proposition pending 06-08 (retry/backoff hl_adapter) → pas de re-proposition.
