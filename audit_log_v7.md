@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-06-30 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 HTTPError/1 Error/1 error), equity=$761.29→$761.59
+**Diagnostic** : Fenêtre saine. Régime 100% range (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$0.30, +0,04%) → 2e audit consécutif stable à ~$761 post-dépôt (la rotation tient son redimensionnement sur la nouvelle equity, pas de saignement). 3 erreurs = bruit réseau (1 HTTP 429 candles SUI 1h sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-06-30 03:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (2 error/1 HyperliquidClientError), equity=$760.13→$761.33
 **Diagnostic** : Fenêtre saine. Régime 100% range (713 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$1.20, +0,16%) → 1er audit stable sur la nouvelle equity ~$760 post-dépôt (cf. saut $361→$760 au dernier audit = dépôt capital, pas P&L), pas de saignement, la rotation tient son redimensionnement. 3 erreurs = bruit (1 HyperliquidClientError submit BNB sell sur v7.execution — déjà couvert par le pending submit-sell 06-02 ; aucun type ≥50). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
