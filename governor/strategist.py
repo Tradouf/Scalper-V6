@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, asdict
@@ -29,6 +31,11 @@ logger = logging.getLogger("v7.strategist")
 
 REPO = Path(__file__).resolve().parent.parent
 POSTURE_PATH = REPO / "memory" / "strategy_posture.json"
+
+# Résolution robuste du binaire `claude` : sous systemd/@reboot le PATH hérité
+# n'inclut pas ~/.local/bin (cause du FileNotFoundError post-reboot 2026-07-01).
+# On résout via PATH, sinon on retombe sur l'install utilisateur standard.
+_CLAUDE_BIN = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 # Bornes DURES (le stratège ne peut pas en sortir — mêmes murs que le tactique).
 EMERGENCY_MIN = 0.030
@@ -119,7 +126,7 @@ class Strategist:
     def _call_opus(self, prompt: str) -> Optional[str]:
         try:
             r = subprocess.run(
-                ["claude", "-p", "--model", self._model,
+                [_CLAUDE_BIN, "-p", "--model", self._model,
                  "--max-budget-usd", str(self._budget), prompt],
                 capture_output=True, text=True, timeout=self._timeout,
             )
