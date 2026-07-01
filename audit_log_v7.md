@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-07-01 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 ReadTimeoutError/1 ConnectionError/1 error), equity=$1003.76→$1000.03
+**Diagnostic** : Fenêtre saine. Régime 100% range (721 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$3.73, -0,37%) sur la base ~$1002 post-dépôt (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient son redimensionnement sur la nouvelle equity. 3 erreurs = bruit réseau (1 ReadTimeout/ConnectionError candles LINK 1h sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-07-01 15:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=22 (7 error/3 HTTPError/3 FileNotFoundError/3 Error/2 ReadTimeout/2 ConnectionError/1 ProtocolError/1 NameResolutionError, types chevauchants), equity=$1002.61→$1003.80
 **Diagnostic** : Fenêtre saine. Régime 100% range (375 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$1.19, +0,12%) sur la nouvelle base ~$1002. NB le palier ~$761→~$1002 depuis l'audit 06-30 est un **DÉPÔT de capital** (saut discret, pas un P&L de trading — cf. [[project_phantom_drawdown_withdrawals]], croiser tout step avec le ledger non-funding). BootReconciler à 14:49 confirme positions=4 adoptées=0 equity=$1004 → redimensionnement rotation propre sur la nouvelle equity, pas de saignement. 22 erreurs = bruit réseau (ReadTimeout/ConnectionError candles BTC 1h + clearinghouseState sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Les 3 FileNotFoundError << seuil 50 (résidu du PATH strategist déjà fixé commit c9875e3, cf. [[project_strategist_claude_path]]) → pas d'action. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
