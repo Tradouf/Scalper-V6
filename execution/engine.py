@@ -46,6 +46,17 @@ class ExecutionEngine:
     # voudrait fermer/réduire — impossible sur HL, donc on la laisse telle quelle.
     MIN_ORDER_NOTIONAL_USD = 10.0
 
+    # Marge de sécurité au-dessus du min HL. Le garde-fou ci-dessous s'exécute au RECONCILE,
+    # sur le diff brut en USD. Mais HL évalue son min $10 à l'EXÉCUTION, APRÈS (a) le flooring
+    # de la taille à szDecimals (hyperliquid_client.place_order) et (b) l'écart mark(reconcile)
+    # → oracle(fill). Un ordre pile au-dessus de $10 au reconcile peut donc retomber sous $10
+    # côté serveur → rejet `Order must have minimum value of $10` re-tenté À L'IDENTIQUE chaque
+    # tick (la position ne bouge pas → diff constant → boucle déterministe). Storm observé XRP
+    # (asset 25) + ZEC (asset 214), ~1 ERROR/tick du 06-02 au 07-02. En exigeant une marge, un
+    # ordre du dead-band $10.00-$11.00 est skippé silencieusement au lieu d'être soumis puis
+    # rejeté — même effet sur la position (inchangée), sans ERROR ni appel API. (2026-07-02)
+    SUBMIT_MIN_NOTIONAL_USD = MIN_ORDER_NOTIONAL_USD * 1.10
+
     def __init__(
         self,
         exchange: ExchangeClient,
@@ -126,12 +137,13 @@ class ExecutionEngine:
                 # Cas-limite (rebalance_threshold_pct=0 + dust filtré) : on n'a
                 # rien à exécuter mais on est passé sous la bande non-trade.
                 continue
-            if abs(diff) < self.MIN_ORDER_NOTIONAL_USD:
-                # Sous le min HL → rejet garanti. On skippe (la position reste inchangée,
-                # comme si l'ordre avait été envoyé puis rejeté, mais sans ERROR ni appel API).
+            if abs(diff) < self.SUBMIT_MIN_NOTIONAL_USD:
+                # Sous le min HL (+ marge flooring/dérive) → rejet garanti à l'exécution. On
+                # skippe (la position reste inchangée, comme si l'ordre avait été envoyé puis
+                # rejeté, mais sans ERROR ni appel API). Voir SUBMIT_MIN_NOTIONAL_USD.
                 logger.debug(
-                    "ExecutionEngine %s : ordre %.2f$ < min HL %.2f$ → skip (rejet garanti)",
-                    asset, abs(diff), self.MIN_ORDER_NOTIONAL_USD,
+                    "ExecutionEngine %s : ordre %.2f$ < seuil submit %.2f$ → skip (rejet garanti)",
+                    asset, abs(diff), self.SUBMIT_MIN_NOTIONAL_USD,
                 )
                 continue
             side = "buy" if diff > 0 else "sell"

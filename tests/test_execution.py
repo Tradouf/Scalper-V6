@@ -166,9 +166,30 @@ class TestReconcile:
         assert orders == []   # diff $5 > bande $0.5 MAIS < min $10 → skip
 
     def test_min_order_boundary_kept(self):
-        """Un ordre AU-DESSUS du min HL passe normalement."""
+        """Un ordre AU-DESSUS du seuil submit (min HL + marge) passe normalement."""
         engine, ex = self._engine(rebalance_threshold=0.005)
         pf = PortfolioImpl(_positions={"BTC": 15.0}, _equity=100.0)
+        target = _target([])
+        orders = engine.reconcile(target, pf)
+        assert len(orders) == 1 and orders[0].side == "sell"
+
+    def test_dead_band_above_min_but_below_submit_skipped(self):
+        """Dead-band $10.00-$11.00 : au-dessus du min HL brut mais sous le seuil submit.
+        C'est la cause racine du storm XRP/ZEC — un ordre à $10.50 passe le min $10 au
+        reconcile puis est rejeté à l'exécution (flooring taille + dérive mark) → re-tenté
+        chaque tick. On doit le skipper en amont, sans le soumettre."""
+        engine, ex = self._engine(rebalance_threshold=0.005)
+        # Position $10.50 (> min HL $10, < seuil submit $11), equity assez grande pour que
+        # la bande non-trade (0.5% × 100 = $0.5) ne masque pas le cas.
+        pf = PortfolioImpl(_positions={"BTC": 10.50}, _equity=100.0)
+        target = _target([])  # on veut fermer
+        orders = engine.reconcile(target, pf)
+        assert orders == []   # diff $10.50 > min $10 MAIS < seuil submit $11 → skip
+
+    def test_above_submit_threshold_kept(self):
+        """Juste au-dessus du seuil submit ($11) → l'ordre passe."""
+        engine, ex = self._engine(rebalance_threshold=0.005)
+        pf = PortfolioImpl(_positions={"BTC": 12.0}, _equity=100.0)
         target = _target([])
         orders = engine.reconcile(target, pf)
         assert len(orders) == 1 and orders[0].side == "sell"
