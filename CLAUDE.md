@@ -31,6 +31,11 @@ python backtest/run_backtest.py        # Deterministic
 # Unit tests
 python -m pytest tests/test_core.py -v
 
+# SimpleBot — bot paramétrique auto-optimisé sur wallet séparé (voir simplebot/README.md)
+python -m simplebot.run                       # dry-run par défaut
+bash start_simplebot.sh --live                # ordres réels (exige HL2_PRIVATE_KEY)
+python -m pytest tests/test_simplebot.py -v   # tests dédiés
+
 # Post-trade analysis
 python analyze_trades.py
 ```
