@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-07-02 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=66 (66 HyperliquidClientError = 66 'error', mêmes événements), equity=$999.99→$1001.48
+**Diagnostic** : Fenêtre saine côté trading. Régime 454 range / 265 high_vol (719 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$1.49, +0,15%) sur la base ~$1002 post-dépôt (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. SIGNAL : 66 HyperliquidClientError franchit le seuil « ≥50 d'un même type → proposition code », MAIS ce sont TOUS des `ExecutionEngine submit error XRP buy` (v7.execution) — famille submit-error déjà couverte par 2 propositions pending (06-02 : submit échoue silencieusement + log HL complet ; 06-15 : submit errors sur buys d'entrée). Le workflow interdit de re-proposer un pending → escalade en alerte, pas de re-proposition. Concentration sur XRP buy uniquement (rotation, seul book actif) = entrée rotation rejetée en boucle (~11/h) ; cause racine HL invisible (repr tronqué, déjà pointé par pending 06-02). Aucun levier paramètre : stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur), XRP buy non réglable par les params autorisés.
+**Changes** : aucun
+**Code proposals** : aucune (submit-error XRP couvert par pending 06-02 + 06-15)
+**Alerts** : 66 HyperliquidClientError (≥50) exclusivement `submit error XRP buy` → revue humaine des 2 propositions submit-error pending (06-02 log HL complet + fallback, 06-15 garde anti-boucle) ; le repr tronqué empêche toujours le diagnostic racine (min notional XRP ? Alo non-marketable ?).
+
 ## 2026-07-01 21:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 ReadTimeoutError/1 ConnectionError/1 error), equity=$1003.76→$1000.03
 **Diagnostic** : Fenêtre saine. Régime 100% range (721 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$3.73, -0,37%) sur la base ~$1002 post-dépôt (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient son redimensionnement sur la nouvelle equity. 3 erreurs = bruit réseau (1 ReadTimeout/ConnectionError candles LINK 1h sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
