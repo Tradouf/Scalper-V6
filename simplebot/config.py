@@ -47,15 +47,17 @@ INTERVAL_MS = {
 }[INTERVAL]
 
 # ── Backtest / optimisation ──────────────────────────────────────────────────
-BACKTEST_DAYS = _env_int("SIMPLEBOT_BACKTEST_DAYS", 21)
+# Attention : l'API candleSnapshot plafonne à ~5000 bougies par requête,
+# soit ~52 jours en 15m — ne pas dépasser sans paginer fetch_ohlcv.
+BACKTEST_DAYS = _env_int("SIMPLEBOT_BACKTEST_DAYS", 45)
 OPTIMIZE_INTERVAL_SEC = _env_int("SIMPLEBOT_OPTIMIZE_INTERVAL_SEC", 6 * 3600)
 
-# Split walk-forward : la grille est classée sur le train, le set retenu doit
-# confirmer sur la fenêtre de validation (les VALIDATION_RATIO derniers %).
+# Split walk-forward : la grille est classée sur le train ; la validation est
+# un filtre BINAIRE (le 1er set du classement train qui confirme est retenu).
 VALIDATION_RATIO = _env_float("SIMPLEBOT_VALIDATION_RATIO", 0.30)
 TOP_K_VALIDATION = _env_int("SIMPLEBOT_TOP_K_VALIDATION", 10)
 MIN_TRAIN_TRADES = _env_int("SIMPLEBOT_MIN_TRAIN_TRADES", 5)
-MIN_VALID_TRADES = _env_int("SIMPLEBOT_MIN_VALID_TRADES", 2)
+MIN_VALID_TRADES = _env_int("SIMPLEBOT_MIN_VALID_TRADES", 5)
 MIN_VALID_PF = _env_float("SIMPLEBOT_MIN_VALID_PF", 1.2)
 
 # Coûts par side (fill taker + glissement) appliqués au backtest ET au sizing.
@@ -71,6 +73,14 @@ MARGIN_PCT = _env_float("SIMPLEBOT_MARGIN_PCT", 0.05)   # marge par trade en % d
 MIN_NOTIONAL_USD = 11.0                                  # minimum HL = $10, marge d'arrondi
 MAX_OPEN_POSITIONS = _env_int("SIMPLEBOT_MAX_OPEN_POSITIONS", 3)
 LOOP_SEC = _env_int("SIMPLEBOT_LOOP_SEC", 30)
+
+# ── Kill-switch ──────────────────────────────────────────────────────────────
+# Si l'account value perd KILL_LOSS_PCT par rapport à son pic sur la fenêtre
+# glissante KILL_WINDOW_SEC : fermeture de toutes les positions et pause du
+# trading pendant KILL_PAUSE_SEC.
+KILL_LOSS_PCT = _env_float("SIMPLEBOT_KILL_LOSS_PCT", 0.05)
+KILL_WINDOW_SEC = _env_int("SIMPLEBOT_KILL_WINDOW_SEC", 24 * 3600)
+KILL_PAUSE_SEC = _env_int("SIMPLEBOT_KILL_PAUSE_SEC", 24 * 3600)
 
 # Second wallet — NE PAS réutiliser le wallet de la V6.
 ENV_PRIVATE_KEY = "HL2_PRIVATE_KEY"

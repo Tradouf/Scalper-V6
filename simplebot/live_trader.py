@@ -11,6 +11,14 @@ Sécurités :
 - TP/SL NATIFS posés sur l'exchange dès l'entrée : un crash du bot ne
   laisse jamais une position sans protection (contrairement au trail
   logiciel de la V6) ;
+- RÉCONCILIATION au démarrage : toute position trouvée sans SL natif
+  (crash entre l'ouverture et la pose du TP/SL) est re-protégée, ou
+  fermée si impossible ;
+- KILL-SWITCH : si l'account value perd KILL_LOSS_PCT vs son pic sur
+  KILL_WINDOW_SEC, tout est fermé et le trading est mis en pause ;
+- en DRY-RUN, les positions sont simulées (papier) : entrées, TP/SL et
+  flips sont rejoués sur les bougies suivantes et le PnL cumulé est logué
+  → le dry-run donne un vrai verdict chiffré avant de passer live ;
 - ne touche qu'aux symboles marqués `active` par l'optimiseur.
 """
 
@@ -25,7 +33,7 @@ from typing import Optional
 
 from simplebot import config
 from simplebot.data import closed_candles, fetch_ohlcv
-from simplebot.strategy import StrategyParams, latest_signal
+from simplebot.strategy import StrategyParams, atr, latest_signal
 
 logger = logging.getLogger("sdm.simplebot.live")
 
@@ -123,13 +131,18 @@ class SimpleLiveTrader:
         self._fetch = fetch or fetch_ohlcv
         self._live_state = self._load_live_state()
 
-    # état persistant : dernière bougie traitée par symbole
+    # état persistant : dernière bougie traitée, positions papier, kill-switch
     def _load_live_state(self) -> dict:
         try:
             with open(config.LIVE_STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
         except Exception:
-            return {"last_ts": {}}
+            state = {}
+        state.setdefault("last_ts", {})
+        state.setdefault("paper", {"positions": {}, "trades": []})
+        state.setdefault("equity_history", [])
+        state.setdefault("paused_until", 0)
+        return state
 
     def _save_live_state(self) -> None:
         try:
@@ -146,6 +159,7 @@ class SimpleLiveTrader:
     def run_forever(self) -> None:
         mode = "DRY-RUN (aucun ordre envoyé)" if self.dry_run else "LIVE ⚠️ ordres réels"
         logger.info("SimpleLiveTrader démarré — %s — intervalle %s", mode, config.INTERVAL)
+        self.reconcile_positions()
         while True:
             try:
                 self.tick()
@@ -155,6 +169,8 @@ class SimpleLiveTrader:
 
     def tick(self) -> None:
         self.store.maybe_reload()
+        if self._kill_switch_engaged():
+            return
         for symbol in self.store.symbols:
             params = self.store.active_params(symbol)
             if params is None:
@@ -163,6 +179,151 @@ class SimpleLiveTrader:
                 self._process_symbol(symbol, params)
             except Exception as e:
                 logger.error("Traitement %s en erreur: %r", symbol, e, exc_info=True)
+
+    # ── Sécurités live ───────────────────────────────────────────────────────
+
+    def reconcile_positions(self) -> None:
+        """
+        Au démarrage live : toute position ouverte doit avoir un SL natif.
+        Un crash entre place_order et place_position_tpsl peut laisser une
+        position nue — on la re-protège, ou on la ferme si c'est impossible.
+        """
+        if self.dry_run or self.client is None:
+            return
+        self.store.maybe_reload()
+        try:
+            positions = self.client.get_positions()
+        except Exception as e:
+            logger.error("Réconciliation: lecture des positions impossible: %r", e)
+            return
+        for p in positions:
+            coin = p["coin"]
+            szi = float(p.get("szi", 0))
+            if abs(szi) <= 0:
+                continue
+            try:
+                orders = self.client.get_open_orders(coin)
+            except Exception as e:
+                logger.error("Réconciliation %s: lecture des ordres impossible: %r", coin, e)
+                continue
+            has_sl = any(
+                o.get("isTrigger") and o.get("tpsl") == "sl" and o.get("reduceOnly")
+                for o in orders
+            )
+            if has_sl:
+                logger.info("Réconciliation %s: SL natif présent — OK", coin)
+                continue
+            logger.warning("Réconciliation %s: position ouverte SANS SL natif → réparation", coin)
+            self._protect_or_close(coin, szi, float(p.get("entry_px", 0) or 0))
+
+    def _protect_or_close(self, coin: str, szi: float, entry_px: float) -> None:
+        """Repose un TP/SL natif sur une position nue ; la ferme sinon."""
+        direction = 1 if szi > 0 else -1
+        params = self.store.active_params(coin)
+        atr_val = 0.0
+        ref = entry_px
+        if params is not None:
+            bars_needed = params.warmup_bars * 4
+            days = max(1.0, bars_needed * config.INTERVAL_MS / 86_400_000)
+            candles = closed_candles(
+                self._fetch(coin, config.INTERVAL, days), config.INTERVAL_MS
+            )
+            if len(candles) >= params.warmup_bars + 1:
+                atr_val = atr(candles, params.atr_len)[-1]
+                if ref <= 0:
+                    ref = candles[-1]["close"]
+
+        if params is None or atr_val <= 0 or ref <= 0:
+            logger.error("%s: SL non recalculable (params/ATR indisponibles) → fermeture", coin)
+            self._safety_close(coin)
+            return
+
+        sl_price = ref - direction * params.sl_atr * atr_val
+        tp_price = ref + direction * params.tp_atr * atr_val
+        try:
+            self.client.cancel_all_orders(coin)  # purge un éventuel TP orphelin
+            self.client.place_position_tpsl(
+                coin=coin,
+                is_long=(direction == 1),
+                sz=abs(szi),
+                tp_price=tp_price,
+                sl_price=sl_price,
+            )
+            logger.info("%s: position re-protégée TP=%.6g SL=%.6g", coin, tp_price, sl_price)
+        except Exception as e:
+            logger.error("%s: re-protection échouée (%r) → fermeture", coin, e)
+            self._safety_close(coin)
+
+    def _safety_close(self, coin: str) -> None:
+        try:
+            self.client.cancel_all_orders(coin)
+        except Exception as e:
+            logger.warning("%s: cancel_all_orders: %r", coin, e)
+        try:
+            self.client.market_close(coin)
+            logger.info("%s: position fermée (sécurité)", coin)
+        except Exception as e:
+            logger.critical("%s: FERMETURE DE SÉCURITÉ ÉCHOUÉE: %r — POSITION SANS SL !", coin, e)
+
+    def _kill_switch_engaged(self) -> bool:
+        """
+        True si le trading est en pause. Suit l'account value en fenêtre
+        glissante ; en cas de perte > KILL_LOSS_PCT vs le pic, ferme tout
+        et met le trading en pause KILL_PAUSE_SEC.
+        """
+        if self.dry_run or self.client is None:
+            return False
+        now = time.time()
+        paused_until = float(self._live_state.get("paused_until", 0))
+        if now < paused_until:
+            if now - getattr(self, "_last_pause_log", 0) > 600:
+                self._last_pause_log = now
+                logger.warning("Kill-switch actif — reprise dans %.0f min",
+                               (paused_until - now) / 60)
+            return True
+
+        try:
+            account_value = self.client.get_account_value()
+        except Exception as e:
+            logger.warning("Kill-switch: account value illisible (%r) — check ignoré", e)
+            return False
+        if account_value <= 0:
+            return False
+
+        hist = self._live_state["equity_history"]
+        if not hist or now - hist[-1][0] >= 300:  # un point max toutes les 5 min
+            hist.append([now, account_value])
+        cutoff = now - config.KILL_WINDOW_SEC
+        hist[:] = [pt for pt in hist if pt[0] >= cutoff]
+        peak = max(v for _, v in hist)
+
+        if peak > 0 and account_value <= peak * (1 - config.KILL_LOSS_PCT):
+            logger.critical(
+                "KILL-SWITCH: account value %.2f ≤ pic %.2f × (1-%.1f%%) — "
+                "fermeture de toutes les positions, pause %dh",
+                account_value, peak, config.KILL_LOSS_PCT * 100,
+                config.KILL_PAUSE_SEC // 3600,
+            )
+            self._emergency_flatten()
+            self._live_state["paused_until"] = now + config.KILL_PAUSE_SEC
+            self._save_live_state()
+            return True
+
+        self._save_live_state()
+        return False
+
+    def _emergency_flatten(self) -> None:
+        try:
+            positions = self.client.get_positions()
+        except Exception as e:
+            logger.critical("Kill-switch: lecture des positions impossible: %r", e)
+            positions = []
+        for p in positions:
+            self._safety_close(p["coin"])
+        try:
+            self.client.cancel_all_orders()
+        except Exception as e:
+            logger.warning("Kill-switch: cancel_all_orders global: %r", e)
 
     def _process_symbol(self, symbol: str, params: StrategyParams) -> None:
         # ~4× le warmup en bougies, converti en jours
@@ -178,6 +339,10 @@ class SimpleLiveTrader:
         last_ts = candles[-1]["ts"]
         if self._live_state["last_ts"].get(symbol) == last_ts:
             return  # bougie déjà traitée
+
+        # dry-run : rejouer les TP/SL papier sur les bougies apparues depuis
+        if self.dry_run:
+            self._paper_check_exits(symbol, candles)
 
         sig = latest_signal(candles, params)
         # bougie marquée traitée quoi qu'il arrive (une décision par bougie)
@@ -197,20 +362,21 @@ class SimpleLiveTrader:
 
         if current is not None and current * direction < 0:
             logger.info("%s: signal %+d opposé à la position → flip", symbol, direction)
-            self._close_position(symbol)
+            self._close_position(symbol, ref_price=sig["close"], ts=sig["ts"])
 
         if current is None and self._open_positions_count() >= config.MAX_OPEN_POSITIONS:
             logger.info("%s: signal %+d ignoré — MAX_OPEN_POSITIONS atteint", symbol, direction)
             return
 
-        self._open_position(symbol, direction, sig["close"], sig["atr"])
+        self._open_position(symbol, direction, sig["close"], sig["atr"], ts=sig["ts"])
 
     # ── Lecture des positions ────────────────────────────────────────────────
 
     def _current_position(self, symbol: str) -> Optional[float]:
-        """szi signé de la position ouverte, None si flat (ou en dry-run)."""
+        """szi signé de la position ouverte (±1 papier en dry-run), None si flat."""
         if self.dry_run or self.client is None:
-            return None
+            pos = self._live_state["paper"]["positions"].get(symbol)
+            return float(pos["dir"]) if pos else None
         for p in self.client.get_positions(coin=symbol):
             szi = float(p.get("szi", 0))
             if abs(szi) > 0:
@@ -219,14 +385,69 @@ class SimpleLiveTrader:
 
     def _open_positions_count(self) -> int:
         if self.dry_run or self.client is None:
-            return 0
+            return len(self._live_state["paper"]["positions"])
         return len([p for p in self.client.get_positions() if abs(float(p.get("szi", 0))) > 0])
+
+    # ── Positions papier (dry-run) ───────────────────────────────────────────
+
+    def _paper_check_exits(self, symbol: str, candles: list) -> None:
+        """Rejoue TP/SL (SL prioritaire, comme le backtester) sur les bougies
+        clôturées depuis le dernier check de la position papier."""
+        pos = self._live_state["paper"]["positions"].get(symbol)
+        if not pos:
+            return
+        for c in candles:
+            if c["ts"] <= pos["checked_ts"]:
+                continue
+            if pos["dir"] == 1:
+                if c["low"] <= pos["sl"]:
+                    self._paper_close(symbol, pos["sl"], "SL", c["ts"])
+                    return
+                if c["high"] >= pos["tp"]:
+                    self._paper_close(symbol, pos["tp"], "TP", c["ts"])
+                    return
+            else:
+                if c["high"] >= pos["sl"]:
+                    self._paper_close(symbol, pos["sl"], "SL", c["ts"])
+                    return
+                if c["low"] <= pos["tp"]:
+                    self._paper_close(symbol, pos["tp"], "TP", c["ts"])
+                    return
+            pos["checked_ts"] = c["ts"]
+
+    def _paper_close(self, symbol: str, exit_px: float, reason: str, ts) -> None:
+        paper = self._live_state["paper"]
+        pos = paper["positions"].pop(symbol, None)
+        if not pos:
+            return
+        cost = 2.0 * (config.FEE_PCT + config.SLIPPAGE_PCT)
+        pnl = pos["dir"] * (exit_px - pos["entry"]) / pos["entry"] - cost
+        paper["trades"].append({
+            "symbol": symbol,
+            "dir": pos["dir"],
+            "entry": pos["entry"],
+            "exit": exit_px,
+            "pnl_pct": pnl,
+            "reason": reason,
+            "entry_ts": pos["entry_ts"],
+            "exit_ts": ts,
+        })
+        trades = paper["trades"]
+        total = sum(t["pnl_pct"] for t in trades)
+        wins = len([t for t in trades if t["pnl_pct"] > 0])
+        logger.info(
+            "[PAPER] %s: EXIT %s @ %.6g (%s) pnl=%+.3f%% | cumul: %d trades, "
+            "%+.3f%%, winrate %.0f%%",
+            symbol, "LONG" if pos["dir"] == 1 else "SHORT", exit_px, reason,
+            pnl * 100, len(trades), total * 100, 100.0 * wins / len(trades),
+        )
 
     # ── Exécution ────────────────────────────────────────────────────────────
 
-    def _close_position(self, symbol: str) -> None:
+    def _close_position(self, symbol: str, ref_price: float = None, ts=None) -> None:
         if self.dry_run:
-            logger.info("[DRY-RUN] %s: cancel ordres + market_close", symbol)
+            if ref_price is not None:
+                self._paper_close(symbol, ref_price, "FLIP", ts)
             return
         try:
             self.client.cancel_all_orders(symbol)   # purge TP/SL natifs orphelins
@@ -235,7 +456,8 @@ class SimpleLiveTrader:
         self.client.market_close(symbol)
         logger.info("%s: position clôturée (market)", symbol)
 
-    def _open_position(self, symbol: str, direction: int, ref_price: float, atr_val: float) -> None:
+    def _open_position(self, symbol: str, direction: int, ref_price: float,
+                       atr_val: float, ts=None) -> None:
         side = "LONG" if direction == 1 else "SHORT"
         params = self.store.active_params(symbol)
         if atr_val <= 0 or ref_price <= 0 or params is None:
@@ -246,8 +468,16 @@ class SimpleLiveTrader:
         tp_price = ref_price + direction * params.tp_atr * atr_val
 
         if self.dry_run:
+            self._live_state["paper"]["positions"][symbol] = {
+                "dir": direction,
+                "entry": ref_price,
+                "sl": sl_price,
+                "tp": tp_price,
+                "entry_ts": ts,
+                "checked_ts": ts,
+            }
             logger.info(
-                "[DRY-RUN] %s: OPEN %s @~%.6g | TP=%.6g SL=%.6g (ATR=%.6g, params=%s)",
+                "[PAPER] %s: OPEN %s @~%.6g | TP=%.6g SL=%.6g (ATR=%.6g, params=%s)",
                 symbol, side, ref_price, tp_price, sl_price, atr_val, params.to_dict(),
             )
             return

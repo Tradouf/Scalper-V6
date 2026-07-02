@@ -243,7 +243,7 @@ def test_live_trader_dry_run_acts_once_per_candle(tmp_path, monkeypatch):
     calls = []
 
     class SpyTrader(SimpleLiveTrader):
-        def _open_position(self, symbol, direction, ref_price, atr_val):
+        def _open_position(self, symbol, direction, ref_price, atr_val, **kw):
             calls.append((symbol, direction))
 
     trader = SpyTrader(
@@ -256,6 +256,224 @@ def test_live_trader_dry_run_acts_once_per_candle(tmp_path, monkeypatch):
     assert calls == [("TEST", 1)]
     trader.tick()  # même bougie → pas de double ordre
     assert calls == [("TEST", 1)]
+
+
+def test_dry_run_tracks_paper_positions(tmp_path, monkeypatch):
+    """Le dry-run simule la position : OPEN papier, puis EXIT TP sur la
+    bougie suivante, avec PnL enregistré."""
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {"TEST": {"active": True, "params": PARAMS.to_dict()}},
+    }))
+
+    candles = make_candles(vshape_closes())
+    signals = compute_signals(candles, PARAMS)
+    sig_bar = max(i for i, s in enumerate(signals) if s == 1)
+    window = candles[: sig_bar + 1]
+    interval_ms = 900_000
+
+    feed = {"candles": window}
+
+    def fake_fetch(symbol, interval, days, **kw):
+        # + une bougie "en cours" que closed_candles doit retirer
+        running = dict(feed["candles"][-1], ts=feed["candles"][-1]["ts"] + 10**12)
+        return feed["candles"] + [running]
+
+    trader = SimpleLiveTrader(store=ParamStore(best_file), dry_run=True, fetch=fake_fetch)
+    trader.tick()
+
+    paper = trader._live_state["paper"]
+    assert "TEST" in paper["positions"]
+    pos = paper["positions"]["TEST"]
+    assert pos["dir"] == 1
+    assert pos["sl"] < pos["entry"] < pos["tp"]
+    assert trader._current_position("TEST") == 1.0
+    assert trader._open_positions_count() == 1
+
+    # bougie suivante : high au-dessus du TP, low au-dessus du SL → sortie TP
+    last = window[-1]
+    tp_candle = {
+        "ts": last["ts"] + interval_ms,
+        "open": last["close"],
+        "high": pos["tp"] * 1.05,
+        "low": last["close"],
+        "close": pos["tp"],
+        "volume": 100.0,
+    }
+    feed["candles"] = window + [tp_candle]
+    trader.tick()
+
+    assert paper["positions"] == {}
+    assert len(paper["trades"]) == 1
+    trade = paper["trades"][0]
+    assert trade["reason"] == "TP"
+    assert trade["pnl_pct"] > 0
+
+
+class FakeClient:
+    """Client Hyperliquid minimal pour tester réconciliation et kill-switch."""
+
+    def __init__(self, positions=None, orders=None, account_value=1000.0):
+        self.positions = positions or []
+        self.orders = orders or []
+        self.account_value = account_value
+        self.tpsl_calls = []
+        self.closed = []
+        self.cancelled = []
+
+    def get_positions(self, coin=None):
+        return [p for p in self.positions if coin is None or p["coin"] == coin]
+
+    def get_open_orders(self, coin=None):
+        return [o for o in self.orders if coin is None or o["coin"] == coin]
+
+    def cancel_all_orders(self, coin=None):
+        self.cancelled.append(coin)
+        return 0
+
+    def place_position_tpsl(self, **kw):
+        self.tpsl_calls.append(kw)
+        return {"status": "ok"}
+
+    def market_close(self, coin):
+        self.closed.append(coin)
+        self.positions = [p for p in self.positions if p["coin"] != coin]
+        return {"status": "ok"}
+
+    def get_account_value(self):
+        return self.account_value
+
+
+def _live_trader_with(client, tmp_path, monkeypatch, active_symbols=None):
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {s: {"active": True, "params": PARAMS.to_dict()}
+                    for s in (active_symbols or [])},
+    }))
+    return SimpleLiveTrader(
+        client=client,
+        store=ParamStore(best_file),
+        dry_run=False,
+        fetch=lambda s, i, d, **kw: make_candles(wave_closes(n=200)),
+    )
+
+
+def test_reconcile_reprotects_naked_position(tmp_path, monkeypatch):
+    client = FakeClient(positions=[{"coin": "TEST", "szi": 0.5, "entry_px": 100.0}])
+    trader = _live_trader_with(client, tmp_path, monkeypatch, active_symbols=["TEST"])
+    trader.reconcile_positions()
+
+    assert len(client.tpsl_calls) == 1
+    call = client.tpsl_calls[0]
+    assert call["coin"] == "TEST"
+    assert call["is_long"] is True
+    assert call["sz"] == 0.5
+    assert call["sl_price"] < 100.0 < call["tp_price"]
+    assert client.closed == []
+
+
+def test_reconcile_skips_protected_position(tmp_path, monkeypatch):
+    client = FakeClient(
+        positions=[{"coin": "TEST", "szi": 0.5, "entry_px": 100.0}],
+        orders=[{"coin": "TEST", "isTrigger": True, "tpsl": "sl", "reduceOnly": True}],
+    )
+    trader = _live_trader_with(client, tmp_path, monkeypatch, active_symbols=["TEST"])
+    trader.reconcile_positions()
+    assert client.tpsl_calls == []
+    assert client.closed == []
+
+
+def test_reconcile_closes_position_without_params(tmp_path, monkeypatch):
+    # symbole plus actif dans best_params → impossible de recalculer un SL
+    client = FakeClient(positions=[{"coin": "ORPHAN", "szi": -0.5, "entry_px": 100.0}])
+    trader = _live_trader_with(client, tmp_path, monkeypatch, active_symbols=[])
+    trader.reconcile_positions()
+    assert client.tpsl_calls == []
+    assert client.closed == ["ORPHAN"]
+
+
+def test_kill_switch_flattens_and_pauses(tmp_path, monkeypatch):
+    import time as _time
+
+    client = FakeClient(
+        positions=[{"coin": "TEST", "szi": 0.5, "entry_px": 100.0}],
+        account_value=900.0,
+    )
+    trader = _live_trader_with(client, tmp_path, monkeypatch, active_symbols=["TEST"])
+    # pic à 1000 il y a 10 min → 900 = -10% > KILL_LOSS_PCT (5%)
+    trader._live_state["equity_history"] = [[_time.time() - 600, 1000.0]]
+
+    assert trader._kill_switch_engaged() is True
+    assert client.closed == ["TEST"]
+    assert trader._live_state["paused_until"] > _time.time()
+    # toujours en pause au tick suivant, sans re-fermer quoi que ce soit
+    client.closed.clear()
+    assert trader._kill_switch_engaged() is True
+    assert client.closed == []
+
+
+def test_kill_switch_inactive_below_threshold(tmp_path, monkeypatch):
+    import time as _time
+
+    client = FakeClient(account_value=980.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._live_state["equity_history"] = [[_time.time() - 600, 1000.0]]
+    # -2% < seuil de 5% → pas de pause
+    assert trader._kill_switch_engaged() is False
+    assert trader._live_state["paused_until"] == 0
+
+
+def test_optimizer_validation_is_binary_filter(tmp_path, monkeypatch):
+    """La validation filtre mais ne classe pas : le 1er set du classement
+    train qui confirme doit gagner, pas celui au meilleur PnL de validation."""
+    import simplebot.optimizer as opt_mod
+    from simplebot.backtester import BacktestResult
+
+    grid = param_grid()
+    p_a, p_b, p_c = grid[0], grid[1], grid[2]
+
+    def fake_result(params, pnl, pf, n):
+        return BacktestResult(
+            params=params, n_trades=n, total_pnl_pct=pnl,
+            winrate=0.5, profit_factor=pf, max_drawdown_pct=0.01,
+        )
+
+    def fake_run_backtest(candles, params, fee, slip, start_index=0):
+        is_valid = start_index > 0
+        if params == p_a:
+            # meilleur train, mais échoue en validation
+            return fake_result(params, 0.02, 0.5, 10) if is_valid \
+                else fake_result(params, 0.30, 3.0, 20)
+        if params == p_b:
+            # 2e du train, confirme en validation (PnL valid modeste)
+            return fake_result(params, 0.01, 1.5, 10) if is_valid \
+                else fake_result(params, 0.20, 2.5, 20)
+        if params == p_c:
+            # 3e du train, PnL de validation énorme — ne doit PAS être choisi
+            return fake_result(params, 0.50, 5.0, 10) if is_valid \
+                else fake_result(params, 0.10, 2.0, 20)
+        return BacktestResult(params=params)  # 0 trade → filtré
+
+    monkeypatch.setattr(opt_mod, "run_backtest", fake_run_backtest)
+
+    agent = BacktestOptimizerAgent(
+        symbols=["TEST"],
+        fetch=_fake_fetch_factory([100.0] * 1200),
+        state_file=tmp_path / "best_params.json",
+    )
+    state = agent.run_once()
+    entry = state["symbols"]["TEST"]
+    assert entry["active"] is True
+    assert StrategyParams.from_dict(entry["params"]) == p_b
 
 
 def test_second_wallet_refuses_main_wallet(monkeypatch):

@@ -6,8 +6,11 @@ Toutes les OPTIMIZE_INTERVAL_SEC (6 h par défaut), pour chaque symbole :
 2. backteste toute la grille de paramètres sur la fenêtre de TRAIN (70 %) ;
 3. les TOP_K meilleurs sets du train sont rejoués sur la fenêtre de
    VALIDATION (30 % restants, jamais vus) — anti-overfit walk-forward ;
-4. le meilleur set qui CONFIRME en validation (PF ≥ MIN_VALID_PF, PnL > 0,
-   assez de trades) est publié dans simplebot/state/best_params.json ;
+4. le PREMIER set du classement train qui CONFIRME en validation
+   (PF ≥ MIN_VALID_PF, PnL > 0, assez de trades) est publié dans
+   simplebot/state/best_params.json. La validation est un filtre binaire,
+   jamais un critère de choix : sélectionner le meilleur PnL de validation
+   réintroduirait de l'overfit sur la fenêtre censée être neutre ;
 5. si aucun set ne confirme, le symbole est marqué inactive → le live
    n'ouvre plus de position dessus (les TP/SL natifs des positions déjà
    ouvertes restent en place).
@@ -82,6 +85,8 @@ class BacktestOptimizerAgent:
 
         # Validation walk-forward : la fenêtre inclut le warmup mais seuls les
         # signaux après start_index (= dans la vraie fenêtre de valid) comptent.
+        # Filtre binaire : les candidats sont parcourus dans l'ordre du train,
+        # le premier qui confirme gagne (pas de sélection sur le PnL de valid).
         best = None
         best_valid: Optional[BacktestResult] = None
         for r in top:
@@ -96,8 +101,9 @@ class BacktestOptimizerAgent:
                 and vr.profit_factor >= config.MIN_VALID_PF
                 and vr.total_pnl_pct > 0
             )
-            if ok and (best_valid is None or vr.total_pnl_pct > best_valid.total_pnl_pct):
+            if ok:
                 best, best_valid = r, vr
+                break
 
         if best is None or best_valid is None:
             return {"active": False, "reason": "aucun_set_confirme_en_validation"}
