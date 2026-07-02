@@ -685,3 +685,10 @@
 **Changes** : aucun
 **Code proposals** : 1 (WARNING circuit-breaker submit XRP buy, execution/engine.py — complète 06-02/06-15)
 **Alerts** : 719 rejets "submit XRP buy" / 6h (~1/tick), en forte escalade (66→719) — cause racine HL toujours invisible (repr tronqué, cf. pending 06-02) ; storm sature les logs et l'API HL. Attention humaine requise.
+
+## 2026-07-02 21:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=2 (1 ReadTimeout/1 error réseau), equity=$996.02→$996.36 (+$0.34 / +0,03 %)
+**Diagnostic** : Fenêtre saine et CONFIRMATION du fix. Régime 73 % trend_up (523) / 25 % range (182) / 2 % high_vol (15), toutes pathologies grille + emergency + drift/breakout à 0. Le storm "submit error XRP buy" (719/6h au 09:00) est ÉTEINT : le fix min-notional submit $10→$11 (commit 8666c96, restart 11:16) a supprimé le rejet déterministe → 2 résidus réseau seulement, aucun type ≥50. Équity plate sur capital stable ~$996. Stratégies bornées (grid/MR/momentum/supertrend) toutes `enabled:false` — rotation ensemble-contrarian 1d pilote hors allocateur → leviers paramètres inertes. Aucun paramètre actionnable.
+**Changes** : aucun
+**Code proposals** : aucune (7 pending ; la proposition circuit-breaker submit 07-02 est rendue superflue par le fix min-notional déployé mais laissée pending pour revue humaine)
+**Alerts** : aucun (storm XRP résolu, à plat)
