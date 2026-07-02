@@ -671,3 +671,10 @@
 **Changes** : aucun
 **Code proposals** : aucune (6 pending couvrent réseau/emergency/submit-exit/NameError/freins-catastrophe/runaway HYPE — pas de re-proposition)
 **Alerts** : aucun
+
+## 2026-07-02 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=719 (TOUS "submit error XRP buy" ; 4 réseau résiduels), equity=$1001.42→$1000.33 (-$1.09 / -0,11 %)
+**Diagnostic** : Grille + emergency + drift/breakout à 0, régime 85 % high_vol / 15 % range, équity plate sur capital stable ~$1000. MAIS 719 HyperliquidClientError = ~1/tick, TOUS "submit error XRP buy" : storm d'entrée XRP rejetée déterministiquement par la rotation à chaque cycle, en escalade 11× vs 66 le 2026-07-01. Mécanisme distinct des pending (ni fallback reduce_only 06-02 ni anti-boucle emergency 06-15 ne stoppent une ENTRÉE qui échoue chaque tick) → NOUVELLE proposition circuit-breaker submit. Aucun paramètre actionnable (stratégies bornées enabled:false, rotation hors allocateur).
+**Changes** : aucun
+**Code proposals** : 1 (WARNING circuit-breaker submit XRP buy, execution/engine.py — complète 06-02/06-15)
+**Alerts** : 719 rejets "submit XRP buy" / 6h (~1/tick), en forte escalade (66→719) — cause racine HL toujours invisible (repr tronqué, cf. pending 06-02) ; storm sature les logs et l'API HL. Attention humaine requise.

@@ -139,3 +139,40 @@
 **Risk si non corrigé** : Une position (HYPE 10x) que le système croit en cours de fermeture mais qui ne se solde jamais génère une boucle infinie de force-close ratés (~85/h), sature l'API HL (6583 erreurs → rate-limit, candles/mids stale), et laisse la position réellement exposée au-delà des limites de risque. Le prochain mouvement adverse sur HYPE pourrait infliger une perte non plafonnée pendant que la boucle tourne à vide.
 **Status** : pending
 ---
+
+## 2026-07-02 09:00 — [WARNING] Storm submit XRP buy (719/6h = 1/tick) : entrée rejetée en boucle sans circuit-breaker
+**Severity** : warning
+**Files** : execution/engine.py:157-164 (submit) — complète pending 06-02 (log complet) et 06-15 (anti-boucle emergency)
+**Pattern** : `719 HyperliquidClientError` sur 6h, **TOUS** `ExecutionEngine submit error XRP buy: HyperliquidClientError(...)`, soit ~1 par tick (719 ticks). Escalade 11× depuis l'audit précédent (66 le 2026-07-01). Équity plate ($1001→$1000) justement parce que l'ordre ne passe jamais.
+**Diagnostic** : La rotation recalcule sa cible chaque cycle et resoumet un buy XRP que HL rejette DÉTERMINISTIQUEMENT (pas transitoire réseau : ReadTimeout/ConnectionError ne sont que 4/719). Cause racine probable : XRP sous le min notional/rounding, ou taille/prix invalide persistant → `submit()` log+`continue` sans borner les retries ni marquer l'ordre comme non-soumettable. Résultat : storm ~120/h qui pollue les logs, sature l'API et masque toute autre erreur. La cause exacte reste invisible tant que le repr HL est tronqué (déjà pointé pending 06-02). Distinct des pending : ni le fallback reduce_only (06-02) ni l'anti-boucle emergency (06-15) ne stoppent une ENTRÉE qui échoue à chaque cycle.
+**Proposed fix** :
+```python
+# Before
+            try:
+                result = self._exchange.place_order(req)
+            except Exception as e:
+                logger.error("ExecutionEngine submit error %s %s: %r", order.asset, order.side, e)
+                continue
+# After
+            # Circuit-breaker : un ordre (asset,side) qui échoue N fois d'affilée
+            # est mis en cooldown (arrêt du storm) au lieu d'être resoumis chaque tick.
+            key = (order.asset, order.side)
+            try:
+                result = self._exchange.place_order(req)
+                self._submit_fail_count.pop(key, None)   # succès -> reset
+            except Exception as e:
+                n = self._submit_fail_count.get(key, 0) + 1
+                self._submit_fail_count[key] = n
+                logger.error(
+                    "ExecutionEngine submit error %s %s qty=%.6f ro=%s (fail #%d): %s",
+                    order.asset, order.side, order.qty, order.reduce_only, n, e,
+                )
+                if n >= 5:
+                    logger.warning("ExecutionEngine circuit-breaker %s %s apres %d echecs -- skip jusqu'au reset", *key, n)
+                continue
+# + garde en tete de boucle : if self._submit_fail_count.get((order.asset, order.side), 0) >= 5: continue
+#   (reset periodique du compteur, ex. toutes les 15 min, pour retenter)
+```
+**Risk si non corrigé** : Storm de ~120 rejets/h par ordre invalide → logs saturés, pression rate-limit API HL (candles/mids stale), et masquage de toute autre erreur d'exécution réelle. Signal dominant de la fenêtre non traité.
+**Status** : pending
+---
