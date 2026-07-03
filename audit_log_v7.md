@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-07-03 09:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=25 (8 error/7 HTTPError/7 Error/1 ProtocolError/1 ConnectionResetError/1 ConnectionError, types chevauchants), equity=$997.05→$995.27
+**Diagnostic** : Fenêtre saine. Régime 100% trend_up (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$1.78, -0,18%) sur la base ~$996 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. Les 25 erreurs = bruit réseau (HTTP 429 clearinghouseState + ConnectionError candles LINK/XRP 1h sur hl_adapter ; aucun type ≥50, max isolé 8 'error' génériques) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Le storm submit XRP reste résolu (0 HyperliquidClientError cette fenêtre, cf. [[project_xrp_zec_min_notional_storm]] fix 8666c96). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-07-03 03:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=2 (1 ReadTimeoutError/1 error), equity=$996.31→$997.01
 **Diagnostic** : Fenêtre saine. Régime 100% trend_up (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$0.70, +0,07%) sur la base ~$1000 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. **CONFIRMATION storm XRP RÉSOLU** : cette fenêtre est ENTIÈREMENT post-restart 11:16 (fix min-notional 8666c96, cf. [[project_xrp_zec_min_notional_storm]]) et affiche **0 HyperliquidClientError / 0 submit error XRP** — l'alerte « à confirmer » du dernier audit (15:00) est levée, le storm était bien un résidu pré-fix. Les 2 erreurs restantes = bruit réseau (1 ReadTimeout candles HYPE 1h sur hl_adapter, aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
