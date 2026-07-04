@@ -265,6 +265,68 @@ class SimpleLiveTrader:
         except Exception as e:
             logger.critical("%s: FERMETURE DE SÉCURITÉ ÉCHOUÉE: %r — POSITION SANS SL !", coin, e)
 
+    def _account_value(self) -> float:
+        """Valeur de compte pour le kill-switch ET le sizing : collatéral perp
+        + solde spot USDC (sur HL les deux sont séparés ; un solde logé en spot
+        ferait lire ~0 au perp et déclencherait un faux kill-switch)."""
+        perp = self.client.get_account_value()  # peut lever → fail-safe kill-switch
+        if not config.COUNT_SPOT_IN_EQUITY:
+            return perp
+        # Une lecture spot en échec ne doit JAMAIS devenir « spot=0 » : sur ce
+        # setup le capital vit en spot, et perp seul = résidu fantôme → l'incident
+        # du 2026-07-04 08:16 (429 sur spot → 19.96 lu → faux kill-switch qui a
+        # tout fermé). On PROPAGE l'erreur : le fail-safe de _kill_switch_engaged
+        # gèle les entrées après N échecs au lieu de décider sur un chiffre faux.
+        spot = self.client.get_spot_usdc()
+        total = perp + spot
+        # Garde-fou : HL renvoie parfois un accountValue perp résiduel/fantôme (dust
+        # non adossé à du capital réel, cohérence différée) qui gonfle faussement la
+        # somme perp+spot — au point d'avoir déclenché de faux kill-switch au reflux
+        # du pic fantôme. On plafonne la somme par la valeur canonique du compte
+        # (portfolio), qui nette perp+spot côté HL. Clamp à sens unique (baisse) :
+        # sûr pour le kill-switch ET le sizing.
+        if config.EQUITY_CANON_TOL > 0:
+            try:
+                canon = self.client.get_portfolio_value()
+            except Exception as e:
+                logger.debug("Valeur canonique portfolio indisponible (%r) — "
+                             "somme perp+spot brute", e)
+                canon = 0.0
+            if canon > 0 and total > canon * (1 + config.EQUITY_CANON_TOL):
+                logger.info(
+                    "Equity: somme perp+spot %.2f > canon %.2f (+%.1f%%) — clamp sur "
+                    "la valeur canonique HL (résidu perp fantôme)",
+                    total, canon, (total / canon - 1) * 100,
+                )
+                return canon
+        return total
+
+    def _ensure_perp_margin(self, required_margin: float) -> None:
+        """Pour trader des perps, la marge doit être dans le perp. Si le collatéral
+        perp est insuffisant, on vire le manque (× tampon) depuis le spot."""
+        if not config.AUTO_FUND_PERP or required_margin <= 0:
+            return
+        try:
+            perp = self.client.get_account_value()
+        except Exception as e:
+            logger.warning("Top-up perp: lecture perp échouée (%r)", e)
+            return
+        if perp >= required_margin:
+            return
+        try:
+            spot = self.client.get_spot_usdc()
+        except Exception as e:
+            logger.warning("Top-up perp: lecture spot échouée (%r)", e)
+            return
+        amount = min(required_margin * config.PERP_FUND_BUFFER - perp, spot)
+        if amount <= 0:
+            logger.warning("Top-up perp impossible: perp=%.2f spot=%.2f besoin marge=%.2f",
+                           perp, spot, required_margin)
+            return
+        logger.info("Top-up perp: transfert %.2f USDC spot→perp (perp=%.2f, besoin marge=%.2f)",
+                    amount, perp, required_margin)
+        self.client.transfer_spot_to_perp(amount)
+
     def _kill_switch_engaged(self) -> bool:
         """
         True si le trading est en pause. Suit l'account value en fenêtre
@@ -283,10 +345,24 @@ class SimpleLiveTrader:
             return True
 
         try:
-            account_value = self.client.get_account_value()
+            account_value = self._account_value()
         except Exception as e:
-            logger.warning("Kill-switch: account value illisible (%r) — check ignoré", e)
+            # Fail-safe : après N échecs consécutifs on gèle les entrées plutôt
+            # que d'ignorer le check (les positions gardent leur TP/SL natif).
+            self._acct_read_failures = getattr(self, "_acct_read_failures", 0) + 1
+            if self._acct_read_failures >= config.KILL_MAX_READ_FAILURES:
+                logger.critical(
+                    "Kill-switch: account value illisible %d cycles consécutifs (%r) "
+                    "— GEL des entrées jusqu'au rétablissement",
+                    self._acct_read_failures, e,
+                )
+                return True
+            logger.warning(
+                "Kill-switch: account value illisible (%r) — échec %d/%d avant gel",
+                e, self._acct_read_failures, config.KILL_MAX_READ_FAILURES,
+            )
             return False
+        self._acct_read_failures = 0
         if account_value <= 0:
             return False
 
@@ -482,11 +558,13 @@ class SimpleLiveTrader:
             )
             return
 
-        account_value = self.client.get_account_value()
+        account_value = self._account_value()
         margin = account_value * config.MARGIN_PCT
         notional = max(config.MIN_NOTIONAL_USD, margin * config.LEVERAGE)
         qty = notional / ref_price
 
+        # La marge doit être dans le perp : vire du spot si nécessaire.
+        self._ensure_perp_margin(notional / config.LEVERAGE)
         self.client.update_leverage(symbol, config.LEVERAGE, is_cross=False)
         result = self.client.place_order(
             coin=symbol,

@@ -41,17 +41,43 @@ def fetch_ohlcv(
         },
     }
 
-    try:
-        resp = requests.post(
-            HL_INFO_URL,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        raw = resp.json()
-    except Exception as e:
-        logger.warning("fetch_ohlcv %s/%s: %r", symbol, interval, e)
+    # Import paresseux : config appelle data au chargement (mode ALL) → un import
+    # top-level serait circulaire.
+    from simplebot import config
+
+    attempts = max(1, config.FETCH_MAX_RETRIES)
+    raw = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.post(
+                HL_INFO_URL,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+            break
+        except requests.exceptions.RequestException as e:
+            # 429 (throttle) et 5xx sont transitoires → backoff exponentiel.
+            # Les erreurs réseau (timeout, connexion coupée) le sont aussi.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            retryable = status is None or status == 429 or 500 <= status < 600
+            if retryable and attempt < attempts:
+                delay = config.FETCH_BACKOFF_SEC * (2 ** (attempt - 1))
+                logger.warning(
+                    "fetch_ohlcv %s/%s: %s — retry %d/%d dans %.1fs",
+                    symbol, interval, status or type(e).__name__,
+                    attempt, attempts, delay,
+                )
+                time.sleep(delay)
+                continue
+            logger.warning("fetch_ohlcv %s/%s: %r", symbol, interval, e)
+            return []
+        except Exception as e:  # JSON illisible, réponse inattendue…
+            logger.warning("fetch_ohlcv %s/%s: %r", symbol, interval, e)
+            return []
+    if raw is None:
         return []
 
     candles = [
@@ -67,6 +93,47 @@ def fetch_ohlcv(
     ]
     candles.sort(key=lambda c: c["ts"])
     return candles
+
+
+def fetch_perp_universe(
+    top_n: Optional[int] = None,
+    include_delisted: bool = False,
+    timeout: float = 10.0,
+) -> List[str]:
+    """
+    Retourne les noms de perps de l'univers Hyperliquid, TRIÉS par volume
+    notionnel 24h décroissant. Endpoint public /info (metaAndAssetCtxs),
+    aucun wallet requis.
+
+    - exclut les actifs délistés (isDelisted) — intradables ;
+    - si top_n est fourni, ne garde que les top_n plus liquides : filtre
+      anti-micro-cap (les books trop fins ont un slippage réel ingérable).
+
+    Lève une exception en cas d'échec réseau : l'appelant gère le fallback.
+    """
+    resp = requests.post(
+        HL_INFO_URL,
+        headers={"Content-Type": "application/json"},
+        json={"type": "metaAndAssetCtxs"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    meta, ctxs = resp.json()
+    universe = meta.get("universe", [])
+
+    ranked = []
+    for u, c in zip(universe, ctxs):
+        name = u.get("name")
+        if not name or (u.get("isDelisted") and not include_delisted):
+            continue
+        vol = float(c.get("dayNtlVlm", 0) or 0)   # volume notionnel 24h ($)
+        ranked.append((name, vol))
+    ranked.sort(key=lambda x: x[1], reverse=True)
+
+    names = [name for name, _ in ranked]
+    if top_n is not None and top_n > 0:
+        names = names[:top_n]
+    return names
 
 
 def closed_candles(candles: List[dict], interval_ms: int, now_ms: Optional[int] = None) -> List[dict]:

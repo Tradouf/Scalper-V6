@@ -77,11 +77,19 @@ class BacktestOptimizerAgent:
             run_backtest(train, p, config.FEE_PCT, config.SLIPPAGE_PCT)
             for p in grid
         ]
-        candidates = [r for r in train_results if r.n_trades >= config.MIN_TRAIN_TRADES]
+        # Le train doit être rentable en plus d'avoir assez de trades : un set qui
+        # perd en train mais confirme sur une fenêtre de valid courte est presque
+        # toujours du surapprentissage (fenêtre chanceuse, pas un edge robuste).
+        candidates = [
+            r for r in train_results
+            if r.n_trades >= config.MIN_TRAIN_TRADES
+            and r.profit_factor >= config.MIN_TRAIN_PF
+            and r.total_pnl_pct > 0
+        ]
         candidates.sort(key=_train_score, reverse=True)
         top = candidates[: config.TOP_K_VALIDATION]
         if not top:
-            return {"active": False, "reason": "aucun_set_avec_assez_de_trades_en_train"}
+            return {"active": False, "reason": "aucun_set_rentable_en_train"}
 
         # Validation walk-forward : la fenêtre inclut le warmup mais seuls les
         # signaux après start_index (= dans la vraie fenêtre de valid) comptent.
@@ -122,7 +130,10 @@ class BacktestOptimizerAgent:
                     len(self.symbols), len(param_grid()))
         t0 = time.time()
         per_symbol = {}
-        for symbol in self.symbols:
+        for idx, symbol in enumerate(self.symbols):
+            # Lisse le débit vers l'API HL (anti-429) sur le sweep multi-symboles.
+            if idx > 0 and config.FETCH_THROTTLE_SEC > 0:
+                time.sleep(config.FETCH_THROTTLE_SEC)
             try:
                 candles = closed_candles(
                     self._fetch(symbol, config.INTERVAL, config.BACKTEST_DAYS),

@@ -788,6 +788,47 @@ class HyperliquidClient:
         except Exception as e:
             raise HyperliquidClientError(f"Erreur get_account_value: {e}") from e
 
+    def get_spot_usdc(self) -> float:
+        """Solde USDC du wallet SPOT (séparé du collatéral perp sur Hyperliquid)."""
+        self._require_exchange()
+        try:
+            state = self.info.spot_user_state(self._wallet_address)
+            for b in state.get("balances", []):
+                if b.get("coin") == "USDC":
+                    return float(b.get("total", 0))
+            return 0.0
+        except Exception as e:
+            raise HyperliquidClientError(f"Erreur get_spot_usdc: {e}") from e
+
+    def get_portfolio_value(self) -> float:
+        """Valeur totale canonique du compte selon Hyperliquid (perp + spot nets),
+        via l'endpoint `portfolio`. Robuste contre les lectures perp erratiques :
+        `marginSummary.accountValue` renvoie parfois un résidu/dust fantôme (cohérence
+        différée) qui n'est PAS du capital réel et gonfle la somme perp+spot. La valeur
+        `portfolio` (dernier point de `accountValueHistory`) nette les deux côté HL et
+        colle à la réalité. Retourne 0.0 si l'historique est vide."""
+        self._require_exchange()
+        try:
+            pf = self.info.portfolio(self._wallet_address)
+            for period, data in pf:
+                if period == "day":
+                    avh = data.get("accountValueHistory", [])
+                    if avh:
+                        return float(avh[-1][1])
+            return 0.0
+        except Exception as e:
+            raise HyperliquidClientError(f"Erreur get_portfolio_value: {e}") from e
+
+    def transfer_spot_to_perp(self, amount: float) -> dict:
+        """Transfère `amount` USDC du wallet SPOT vers le PERP (collatéral de trading)."""
+        self._require_exchange()
+        if amount <= 0:
+            return {"status": "skipped", "reason": "montant<=0"}
+        try:
+            return self.exchange.usd_class_transfer(float(amount), True)
+        except Exception as e:
+            raise HyperliquidClientError(f"Erreur transfer_spot_to_perp: {e}") from e
+
     def place_sl_only(
         self,
         coin: str,

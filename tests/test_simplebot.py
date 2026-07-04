@@ -90,6 +90,24 @@ def test_signals_symmetric_short():
     assert not any(s == 1 for s in signals)
 
 
+def test_trend_ema_filters_counter_trend_signal():
+    # Le V produit un long à contre-tendance (prix sous l'EMA longue encore tirée
+    # par la baisse) : trend_ema=200 doit le supprimer, sans filtre il passe.
+    candles = make_candles(vshape_closes())
+    base = compute_signals(candles, PARAMS)
+    filt = compute_signals(candles, StrategyParams(
+        ema_fast=9, ema_slow=26, tp_atr=2.5, sl_atr=1.5, trend_ema=200))
+    assert any(s == 1 for s in base)
+    assert not any(s == 1 for s in filt)
+
+
+def test_trend_ema_zero_is_noop():
+    # trend_ema=0 ⇒ comportement identique à l'absence de filtre (rétro-compat).
+    candles = make_candles(vshape_closes())
+    p0 = StrategyParams(ema_fast=9, ema_slow=26, tp_atr=2.5, sl_atr=1.5, trend_ema=0)
+    assert compute_signals(candles, p0) == compute_signals(candles, PARAMS)
+
+
 def test_no_signal_during_warmup():
     closes = wave_closes(n=PARAMS.warmup_bars)
     signals = compute_signals(make_candles(closes), PARAMS)
@@ -318,13 +336,18 @@ def test_dry_run_tracks_paper_positions(tmp_path, monkeypatch):
 class FakeClient:
     """Client Hyperliquid minimal pour tester réconciliation et kill-switch."""
 
-    def __init__(self, positions=None, orders=None, account_value=1000.0):
+    def __init__(self, positions=None, orders=None, account_value=1000.0,
+                 spot_usdc=0.0, portfolio_value=None):
         self.positions = positions or []
         self.orders = orders or []
         self.account_value = account_value
+        self.spot_usdc = spot_usdc
+        # Valeur canonique HL ; None ⇒ somme honnête perp+spot (jamais de clamp).
+        self.portfolio_value = portfolio_value
         self.tpsl_calls = []
         self.closed = []
         self.cancelled = []
+        self.transfers = []
 
     def get_positions(self, coin=None):
         return [p for p in self.positions if coin is None or p["coin"] == coin]
@@ -347,6 +370,20 @@ class FakeClient:
 
     def get_account_value(self):
         return self.account_value
+
+    def get_spot_usdc(self):
+        return self.spot_usdc
+
+    def get_portfolio_value(self):
+        if self.portfolio_value is None:
+            return self.account_value + self.spot_usdc
+        return self.portfolio_value
+
+    def transfer_spot_to_perp(self, amount):
+        self.transfers.append(amount)
+        self.spot_usdc -= amount
+        self.account_value += amount
+        return {"status": "ok"}
 
 
 def _live_trader_with(client, tmp_path, monkeypatch, active_symbols=None):
@@ -432,6 +469,84 @@ def test_kill_switch_inactive_below_threshold(tmp_path, monkeypatch):
     assert trader._live_state["paused_until"] == 0
 
 
+def test_account_value_combines_perp_and_spot(tmp_path, monkeypatch):
+    # collatéral logé en spot : perp=0 mais spot=200 → valeur = 200
+    client = FakeClient(account_value=0.0, spot_usdc=200.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    assert trader._account_value() == 200.0
+
+
+def test_spot_read_failure_freezes_instead_of_false_kill(tmp_path, monkeypatch):
+    """Régression (incident 2026-07-04 08:16) : un 429 sur la lecture spot faisait
+    retomber sur « perp seul » (résidu fantôme ~20$) → faux kill-switch qui a tout
+    fermé. Une lecture partielle doit PROPAGER l'erreur (chemin fail-safe : gel
+    après N échecs), jamais produire une valeur basse qui déclenche le kill."""
+    client = FakeClient(account_value=19.96, spot_usdc=0.0)
+    def boom():
+        raise RuntimeError("429 Too Many Requests")
+    client.get_spot_usdc = boom
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    # historique avec un pic à 200 : l'ancienne logique aurait killé (19.96 < 190)
+    import time as _time
+    trader._live_state["equity_history"] = [[_time.time() - 60, 200.0]]
+    engaged = trader._kill_switch_engaged()
+    # pas de kill : aucune position fermée, pas de pause posée, échec compté
+    assert client.closed == []
+    assert float(trader._live_state.get("paused_until", 0)) == 0
+    assert trader._acct_read_failures == 1
+    assert engaged is False  # 1er échec < KILL_MAX_READ_FAILURES → pas encore gelé
+
+
+def test_account_value_clamps_phantom_perp_residue(tmp_path, monkeypatch):
+    """Régression : un accountValue perp fantôme (~10) ajouté au spot stable (200)
+    donnerait une equity gonflée (210) — source de fausse joie ET de faux kill-switch
+    au reflux. Le clamp sur la valeur canonique HL (portfolio=200) doit ramener à 200."""
+    client = FakeClient(account_value=10.0, spot_usdc=200.0, portfolio_value=200.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    assert trader._account_value() == 200.0
+
+
+def test_account_value_keeps_real_perp_gain_within_tolerance(tmp_path, monkeypatch):
+    """Un gain perp réel (uPnL) cohérent avec le canonique ne doit PAS être rogné :
+    somme perp+spot=205, canon=205 → 205 (pas de clamp intempestif)."""
+    client = FakeClient(account_value=5.0, spot_usdc=200.0, portfolio_value=205.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    assert trader._account_value() == 205.0
+
+
+def test_kill_switch_no_false_trigger_with_spot_collateral(tmp_path, monkeypatch):
+    """Régression : perp lu à 0 alors que les fonds sont en spot ne doit PAS
+    déclencher le kill-switch (c'est ce qui avait fermé ZEC à tort)."""
+    import time as _time
+
+    client = FakeClient(account_value=0.0, spot_usdc=199.97)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._live_state["equity_history"] = [[_time.time() - 600, 200.04]]
+    assert trader._kill_switch_engaged() is False
+    assert trader._live_state["paused_until"] == 0
+    assert client.closed == []
+
+
+def test_ensure_perp_margin_transfers_from_spot(tmp_path, monkeypatch):
+    # perp vide, spot plein → top-up avant l'entrée
+    client = FakeClient(account_value=0.0, spot_usdc=200.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "AUTO_FUND_PERP", True)
+    monkeypatch.setattr(config, "PERP_FUND_BUFFER", 1.5)
+    trader._ensure_perp_margin(required_margin=10.0)
+    assert client.transfers == [15.0]        # 10 × 1.5 - 0
+    assert client.account_value == 15.0
+    assert client.spot_usdc == 185.0
+
+
+def test_ensure_perp_margin_noop_when_perp_funded(tmp_path, monkeypatch):
+    client = FakeClient(account_value=50.0, spot_usdc=200.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "AUTO_FUND_PERP", True)
+    trader._ensure_perp_margin(required_margin=10.0)   # perp 50 ≥ 10
+    assert client.transfers == []
+
+
 def test_optimizer_validation_is_binary_filter(tmp_path, monkeypatch):
     """La validation filtre mais ne classe pas : le 1er set du classement
     train qui confirme doit gagner, pas celui au meilleur PnL de validation."""
@@ -451,15 +566,15 @@ def test_optimizer_validation_is_binary_filter(tmp_path, monkeypatch):
         is_valid = start_index > 0
         if params == p_a:
             # meilleur train, mais échoue en validation
-            return fake_result(params, 0.02, 0.5, 10) if is_valid \
+            return fake_result(params, 0.02, 0.5, 20) if is_valid \
                 else fake_result(params, 0.30, 3.0, 20)
         if params == p_b:
             # 2e du train, confirme en validation (PnL valid modeste)
-            return fake_result(params, 0.01, 1.5, 10) if is_valid \
+            return fake_result(params, 0.01, 1.5, 20) if is_valid \
                 else fake_result(params, 0.20, 2.5, 20)
         if params == p_c:
             # 3e du train, PnL de validation énorme — ne doit PAS être choisi
-            return fake_result(params, 0.50, 5.0, 10) if is_valid \
+            return fake_result(params, 0.50, 5.0, 20) if is_valid \
                 else fake_result(params, 0.10, 2.0, 20)
         return BacktestResult(params=params)  # 0 trade → filtré
 
@@ -474,6 +589,99 @@ def test_optimizer_validation_is_binary_filter(tmp_path, monkeypatch):
     entry = state["symbols"]["TEST"]
     assert entry["active"] is True
     assert StrategyParams.from_dict(entry["params"]) == p_b
+
+
+def test_optimizer_rejects_train_unprofitable_set(tmp_path, monkeypatch):
+    """Un set qui PERD en train mais confirme sur une fenêtre de valid courte
+    (surapprentissage) doit être rejeté : le train doit aussi être rentable."""
+    import simplebot.optimizer as opt_mod
+    from simplebot.backtester import BacktestResult
+    from simplebot.strategy import param_grid
+
+    grid = param_grid()
+    p_a = grid[0]
+
+    def fake_run_backtest(candles, params, fee, slip, start_index=0):
+        is_valid = start_index > 0
+        if params == p_a:
+            # train NÉGATIF (PF<1) mais valid superbe → doit être rejeté
+            if is_valid:
+                return BacktestResult(params=params, n_trades=20, total_pnl_pct=0.05,
+                                      winrate=0.6, profit_factor=2.0, max_drawdown_pct=0.02)
+            return BacktestResult(params=params, n_trades=20, total_pnl_pct=-0.07,
+                                  winrate=0.35, profit_factor=0.9, max_drawdown_pct=0.20)
+        return BacktestResult(params=params)  # 0 trade → filtré
+
+    monkeypatch.setattr(opt_mod, "run_backtest", fake_run_backtest)
+
+    agent = BacktestOptimizerAgent(
+        symbols=["TEST"],
+        fetch=_fake_fetch_factory([100.0] * 1200),
+        state_file=tmp_path / "best_params.json",
+    )
+    entry = agent.run_once()["symbols"]["TEST"]
+    assert entry["active"] is False
+    assert entry["reason"] == "aucun_set_rentable_en_train"
+
+
+class _FakeResp:
+    """Réponse HTTP simulée : 429 → raise_for_status lève, sinon renvoie `data`."""
+    def __init__(self, status, data=None):
+        self.status = status
+        self._data = data or []
+
+    def raise_for_status(self):
+        import requests
+        if self.status != 200:
+            err = requests.exceptions.HTTPError(str(self.status))
+            err.response = type("R", (), {"status_code": self.status})()
+            raise err
+
+    def json(self):
+        return self._data
+
+
+def test_fetch_ohlcv_retries_on_429_then_succeeds(monkeypatch):
+    from simplebot import data as data_mod
+
+    good = [{"t": 1000, "o": "1", "h": "2", "l": "0.5", "c": "1.5", "v": "10"}]
+    calls = {"n": 0}
+
+    def fake_post(*a, **k):
+        calls["n"] += 1
+        return _FakeResp(429) if calls["n"] == 1 else _FakeResp(200, good)
+
+    sleeps = []
+    monkeypatch.setattr(data_mod.requests, "post", fake_post)
+    monkeypatch.setattr(data_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(config, "FETCH_MAX_RETRIES", 3)
+    monkeypatch.setattr(config, "FETCH_BACKOFF_SEC", 0.5)
+
+    out = data_mod.fetch_ohlcv("BTC", "15m", 1)
+    assert calls["n"] == 2       # 1 échec 429 + 1 succès
+    assert len(out) == 1
+    assert sleeps == [0.5]       # un seul backoff avant le retry
+
+
+def test_fetch_ohlcv_gives_up_after_max_retries(monkeypatch):
+    from simplebot import data as data_mod
+
+    calls = {"n": 0}
+
+    def fake_post(*a, **k):
+        calls["n"] += 1
+        return _FakeResp(429)
+
+    sleeps = []
+    monkeypatch.setattr(data_mod.requests, "post", fake_post)
+    monkeypatch.setattr(data_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(config, "FETCH_MAX_RETRIES", 3)
+    monkeypatch.setattr(config, "FETCH_BACKOFF_SEC", 0.5)
+
+    out = data_mod.fetch_ohlcv("BTC", "15m", 1)
+    assert out == []
+    assert calls["n"] == 3           # 3 tentatives puis abandon
+    assert sleeps == [0.5, 1.0]      # backoff exponentiel entre les tentatives
 
 
 def test_second_wallet_refuses_main_wallet(monkeypatch):

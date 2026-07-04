@@ -14,6 +14,11 @@ if [ -f ".env" ]; then
     set +a
 fi
 
+# Univers de trading : tous les perps non-délistés de HL par défaut.
+# Surchargeable via .env (SIMPLEBOT_SYMBOLS="BTC,ETH,SOL" pour restreindre).
+: "${SIMPLEBOT_SYMBOLS:=ALL}"
+export SIMPLEBOT_SYMBOLS
+
 if [ "$1" = "--live" ]; then
     if [ -z "$HL2_PRIVATE_KEY" ]; then
         echo "❌ HL2_PRIVATE_KEY manquant dans .env — SimpleBot exige un wallet séparé de la V6."

@@ -26,6 +26,9 @@ class StrategyParams:
     atr_len: int = 14
     tp_atr: float = 2.5   # take-profit = entry ± tp_atr × ATR
     sl_atr: float = 1.5   # stop-loss   = entry ∓ sl_atr × ATR
+    trend_ema: int = 0    # 0 = désactivé ; sinon on ne prend un long que si close
+                          # > EMA(trend_ema) et un short que si close < EMA(trend_ema)
+                          # → filtre directionnel qui coupe les crossovers à contre-tendance
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -38,11 +41,12 @@ class StrategyParams:
             atr_len=int(d.get("atr_len", 14)),
             tp_atr=float(d["tp_atr"]),
             sl_atr=float(d["sl_atr"]),
+            trend_ema=int(d.get("trend_ema", 0)),
         )
 
     @property
     def warmup_bars(self) -> int:
-        return max(self.ema_slow, self.atr_len, RSI_LEN) + 5
+        return max(self.ema_slow, self.atr_len, RSI_LEN, self.trend_ema) + 5
 
 
 def param_grid() -> List[StrategyParams]:
@@ -55,6 +59,14 @@ def param_grid() -> List[StrategyParams]:
             for sl in (1.0, 1.5, 2.0):
                 grid.append(StrategyParams(ema_fast=fast, ema_slow=slow, tp_atr=tp, sl_atr=sl))
     return grid
+    # Note (2026-07-03) : `trend_ema` (filtre directionnel EMA200) existe comme
+    # capacité dans StrategyParams/compute_signals mais N'EST PAS dans la grille.
+    # À paramètres figés il améliore l'edge/trade (+23%, PF 1.43→1.62 sur 5 actifs,
+    # 45j réels). MAIS ajouté à la grille, la sélection « 1er du rang train qui
+    # confirme » attrape des sets filtrés chanceux-en-train qui valident MOINS bien
+    # → agrégat valid PIRE (ΣPnL 49→37%, PF 1.43→1.38). L'activer proprement exige
+    # d'abord une règle de sélection robuste (ex. dominance train∧valid), pas juste
+    # d'élargir la grille. Réactiver ici seulement après cette refonte + revalidation.
 
 
 # ── Indicateurs ──────────────────────────────────────────────────────────────
@@ -128,13 +140,17 @@ def compute_signals(candles: List[dict], params: StrategyParams) -> List[int]:
     ema_f = ema(closes, params.ema_fast)
     ema_s = ema(closes, params.ema_slow)
     rsi_v = rsi(closes)
+    ema_t = ema(closes, params.trend_ema) if params.trend_ema > 0 else None
 
     for i in range(params.warmup_bars, n):
         crossed_up = ema_f[i - 1] <= ema_s[i - 1] and ema_f[i] > ema_s[i]
         crossed_dn = ema_f[i - 1] >= ema_s[i - 1] and ema_f[i] < ema_s[i]
-        if crossed_up and rsi_v[i] < RSI_LONG_MAX:
+        # Filtre directionnel : pas de long sous la tendance, pas de short au-dessus.
+        long_ok = ema_t is None or closes[i] > ema_t[i]
+        short_ok = ema_t is None or closes[i] < ema_t[i]
+        if crossed_up and rsi_v[i] < RSI_LONG_MAX and long_ok:
             signals[i] = 1
-        elif crossed_dn and rsi_v[i] > RSI_SHORT_MIN:
+        elif crossed_dn and rsi_v[i] > RSI_SHORT_MIN and short_ok:
             signals[i] = -1
     return signals
 
