@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-07-04 03:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=3 (1 HTTPError/1 Error/1 error, mêmes événements 429), equity=$992.05→$990.02
+**Diagnostic** : Fenêtre saine. Régime 100% trend_up (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$2.03, -0,20%) sur la base ~$991 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. Les 3 erreurs = bruit réseau (HTTP 429 candles AAVE 1h sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Storm submit XRP toujours résolu (0 HyperliquidClientError cette fenêtre, cf. [[project_xrp_zec_min_notional_storm]] fix 8666c96). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-07-03 21:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=8 (8 error/4 ReadTimeoutError/4 HTTPError/4 Error, types chevauchants), equity=$993.94→$992.02
 **Diagnostic** : Fenêtre saine. Régime 100% trend_up (720 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$1.92, -0,19%) sur la base ~$993 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. Les 8 erreurs = bruit réseau (HTTP 429 candles LINK 1h + clearinghouseState + ReadTimeout sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Storm submit XRP toujours résolu (0 HyperliquidClientError cette fenêtre, cf. [[project_xrp_zec_min_notional_storm]] fix 8666c96). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
