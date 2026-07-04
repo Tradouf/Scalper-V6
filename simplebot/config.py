@@ -128,6 +128,27 @@ AUTO_FUND_PERP = _env_str("SIMPLEBOT_AUTO_FUND_PERP", "1") not in ("0", "false",
 EQUITY_CANON_TOL = _env_float("SIMPLEBOT_EQUITY_CANON_TOL", 0.02)
 PERP_FUND_BUFFER = _env_float("SIMPLEBOT_PERP_FUND_BUFFER", 1.5)  # ×marge visée transférée
 
+# ── Momentum 4h — stratégie PAPER à paramètres FIGÉS ─────────────────────────
+# Seule combinaison ayant survécu à la validation OOS 833j × 31 symboles
+# (voir mémoire projet « simplebot-edge-oos ») : suivre le mouvement 48h,
+# PAS de take-profit (les TP tuent l'edge), time-exit 12 jours, SL 2×ATR.
+# PAS d'optimiseur : la ré-optimisation trailing est empiriquement nocive.
+# Paper-only : aucun ordre réel, aucun wallet requis.
+MOMENTUM_ENABLED = _env_str("SIMPLEBOT_MOMENTUM", "1") not in ("0", "false", "False")
+MOMENTUM_INTERVAL = "4h"
+MOMENTUM_INTERVAL_MS = 4 * 3600 * 1000
+MOMENTUM_FETCH_DAYS = _env_int("SIMPLEBOT_MOMENTUM_FETCH_DAYS", 14)
+MOMENTUM_ROC_BARS = _env_int("SIMPLEBOT_MOMENTUM_ROC_BARS", 12)      # ROC sur 48h
+MOMENTUM_THR = _env_float("SIMPLEBOT_MOMENTUM_THR", 0.02)            # seuil ±2%
+MOMENTUM_TIME_EXIT_BARS = _env_int("SIMPLEBOT_MOMENTUM_TIME_EXIT_BARS", 72)  # 12 jours
+MOMENTUM_SL_ATR = _env_float("SIMPLEBOT_MOMENTUM_SL_ATR", 2.0)
+MOMENTUM_ATR_LEN = 14
+MOMENTUM_LOOP_SEC = _env_int("SIMPLEBOT_MOMENTUM_LOOP_SEC", 300)
+MOMENTUM_PAPER_EQUITY = _env_float("SIMPLEBOT_MOMENTUM_PAPER_EQUITY", 200.0)
+MOMENTUM_NOTIONAL_PCT = _env_float("SIMPLEBOT_MOMENTUM_NOTIONAL_PCT", 0.05)  # 5% equity/position
+MOMENTUM_MAX_OPEN = _env_int("SIMPLEBOT_MOMENTUM_MAX_OPEN", 15)
+MOMENTUM_STATE_FILE = STATE_DIR / "momentum_state.json"
+
 # ── Kill-switch ──────────────────────────────────────────────────────────────
 # Si l'account value perd KILL_LOSS_PCT par rapport à son pic sur la fenêtre
 # glissante KILL_WINDOW_SEC : fermeture de toutes les positions et pause du

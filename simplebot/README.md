@@ -73,10 +73,78 @@ SIMPLEBOT_DRY_RUN=0 python -m simplebot.run
 bash start_simplebot.sh
 ```
 
+## Dashboard
+
+Suivi live à l'image du dashboard V7, mais **100 % stdlib** (aucune dépendance).
+Lecture seule des trois fichiers d'état (`best_params.json`, `live_state.json`,
+`optimizer_history.jsonl`) — ne trade pas, ne requiert aucun wallet, peut tourner
+même bot arrêté.
+
+```bash
+bash start_simplebot_dashboard.sh          # http://localhost:8083
+# ou
+python -m simplebot.dashboard
+SIMPLEBOT_DASHBOARD_PORT=9000 python -m simplebot.dashboard
+```
+
+Affiche : courbe d'equity + PnL/pic/drawdown, état du kill-switch, symboles
+actifs vs univers, table des résultats d'optimisation walk-forward (PF train/valid,
+PnL, winrate, motif d'exclusion), et — en dry-run — les positions et trades papier
+avec PnL cumulé. Auto-refresh toutes les 5 s.
+
+### Accès distant
+
+Le serveur bind `0.0.0.0` par défaut → déjà accessible sur le **LAN**
+(`http://<ip-machine>:8083`, l'IP est affichée au démarrage).
+
+Pour un accès **hors réseau local**, protéger l'accès par mot de passe
+(HTTP Basic Auth) — sans mot de passe, un bind sur une IP publique est refusé
+(repli sur `127.0.0.1`) :
+
+```bash
+# dans .env (ou l'environnement)
+SIMPLEBOT_DASHBOARD_PASSWORD=un_mot_de_passe_solide
+SIMPLEBOT_DASHBOARD_USER=simplebot          # optionnel (défaut: simplebot)
+```
+
+**Ne jamais exposer le port directement sur Internet.** Méthodes recommandées
+(du plus sûr au plus simple) :
+
+| Méthode | Commande | Remarque |
+|---|---|---|
+| **Tunnel SSH** | `ssh -L 8083:localhost:8083 user@machine` | rien à exposer, chiffré, zéro config serveur |
+| **Tailscale** | `tailscale up` puis `http://<nom-tailnet>:8083` | VPN maillé privé, idéal mobile |
+| **cloudflared** | `cloudflared tunnel --url http://localhost:8083` | URL HTTPS publique — **exige** le mot de passe |
+
+Le tunnel SSH ne requiert même pas de mot de passe applicatif (l'accès reste
+sur `localhost`). Pour Tailscale/cloudflared, garder `SIMPLEBOT_DASHBOARD_PASSWORD`
+actif. Variables : `SIMPLEBOT_DASHBOARD_PORT` (8083), `SIMPLEBOT_DASHBOARD_HOST`
+(0.0.0.0), `SIMPLEBOT_DASHBOARD_USER`, `SIMPLEBOT_DASHBOARD_PASSWORD`.
+
+## Momentum 4h (paper)
+
+Stratégie séparée à **paramètres figés**, seule combinaison ayant survécu à une
+validation out-of-sample de 833 j × 31 symboles (t-stat cluster-robuste 2.9,
+84 % des symboles positifs) :
+
+- ROC(12 bougies 4h = 48 h) > +2 % → LONG ; < −2 % → SHORT (suivre le mouvement) ;
+- **pas de take-profit** (les TP amputent les gros gagnants et tuent l'edge) ;
+- sorties : time-exit 72 bougies (12 j) ou SL 2×ATR ; signal opposé → flip ;
+- **pas d'optimiseur** : la ré-optimisation trailing est empiriquement nocive
+  (la performance des stratégies mean-reverte) ;
+- funding accru par heure de tenue (coût réel matériel sur 12 j) ;
+- **paper only** : aucun client d'exchange dans le module, aucun ordre réel.
+  Verrouillé par test (`test_no_exchange_client_anywhere`).
+
+Lancée automatiquement par `run.py` (`SIMPLEBOT_MOMENTUM=0` pour désactiver).
+Sweep à chaque clôture 4h. Visible dans le dashboard (carte « Momentum 4h »).
+Décision de passage en réel : après 2-4 semaines de paper, sur les chiffres.
+
 ## Tests
 
 ```bash
 python -m pytest tests/test_simplebot.py -v
+python -m pytest tests/test_momentum.py -v
 ```
 
 ## Fichiers d'état (`simplebot/state/`, non versionnés)
@@ -87,3 +155,5 @@ python -m pytest tests/test_simplebot.py -v
 - `live_state.json` — dernière bougie traitée par symbole (pas de double ordre
   après restart), positions et trades papier du dry-run, historique d'equity
   et état du kill-switch
+- `momentum_state.json` — positions/trades paper du momentum 4h, equity paper,
+  funding accru par position

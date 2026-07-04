@@ -45,6 +45,13 @@ def main() -> int:
             optimizer.run_once()
         optimizer.start()
 
+    if config.MOMENTUM_ENABLED:
+        # Stratégie momentum 4h en PAPER (params figés, aucun ordre réel).
+        from simplebot.momentum import MomentumPaperTrader
+        momentum = MomentumPaperTrader()
+        momentum.start()
+        logger.info("Momentum 4h paper démarré (SIMPLEBOT_MOMENTUM=0 pour désactiver)")
+
     client = None
     if not config.DRY_RUN:
         client = make_second_wallet_client()

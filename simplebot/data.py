@@ -136,6 +136,29 @@ def fetch_perp_universe(
     return names
 
 
+def fetch_funding_rates(timeout: float = 10.0) -> dict:
+    """{coin: taux de funding HORAIRE courant} via metaAndAssetCtxs (public).
+    Positif = les longs paient. Lève en cas d'échec réseau (l'appelant gère)."""
+    resp = requests.post(
+        HL_INFO_URL,
+        headers={"Content-Type": "application/json"},
+        json={"type": "metaAndAssetCtxs"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    meta, ctxs = resp.json()
+    out = {}
+    for u, c in zip(meta.get("universe", []), ctxs):
+        name = u.get("name")
+        if not name:
+            continue
+        try:
+            out[name] = float(c.get("funding", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def closed_candles(candles: List[dict], interval_ms: int, now_ms: Optional[int] = None) -> List[dict]:
     """Ne garde que les bougies dont la fenêtre est terminée."""
     if now_ms is None:
