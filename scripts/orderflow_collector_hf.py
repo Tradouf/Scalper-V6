@@ -48,6 +48,14 @@ STALE_WS_SEC = 30.0       # aucun message WS depuis N s → tentative de reconne
 # un process neuf (Info + souscriptions fraîches). Watchdog dur, pas de reconnexion
 # in-process qui s'enlise.
 WATCHDOG_DEAD_SEC = 120.0
+# 2026-07-04 : le watchdog ci-dessus vit DANS la boucle principale → si connect()/
+# disconnect() bloque (souscription sans timeout pendant une panne réseau), la boucle
+# gèle et le watchdog avec elle (incident 06-21→07-01 : 9,5j de zombie silencieux,
+# dernier log « Connection lost » 06-21 01:29 puis plus rien). Second étage : thread
+# daemon imblocable qui os._exit(1) si aucune donnée depuis 2× le seuil — le soft
+# (flush propre) tire en premier quand la boucle est vivante ; le hard ne sert que
+# quand la boucle elle-même est wedgée.
+WATCHDOG_HARD_SEC = 2 * WATCHDOG_DEAD_SEC
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,6 +113,7 @@ class State:
         self.ctx: dict[str, dict] = {}          # coin → {funding, mark_px, oi}
         self.trade_rows: list[tuple] = []
         self.last_msg_ts = time.time()
+        self.last_good_ts = time.time()  # dernier instant où des books réels sont arrivés
         self.running = True
 
 
@@ -197,6 +206,30 @@ def disconnect(info: Info) -> None:
         logger.warning("disconnect_websocket: %r", e)
 
 
+# ── Watchdog dur (thread daemon, imblocable) ──────────────────────────────────
+def hard_watchdog() -> None:
+    """os._exit(1) si aucune donnée réelle depuis WATCHDOG_HARD_SEC.
+
+    Tourne dans un thread daemon : survit à une boucle principale gelée dans
+    connect()/disconnect() (cause du zombie 06-21→07-01). os._exit court-circuite
+    tout (pas de flush — perte max = FLUSH_SEC de batch, le WAL SQLite encaisse) ;
+    systemd Restart=always relance un process neuf.
+    """
+    while True:
+        time.sleep(10.0)
+        if not STATE.running:
+            return  # arrêt propre en cours (SIGTERM/SIGINT) — ne pas interférer
+        dead_for = time.time() - STATE.last_good_ts
+        if dead_for > WATCHDOG_HARD_SEC:
+            logger.critical(
+                "WATCHDOG DUR : aucune donnée réelle depuis %.0fs (> %.0fs) et le soft "
+                "n'a pas tiré (boucle principale gelée ?) → os._exit(1) pour relance systemd",
+                dead_for, WATCHDOG_HARD_SEC,
+            )
+            logging.shutdown()
+            os._exit(1)
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main() -> None:
     conn = init_db()
@@ -213,7 +246,8 @@ def main() -> None:
     last_flush = time.time()
     n_l2_total = n_tr_total = 0
     last_report = time.time()
-    last_good_ts = time.time()   # dernier instant où des books réels sont arrivés
+    STATE.last_good_ts = time.time()
+    threading.Thread(target=hard_watchdog, name="hard_watchdog", daemon=True).start()
 
     while STATE.running:
         t0 = time.time()
@@ -234,15 +268,15 @@ def main() -> None:
                 l2_batch.append(row)
                 got_data = True
         if got_data:
-            last_good_ts = t0
+            STATE.last_good_ts = t0
 
         # Watchdog dur : données réelles absentes trop longtemps → exit, systemd
         # relance un process neuf (la reconnexion in-process ne re-souscrit pas
         # fiablement et finit wedgée — cf. incident 06-08→06-13).
-        if t0 - last_good_ts > WATCHDOG_DEAD_SEC:
+        if t0 - STATE.last_good_ts > WATCHDOG_DEAD_SEC:
             logger.critical(
                 "WATCHDOG : aucune donnée réelle depuis %.0fs (> %.0fs) → exit pour relance systemd",
-                t0 - last_good_ts, WATCHDOG_DEAD_SEC,
+                t0 - STATE.last_good_ts, WATCHDOG_DEAD_SEC,
             )
             # Flush du buffer avant de sortir.
             try:
