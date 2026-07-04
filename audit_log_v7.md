@@ -1,5 +1,12 @@
 # Audit log V7 (append-only, écrit par scripts/audit_v7.sh)
 
+## 2026-07-04 15:00 (audit Opus V7)
+**Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=12 (5 error/3 ReadTimeoutError/2 HTTPError/2 Error, types chevauchants = mêmes événements réseau), equity=$991.17→$989.84
+**Diagnostic** : Fenêtre saine. Régime 100% trend_up (717 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (-$1.33, -0,13%) sur la base ~$990 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. Les 12 erreurs = bruit réseau (HTTP 502 Bad Gateway allMids + ReadTimeout candles BTC 1h + spot equity sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Storm submit XRP toujours résolu (0 HyperliquidClientError cette fenêtre, cf. [[project_xrp_zec_min_notional_storm]] fix 8666c96). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
+**Changes** : aucun
+**Code proposals** : aucune
+**Alerts** : aucun
+
 ## 2026-07-04 09:00 (audit Opus V7)
 **Métriques 6h** : szi0_frozen=0, emergency=0, drift=0, breakout=0, errors=16 (16 error/15 HTTPError/15 Error/1 ReadTimeoutError, types chevauchants = mêmes 429), equity=$990.11→$991.16
 **Diagnostic** : Fenêtre saine. Régime 100% trend_up (719 ticks), toutes pathologies grille + emergency + drift/breakout à 0. Équity quasi-plate (+$1.05, +0,11%) sur la base ~$991 (cf. [[project_phantom_drawdown_withdrawals]]) → pas de saignement, la rotation tient. Les 16 erreurs = bruit réseau (HTTP 429 Too Many Requests sur allMids refresh + candles BTC/ETH 1h sur hl_adapter ; aucun type ≥50) — couvert par la proposition pending 06-08 (retry/backoff hl_adapter), ne pas re-proposer. Storm submit XRP toujours résolu (0 HyperliquidClientError cette fenêtre, cf. [[project_xrp_zec_min_notional_storm]] fix 8666c96). Stratégies bornées (grid/MR/momentum/supertrend) désactivées (all-in rotation hors allocateur) → aucun levier paramètre ici.
