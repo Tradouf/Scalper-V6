@@ -31,6 +31,12 @@ python backtest/run_backtest.py        # Deterministic
 # Unit tests
 python -m pytest tests/test_core.py -v
 
+# MinuteLab — labo permanent de stratégies BTC 1m, paper only (voir minutelab/README.md)
+python -m minutelab.run --scan-once           # une sélection (60 min, gagnant net sur les 20 dernières)
+python -m minutelab.run                       # boucle permanente paper, réévaluation adaptative
+python -m minutelab.walkforward --hours 72    # test out-of-sample du système complet
+python -m pytest tests/test_minutelab.py -v   # tests dédiés
+
 # SimpleBot — bot paramétrique auto-optimisé sur wallet séparé (voir simplebot/README.md)
 python -m simplebot.run                       # dry-run par défaut
 bash start_simplebot.sh --live                # ordres réels (exige HL2_PRIVATE_KEY)
