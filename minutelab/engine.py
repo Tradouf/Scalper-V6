@@ -170,7 +170,10 @@ class PaperEngine:
             prev = gains[:-1]
             ma_prev = sum(prev[-m:]) / min(m, len(prev))
             if gains[-2] >= ma_prev and g < ma_now:
-                reason = "PNL_MA"
+                gate = (2.0 * (config.FEE_PCT + config.SLIPPAGE_PCT)
+                        if config.EXIT_REQUIRE_NET_GAIN else None)
+                if gate is None or g > gate:
+                    reason = "PNL_MA"
 
         if reason:
             exit_px = mid * (1 - pos["dir"] * config.SLIPPAGE_PCT)

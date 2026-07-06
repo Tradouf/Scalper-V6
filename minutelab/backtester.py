@@ -44,10 +44,14 @@ def run_lab_backtest(
     recent_index: int,
     hard_sl_pct: float = 0.004,
     max_hold_bars: int = 30,
+    exit_min_gain: float = None,
 ) -> LabResult:
     """
-    start_index  : les entrées avant cet index sont ignorées (fenêtre d'éval).
-    recent_index : les trades clos à partir de cet index comptent dans pnl_recent.
+    start_index   : les entrées avant cet index sont ignorées (fenêtre d'éval).
+    recent_index  : les trades clos à partir de cet index comptent dans pnl_recent.
+    exit_min_gain : si non-None, le croisement PnL/MA ne sort que lorsque le
+                    gain brut dépasse ce seuil (typiquement le coût aller-retour) ;
+                    en dessous, seuls le stop dur et la durée max coupent.
     """
     signals = compute_signals(candles, strat)
     cost = 2.0 * (fee_pct + slippage_pct)
@@ -89,6 +93,8 @@ def run_lab_backtest(
                     prev = gains[:-1]
                     ma_prev = sum(prev[-mb:]) / min(mb, len(prev))
                     crossed = gains[-2] >= ma_prev and g < ma_now
+                    if crossed and exit_min_gain is not None and g <= exit_min_gain:
+                        crossed = False
                     if crossed or (i - pos["bar"]) >= max_hold_bars:
                         close_trade(c["close"], "PNL_MA" if crossed else "MAX_HOLD", i)
                         pos = None

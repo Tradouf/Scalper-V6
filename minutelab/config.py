@@ -43,6 +43,9 @@ RESELECT_MAX_MIN = _env_int("MINUTELAB_RESELECT_MAX_MIN", 30)
 EXIT_SAMPLE_SEC = _env_float("MINUTELAB_EXIT_SAMPLE_SEC", 5.0)
 EXIT_MA_SAMPLES = _env_int("MINUTELAB_EXIT_MA_SAMPLES", 12)   # 12 × 5 s = 1 min
 EXIT_WARMUP_SAMPLES = _env_int("MINUTELAB_EXIT_WARMUP_SAMPLES", 3)
+# Le croisement PnL/MA ne coupe que si le gain couvre déjà les frais aller-
+# retour (sinon on tient : stop dur et durée max restent les garde-fous).
+EXIT_REQUIRE_NET_GAIN = _env_int("MINUTELAB_EXIT_REQUIRE_NET_GAIN", 1)
 
 # --- Garde-fous de position (le PnL/MA reste la sortie principale) ---
 HARD_SL_PCT = _env_float("MINUTELAB_HARD_SL_PCT", 0.004)  # -0.4 % prix

@@ -107,6 +107,28 @@ class TestBacktester(unittest.TestCase):
         self.assertIn(r.trades[0]["reason"], ("PNL_MA",))
         self.assertGreater(r.trades[0]["pnl_pct"], 0.0)
 
+    def test_exit_gate_blocks_cross_below_min_gain(self):
+        # Même scénario que test_pnl_ma_exit_on_reversal, mais avec un seuil
+        # de gain inatteignable : le croisement PnL/MA ne doit PAS sortir,
+        # seuls les garde-fous (MAX_HOLD/EOW/HARD_SL) coupent.
+        closes = ([100.0] * 40
+                  + [100.0 + i * 1.0 for i in range(1, 16)]
+                  + [115.0 - i * 1.0 for i in range(1, 11)])
+        candles = make_candles(closes, spread=0.01)
+        s = Strat("ema_cross", (3, 10), exit_ma_bars=3)
+        blocked = run_lab_backtest(candles, s, 0.0, 0.0, 0, 0,
+                                   hard_sl_pct=0.5, max_hold_bars=500,
+                                   exit_min_gain=10.0)
+        self.assertGreaterEqual(blocked.n_trades, 1)
+        self.assertNotIn("PNL_MA", [t["reason"] for t in blocked.trades])
+        # Seuil bas (sous le gain au croisement) : comportement inchangé,
+        # et le gain à la sortie couvre bien le seuil.
+        passed = run_lab_backtest(candles, s, 0.0, 0.0, 0, 0,
+                                  hard_sl_pct=0.5, max_hold_bars=500,
+                                  exit_min_gain=0.0015)
+        self.assertEqual(passed.trades[0]["reason"], "PNL_MA")
+        self.assertGreater(passed.trades[0]["pnl_pct"], 0.0015)
+
     def test_costs_reduce_pnl(self):
         closes = [100.0] * 40 + [100.0 + i for i in range(1, 20)]
         candles = make_candles(closes, spread=0.01)

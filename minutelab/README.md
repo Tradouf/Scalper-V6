@@ -17,6 +17,10 @@ position : le **gain croise sous sa moyenne mobile**, échantillonné toutes les
 python -m minutelab.run --scan-once      # une sélection, classement affiché
 python -m minutelab.run                  # boucle permanente (paper) — état dans minutelab/state/
 python -m minutelab.walkforward --hours 72 --step 15   # test out-of-sample honnête
+#   --lookback N --recent N   → mode « fenêtre unique » : seules les N dernières
+#                               minutes jugent la stratégie (pouls du marché à l'instant T)
+#   --no-gate                 → désactive la règle « PnL/MA ne coupe que si gain > frais »
+#   --zero-cost               → frais/slippage à zéro (mesure du signal brut)
 python -m pytest tests/test_minutelab.py -v
 ```
 
@@ -38,5 +42,28 @@ slippage (0,15 %). **Non viable en l'état sur Hyperliquid en taker** — cohér
 avec le constat « petits gains souvent = −frais ». Pistes : exécution maker
 (coût ÷10), ou porter la même méta-sélection sur des fenêtres plus longues où
 le gain moyen par trade dépasse les frais.
+
+## Sweep « pouls du marché » (2026-07-06, walk-forward 72 h, 26 variantes)
+
+Idée testée : la fenêtre de sélection ne juge que les N dernières minutes
+(fenêtre unique, N = 10/20/30), en pariant que le rythme trouvé persiste
+10–15 min ; et la sortie PnL/MA ne coupe que si le gain couvre déjà les frais
+(`MINUTELAB_EXIT_REQUIRE_NET_GAIN=1`, défaut).
+
+- **Signal brut confirmé et amélioré** : à coût zéro, 7 variantes/8 positives ;
+  meilleures : W10/step15 **+2,60 %** (348 tr, +0,0075 %/tr) et W20/step10
+  **+2,35 %** (386 tr, +0,0061 %/tr) — contre +0,004 %/tr pour l'ancienne 60/20.
+  Le « pouls à l'instant T » est réel.
+- **À coûts réels, tout reste négatif** (−0,2 % à −8 %) : le signal demeure
+  ~20–25× sous les frais taker.
+- **La règle « gain > frais » aggrave les pertes à coûts réels** (baseline
+  60/20 : −1,3 % sans gate → −13,4 % avec) : quand l'edge ne couvre pas les
+  frais, la plupart des trades n'atteignent jamais le seuil, perdent la sortie
+  douce près de l'équilibre et roulent jusqu'au stop dur −0,4 %. La règle n'a
+  de sens que si l'edge par trade dépasse déjà le coût aller-retour.
+
+La boucle permanente tourne depuis lors sur cette spec (fenêtre unique 20 min,
+réévaluation adaptative bornée [5, 15] min, gate actif) pour la confirmation
+forward en paper.
 
 **PAPER TRADING UNIQUEMENT** : aucun ordre réel n'est envoyé, aucun wallet requis.

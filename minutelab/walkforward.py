@@ -26,15 +26,33 @@ from minutelab.data1m import fetch_recent_1m
 from minutelab.selector import select
 
 # Tranche d'historique passée au sélecteur : warmup indicateurs + lookback.
-_SLICE_BARS = 360 + config.LOOKBACK_MIN
+_WARMUP_BARS = 360
 
 
-def walk_forward(candles: List[dict], step_min: int, start_bar: int) -> dict:
+def walk_forward(
+    candles: List[dict],
+    step_min: int,
+    start_bar: int,
+    lookback_min: int = None,
+    recent_min: int = None,
+    min_trades: int = None,
+    exit_min_gain=None,
+    fee_pct: float = None,
+    slippage_pct: float = None,
+) -> dict:
+    lookback_min = lookback_min or config.LOOKBACK_MIN
+    recent_min = recent_min or config.RECENT_MIN
+    fee_pct = config.FEE_PCT if fee_pct is None else fee_pct
+    slippage_pct = config.SLIPPAGE_PCT if slippage_pct is None else slippage_pct
+    slice_bars = _WARMUP_BARS + lookback_min
+
     steps = []
     n = len(candles)
     for t in range(start_bar, n - step_min, step_min):
-        window = candles[max(0, t - _SLICE_BARS):t]
-        res = select(window)
+        window = candles[max(0, t - slice_bars):t]
+        res = select(window, lookback_bars=lookback_min, recent_bars=recent_min,
+                     min_trades=min_trades, exit_min_gain=exit_min_gain,
+                     fee_pct=fee_pct, slippage_pct=slippage_pct)
         champ = res["champion"]
         step = {
             "bar": t,
@@ -44,16 +62,17 @@ def walk_forward(candles: List[dict], step_min: int, start_bar: int) -> dict:
             "n_trades": 0,
         }
         if champ is not None:
-            fwd_slice = candles[max(0, t - _SLICE_BARS):t + step_min]
+            fwd_slice = candles[max(0, t - slice_bars):t + step_min]
             start_index = len(fwd_slice) - step_min
             r = run_lab_backtest(
                 fwd_slice, champ.strat,
-                fee_pct=config.FEE_PCT,
-                slippage_pct=config.SLIPPAGE_PCT,
+                fee_pct=fee_pct,
+                slippage_pct=slippage_pct,
                 start_index=start_index,
                 recent_index=start_index,
                 hard_sl_pct=config.HARD_SL_PCT,
                 max_hold_bars=config.MAX_HOLD_MIN,
+                exit_min_gain=exit_min_gain,
             )
             fwd_trades = [x for x in r.trades if x["entry_bar"] >= start_index]
             step["pnl_pct"] = sum(x["pnl_pct"] for x in fwd_trades)
@@ -78,21 +97,39 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Walk-forward MinuteLab (OOS)")
     parser.add_argument("--hours", type=float, default=24.0)
     parser.add_argument("--step", type=int, default=config.RESELECT_START_MIN)
+    parser.add_argument("--lookback", type=int, default=config.LOOKBACK_MIN,
+                        help="fenêtre de sélection (min) ; == --recent pour le mode fenêtre unique")
+    parser.add_argument("--recent", type=int, default=config.RECENT_MIN)
+    parser.add_argument("--min-trades", type=int, default=config.MIN_TRADES)
+    parser.add_argument("--no-gate", action="store_true",
+                        help="désactive la règle « le PnL/MA ne coupe que si gain > frais »")
+    parser.add_argument("--zero-cost", action="store_true",
+                        help="frais et slippage à zéro (mesure du signal brut)")
     args = parser.parse_args()
 
-    fetch_hours = args.hours + _SLICE_BARS / 60.0 + 1
+    fee = 0.0 if args.zero_cost else config.FEE_PCT
+    slip = 0.0 if args.zero_cost else config.SLIPPAGE_PCT
+    gate = None if args.no_gate else 2.0 * (fee + slip)
+    slice_bars = _WARMUP_BARS + args.lookback
+
+    fetch_hours = args.hours + slice_bars / 60.0 + 1
     candles = fetch_recent_1m(config.SYMBOL, fetch_hours)
-    need = int(args.hours * 60) + _SLICE_BARS
+    need = int(args.hours * 60) + slice_bars
     if len(candles) < need:
         print(f"Historique insuffisant : {len(candles)} bougies, besoin {need}.")
         return 1
     start_bar = len(candles) - int(args.hours * 60)
 
-    wf = walk_forward(candles, args.step, start_bar)
+    wf = walk_forward(candles, args.step, start_bar,
+                      lookback_min=args.lookback, recent_min=args.recent,
+                      min_trades=args.min_trades, exit_min_gain=gate,
+                      fee_pct=fee, slippage_pct=slip)
 
     print(f"\n=== Walk-forward {config.SYMBOL} 1m — {args.hours:.0f} h, "
+          f"fenêtre {args.lookback}/{args.recent} min, "
           f"réévaluation toutes les {args.step} min, "
-          f"coût {2 * (config.FEE_PCT + config.SLIPPAGE_PCT) * 100:.3f}%/trade ===")
+          f"coût {2 * (fee + slip) * 100:.3f}%/trade, "
+          f"gate sortie {'ON' if gate is not None else 'off'} ===")
     print(f"Pas de temps           : {wf['n_steps']}")
     print(f"Pas avec champion      : {wf['n_active']} "
           f"({wf['n_active'] / max(1, wf['n_steps']) * 100:.0f}% — le reste FLAT)")
