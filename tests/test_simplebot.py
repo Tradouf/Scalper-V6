@@ -506,6 +506,23 @@ def test_account_value_clamps_phantom_perp_residue(tmp_path, monkeypatch):
     assert trader._account_value() == 200.0
 
 
+def test_canon_read_failure_freezes_instead_of_phantom_peak(tmp_path, monkeypatch):
+    """Un échec de lecture de la valeur canonique ne doit PAS faire retomber sur la
+    somme brute perp+spot : un résidu perp fantôme (+15% observés) y entrerait comme
+    pic dans equity_history → faux kill au retour du clamp. Même chemin fail-safe
+    que le spot : PROPAGER, compter l'échec, geler après N."""
+    client = FakeClient(account_value=30.0, spot_usdc=200.0)  # somme gonflée: 230
+    def boom():
+        raise RuntimeError("429 Too Many Requests")
+    client.get_portfolio_value = boom
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    engaged = trader._kill_switch_engaged()
+    # pas de pic fantôme enregistré, échec compté, pas encore gelé
+    assert trader._live_state["equity_history"] == []
+    assert trader._acct_read_failures == 1
+    assert engaged is False
+
+
 def test_account_value_keeps_real_perp_gain_within_tolerance(tmp_path, monkeypatch):
     """Un gain perp réel (uPnL) cohérent avec le canonique ne doit PAS être rogné :
     somme perp+spot=205, canon=205 → 205 (pas de clamp intempestif)."""

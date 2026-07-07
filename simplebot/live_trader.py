@@ -286,12 +286,10 @@ class SimpleLiveTrader:
         # (portfolio), qui nette perp+spot côté HL. Clamp à sens unique (baisse) :
         # sûr pour le kill-switch ET le sizing.
         if config.EQUITY_CANON_TOL > 0:
-            try:
-                canon = self.client.get_portfolio_value()
-            except Exception as e:
-                logger.debug("Valeur canonique portfolio indisponible (%r) — "
-                             "somme perp+spot brute", e)
-                canon = 0.0
+            # Comme pour le spot : un échec de lecture PROPAGE. Retomber sur la
+            # somme brute laisserait entrer un pic fantôme (+5 à +15 % observés)
+            # dans equity_history, d'où faux kill au retour du clamp.
+            canon = self.client.get_portfolio_value()
             if canon > 0 and total > canon * (1 + config.EQUITY_CANON_TOL):
                 logger.info(
                     "Equity: somme perp+spot %.2f > canon %.2f (+%.1f%%) — clamp sur "
