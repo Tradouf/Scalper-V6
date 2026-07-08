@@ -50,13 +50,17 @@ class StrategyParams:
 
 
 def param_grid() -> List[StrategyParams]:
-    """Grille explorée par l'optimiseur (72 combinaisons)."""
+    """Grille explorée par l'optimiseur (120 combinaisons)."""
     grid = []
     for fast, slow in itertools.product((9, 12, 21), (26, 50, 100)):
         if slow < fast * 2:
             continue
         for tp in (1.5, 2.5, 3.5):
-            for sl in (1.0, 1.5, 2.0):
+            # sl_atr élargi jusqu'à 4.0 (2026-07-08) : sur les actifs très volatils
+            # (PUMP) l'optimiseur saturait au max 2.0 et le SL restait dans le bruit
+            # 15m → whipsaws en série. Pas grossier au-delà de 2.0 pour contenir la
+            # taille de la grille.
+            for sl in (1.0, 1.5, 2.0, 3.0, 4.0):
                 grid.append(StrategyParams(ema_fast=fast, ema_slow=slow, tp_atr=tp, sl_atr=sl))
     return grid
     # Note (2026-07-03) : `trend_ema` (filtre directionnel EMA200) existe comme
