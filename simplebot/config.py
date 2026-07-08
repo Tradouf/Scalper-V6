@@ -146,7 +146,7 @@ MOMENTUM_ATR_LEN = 14
 MOMENTUM_LOOP_SEC = _env_int("SIMPLEBOT_MOMENTUM_LOOP_SEC", 300)
 MOMENTUM_PAPER_EQUITY = _env_float("SIMPLEBOT_MOMENTUM_PAPER_EQUITY", 200.0)
 MOMENTUM_NOTIONAL_PCT = _env_float("SIMPLEBOT_MOMENTUM_NOTIONAL_PCT", 0.05)  # 5% equity/position
-MOMENTUM_MAX_OPEN = _env_int("SIMPLEBOT_MOMENTUM_MAX_OPEN", 15)
+MOMENTUM_MAX_OPEN = _env_int("SIMPLEBOT_MOMENTUM_MAX_OPEN", 0)  # 0 = illimité (le cap 15 saturait : signaux paper censurés en continu)
 MOMENTUM_STATE_FILE = STATE_DIR / "momentum_state.json"
 
 # ── Kill-switch ──────────────────────────────────────────────────────────────

@@ -178,3 +178,24 @@ def test_no_exchange_client_anywhere():
     for forbidden in ("place_order", "market_close", "HyperliquidClient",
                       "make_second_wallet_client", "usd_class_transfer"):
         assert forbidden not in src, f"momentum.py ne doit pas contenir {forbidden}"
+
+
+# ── Cap de positions (2026-07-08 : défaut 0 = illimité) ─────────────────────
+
+def test_no_cap_by_default(tmp_path, monkeypatch):
+    # Le cap 15 saturait en production et censurait tous les nouveaux signaux.
+    # Défaut MOMENTUM_MAX_OPEN=0 → toutes les entrées passent.
+    monkeypatch.setattr(config, "MOMENTUM_MAX_OPEN", 0)
+    candles = {f"S{i:02d}": mk_candles(rising()) for i in range(20)}
+    t = make_trader(tmp_path, candles)
+    t.sweep()
+    assert len(t.state["positions"]) == 20
+
+
+def test_cap_still_enforced_when_set(tmp_path, monkeypatch):
+    # SIMPLEBOT_MOMENTUM_MAX_OPEN > 0 reste respecté (opt-in via env).
+    monkeypatch.setattr(config, "MOMENTUM_MAX_OPEN", 2)
+    candles = {f"S{i:02d}": mk_candles(rising()) for i in range(5)}
+    t = make_trader(tmp_path, candles)
+    t.sweep()
+    assert len(t.state["positions"]) == 2

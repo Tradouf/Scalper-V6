@@ -225,7 +225,7 @@ class MomentumPaperTrader:
         if pos is not None and pos["dir"] != direction:
             logger.info("[MOMENTUM-PAPER] %s: signal opposé → flip", symbol)
             self._close(symbol, sig["close"], "FLIP", sig["ts"])
-        if len(self.state["positions"]) >= config.MOMENTUM_MAX_OPEN:
+        if config.MOMENTUM_MAX_OPEN > 0 and len(self.state["positions"]) >= config.MOMENTUM_MAX_OPEN:
             logger.info("[MOMENTUM-PAPER] %s: signal %+d ignoré — MAX_OPEN (%d) atteint",
                         symbol, direction, config.MOMENTUM_MAX_OPEN)
             return
