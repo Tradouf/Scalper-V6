@@ -152,6 +152,79 @@ def _equity_curves(now: float) -> Optional[Dict[str, list]]:
     return _PF_CACHE["curves"]
 
 
+def _hl_info(body: Dict[str, Any]) -> Any:
+    req = urllib.request.Request(
+        "https://api.hyperliquid.xyz/info", data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.load(r)
+
+
+# ── Positions live (endpoint public clearinghouseState, adresse seule) ───────
+# Le bot ne persiste pas ses positions réelles dans live_state.json (source de
+# vérité = l'exchange) : on lit donc l'état perp public du wallet, enrichi des
+# TP/SL natifs (frontendOpenOrders). Cache 15 s, fail-soft comme les courbes.
+
+_POS_CACHE: Dict[str, Any] = {"ts": 0.0, "fetched_at": None, "positions": None}
+
+
+def _fetch_live_positions() -> Optional[List[Dict[str, Any]]]:
+    addr = os.environ.get(config.ENV_ACCOUNT_ADDRESS, "").strip()
+    if not addr:
+        return None
+    ch = _hl_info({"type": "clearinghouseState", "user": addr})
+    positions: List[Dict[str, Any]] = []
+    for ap in ch.get("assetPositions", []) or []:
+        p = ap.get("position") or {}
+        szi = float(p.get("szi") or 0)
+        if not szi:
+            continue
+        notional = float(p.get("positionValue") or 0)
+        positions.append({
+            "symbol": p.get("coin"),
+            "dir": 1 if szi > 0 else -1,
+            "size": abs(szi),
+            "notional": notional,
+            "entry": float(p.get("entryPx") or 0),
+            "mark": notional / abs(szi),
+            "upnl": float(p.get("unrealizedPnl") or 0),
+            "roe": float(p.get("returnOnEquity") or 0),
+            "leverage": (p.get("leverage") or {}).get("value"),
+            "liq": float(p["liquidationPx"]) if p.get("liquidationPx") else None,
+            "tp": None,
+            "sl": None,
+        })
+    if positions:
+        try:
+            by_coin = {pos["symbol"]: pos for pos in positions}
+            for o in _hl_info({"type": "frontendOpenOrders", "user": addr}) or []:
+                pos = by_coin.get(o.get("coin"))
+                if not pos or not o.get("isTrigger"):
+                    continue
+                px = float(o.get("triggerPx") or 0) or None
+                ot = (o.get("orderType") or "").lower()
+                if "stop" in ot:
+                    pos["sl"] = px
+                elif "take" in ot:
+                    pos["tp"] = px
+        except Exception:
+            pass   # TP/SL facultatifs : la position s'affiche quand même
+    return positions
+
+
+def _live_positions(now: float) -> Dict[str, Any]:
+    if _POS_CACHE["positions"] is not None and now - _POS_CACHE["ts"] < 15:
+        return _POS_CACHE
+    try:
+        positions = _fetch_live_positions()
+        if positions is not None:
+            _POS_CACHE.update(ts=now, fetched_at=now, positions=positions)
+    except Exception:
+        _POS_CACHE["ts"] = now   # on garde (et sert) la dernière version connue
+    return _POS_CACHE
+
+
 def _momentum_block(now: float) -> Dict[str, Any]:
     """Résumé de l'état du momentum 4h paper (absent si jamais lancé)."""
     st = _read_json(getattr(config, "MOMENTUM_STATE_FILE", None))
@@ -294,6 +367,10 @@ def build_state() -> Dict[str, Any]:
         "paused_remaining_min": int((paused_until - now) / 60) if paused else 0,
         "opt_runs": opt_runs,
         "momentum": _momentum_block(now),
+        "live_positions": _live_positions(now)["positions"],
+        "live_positions_age_sec": (
+            int(now - _POS_CACHE["fetched_at"]) if _POS_CACHE["fetched_at"] else None
+        ),
     }
 
 
@@ -371,6 +448,18 @@ INDEX_HTML = r"""<!doctype html>
     </div>
     <svg id="equityChart" viewBox="0 0 1000 120" preserveAspectRatio="none"></svg>
     <div class="mut" id="eqmeta" style="font-size:11px;margin-top:4px"></div>
+  </div>
+
+  <div class="card wide" id="livecard" style="display:none">
+    <h2>Positions en cours — live (wallet)</h2>
+    <table id="livetbl">
+      <thead><tr>
+        <th>Symbole</th><th>Sens</th><th>Levier</th><th>Taille</th><th>Notionnel</th>
+        <th>Entrée</th><th>Mark</th><th>uPnL</th><th>ROE</th><th>TP</th><th>SL</th><th>Liq.</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="mut" id="livemeta" style="font-size:11px;margin-top:4px"></div>
   </div>
 
   <div class="card">
@@ -545,6 +634,36 @@ async function refresh() {
   if (s.paused) { killEl.textContent = 'PAUSE '+s.paused_remaining_min+'min'; killEl.className='badge warn'; }
   else { killEl.textContent = 'armé'; killEl.className='badge on'; }
   renderEquityCurve();
+
+  // Positions live (wallet)
+  const lp = s.live_positions;
+  const liveCard = document.getElementById('livecard');
+  liveCard.style.display = (lp==null) ? 'none' : '';
+  if (lp!=null) {
+    const tbL = document.querySelector('#livetbl tbody'); tbL.innerHTML='';
+    let upnlSum = 0, notSum = 0;
+    lp.forEach(p=>{
+      upnlSum += p.upnl||0; notSum += p.notional||0;
+      const tr=document.createElement('tr');
+      const dcls=p.dir>0?'grn':'red', dtxt=p.dir>0?'LONG':'SHORT';
+      tr.innerHTML =
+        `<td><b>${p.symbol}</b></td><td class="${dcls}">${dtxt}</td>`+
+        `<td class="mono">${p.leverage!=null?p.leverage+'x':'–'}</td>`+
+        `<td class="mono">${fmt(p.size,4)}</td><td class="mono">${usd(p.notional)}</td>`+
+        `<td class="mono">${fmt(p.entry,5)}</td><td class="mono">${fmt(p.mark,5)}</td>`+
+        `<td class="mono ${cls(p.upnl)}">${usd(p.upnl)}</td>`+
+        `<td class="mono ${cls(p.roe)}">${pct(p.roe)}</td>`+
+        `<td class="mono">${p.tp!=null?fmt(p.tp,5):'–'}</td>`+
+        `<td class="mono ${p.sl==null?'red':''}">${p.sl!=null?fmt(p.sl,5):'⚠ absent'}</td>`+
+        `<td class="mono mut">${p.liq!=null?fmt(p.liq,5):'–'}</td>`;
+      tbL.appendChild(tr);
+    });
+    if (!lp.length) tbL.innerHTML='<tr><td colspan="12" class="mut" style="text-align:center">aucune position ouverte</td></tr>';
+    document.getElementById('livemeta').textContent = lp.length
+      ? lp.length+' position(s) · notionnel total '+usd(notSum)+' · uPnL total '
+        +usd(upnlSum)+' · source HL clearinghouseState · maj '+ago(s.live_positions_age_sec)
+      : 'source HL clearinghouseState · maj '+ago(s.live_positions_age_sec);
+  }
 
   // Optimisation
   document.getElementById('nactive').textContent = s.active_count;
