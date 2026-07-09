@@ -26,6 +26,7 @@ from typing import List, Optional
 import requests
 
 from minutelab import config
+from minutelab.champion import ChampionState, pick_champion
 from minutelab.data1m import fetch_recent_1m
 from minutelab.selector import select
 from minutelab.strategies import Strat, compute_signals
@@ -55,6 +56,7 @@ class PaperEngine:
     def __init__(self):
         self.symbol = config.SYMBOL
         self.champion: Optional[Strat] = None
+        self.champion_state = ChampionState()
         self.champion_since: float = 0.0
         self.champion_entry_equity: float = 0.0
         self.reselect_min: float = config.RESELECT_START_MIN
@@ -90,39 +92,55 @@ class PaperEngine:
     # --- sélection -----------------------------------------------------
 
     def reselect(self, candles: List[dict]) -> None:
-        res = select(candles)
-        champ = res["champion"]
+        self.champion_state.strat = self.champion
+        self.champion_state.since = self.champion_since
+        self.champion_state.entry_equity = self.champion_entry_equity
 
-        # Adaptation du rythme AVANT de remplacer le champion : basée sur ce
-        # que l'ancien champion a réellement produit depuis sa sélection.
+        res = select(candles, incumbent=self.champion)
+        candidate = res["candidate"]
         pnl_since = self.equity_pct - self.champion_entry_equity
-        if self.champion is None or pnl_since < 0:
-            self.reselect_min = max(config.RESELECT_MIN_MIN, self.reselect_min / 2)
-        elif pnl_since > 0:
-            self.reselect_min = min(config.RESELECT_MAX_MIN, self.reselect_min * 1.5)
 
-        new = champ.strat if champ else None
+        new, reason, self.champion_state = pick_champion(
+            candidate, res["qualified"], res["ranked"],
+            self.champion_state, self.equity_pct,
+        )
+
+        if self.champion is None:
+            self.reselect_min = max(config.RESELECT_MIN_MIN, self.reselect_min * 0.75)
+        elif pnl_since < 0:
+            self.reselect_min = max(config.RESELECT_MIN_MIN, self.reselect_min * 0.85)
+        elif pnl_since > 0:
+            self.reselect_min = min(config.RESELECT_MAX_MIN, self.reselect_min * 1.25)
+
         if (new and self.champion and new != self.champion) or bool(new) != bool(self.champion):
-            logger.info("champion : %s → %s",
+            logger.info("champion : %s → %s (%s)",
                         self.champion.name if self.champion else "FLAT",
-                        new.name if new else "FLAT")
+                        new.name if new else "FLAT", reason)
         self.champion = new
-        self.champion_since = time.time()
-        self.champion_entry_equity = self.equity_pct
+        self.champion_since = self.champion_state.since
+        self.champion_entry_equity = self.champion_state.entry_equity
         self.next_reselect = time.time() + self.reselect_min * 60
 
+        champ_metrics = None
+        if candidate:
+            champ_metrics = {
+                "n_trades": candidate.n_trades,
+                "pnl_pct": round(candidate.pnl_pct, 6),
+                "pnl_recent_pct": round(candidate.pnl_recent_pct, 6),
+                "winrate": round(candidate.winrate, 3),
+                "score": round(candidate.score, 6),
+            }
         self._append("scans.jsonl", {
             "ts": res["ts"],
             "scanned": res["scanned"],
             "n_qualified": len(res["qualified"]),
-            "champion": champ.strat.name if champ else None,
-            "champion_metrics": (
-                {"n_trades": champ.n_trades,
-                 "pnl_pct": round(champ.pnl_pct, 6),
-                 "pnl_recent_pct": round(champ.pnl_recent_pct, 6),
-                 "winrate": round(champ.winrate, 3)}
-                if champ else None
-            ),
+            "candidate": candidate.strat.name if candidate else None,
+            "champion": self.champion.name if self.champion else None,
+            "champion_reason": reason,
+            "champion_metrics": champ_metrics,
+            "qual_mode": res["qual_mode"],
+            "n_near_miss": res["n_near_miss"],
+            "grace_misses": self.champion_state.grace_misses,
             "reselect_min": self.reselect_min,
             "pnl_since_prev_scan": round(pnl_since, 6),
         })

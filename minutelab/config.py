@@ -27,16 +27,40 @@ SYMBOL = os.environ.get("MINUTELAB_SYMBOL", "BTC")
 # --- Coûts (identiques aux hypothèses SimpleBot : taker + slippage par côté) ---
 FEE_PCT = _env_float("MINUTELAB_FEE_PCT", 0.00045)
 SLIPPAGE_PCT = _env_float("MINUTELAB_SLIPPAGE_PCT", 0.0003)
+ROUND_TRIP_COST = 2.0 * (FEE_PCT + SLIPPAGE_PCT)
+
+# --- Mode de qualification ---
+# pulse : fenêtre unique ou récente dominante + seuils d'edge (défaut)
+# dual  : gagnant sur lookback ET recent (ancien 60/20)
+# legacy: pnl_pct > 0 et pnl_recent_pct > 0 sans seuil d'edge
+QUAL_MODE = os.environ.get("MINUTELAB_QUAL_MODE", "pulse")
 
 # --- Fenêtres de sélection ---
-LOOKBACK_MIN = _env_int("MINUTELAB_LOOKBACK_MIN", 60)    # fenêtre de backtest
-RECENT_MIN = _env_int("MINUTELAB_RECENT_MIN", 20)        # sous-fenêtre qui doit être gagnante
+LOOKBACK_MIN = _env_int("MINUTELAB_LOOKBACK_MIN", 20)    # fenêtre de backtest
+RECENT_MIN = _env_int("MINUTELAB_RECENT_MIN", 20)        # sous-fenêtre récente
 WARMUP_HOURS = _env_float("MINUTELAB_WARMUP_HOURS", 6.0) # préfixe pour chauffer les indicateurs
 MIN_TRADES = _env_int("MINUTELAB_MIN_TRADES", 2)         # trades minimum sur la fenêtre
 
+# Seuils d'edge (% prix, hors levier) — liés au coût aller-retour
+MIN_PNL_RECENT_PCT = _env_float(
+    "MINUTELAB_MIN_PNL_RECENT_PCT", ROUND_TRIP_COST * 0.3)
+MIN_PNL_FULL_PCT = _env_float(
+    "MINUTELAB_MIN_PNL_FULL_PCT", ROUND_TRIP_COST * 0.5)
+MIN_SCORE_PCT = _env_float(
+    "MINUTELAB_MIN_SCORE_PCT", ROUND_TRIP_COST * 0.4)
+MIN_PROFIT_FACTOR = _env_float("MINUTELAB_MIN_PROFIT_FACTOR", 1.15)
+
+# --- Hystérésis champion ---
+CHAMPION_MIN_TENURE_MIN = _env_int("MINUTELAB_CHAMPION_MIN_TENURE_MIN", 10)
+CHAMPION_SCORE_MARGIN_PCT = _env_float(
+    "MINUTELAB_CHAMPION_SCORE_MARGIN_PCT", 0.0003)
+CHAMPION_GRACE_SCANS = _env_int("MINUTELAB_CHAMPION_GRACE_SCANS", 2)
+CHAMPION_DEMOTE_PNL_PCT = _env_float(
+    "MINUTELAB_CHAMPION_DEMOTE_PNL_PCT", -0.002)
+
 # --- Rythme de réévaluation (adaptatif) ---
 RESELECT_START_MIN = _env_int("MINUTELAB_RESELECT_START_MIN", 15)
-RESELECT_MIN_MIN = _env_int("MINUTELAB_RESELECT_MIN_MIN", 5)
+RESELECT_MIN_MIN = _env_int("MINUTELAB_RESELECT_MIN_MIN", 10)
 RESELECT_MAX_MIN = _env_int("MINUTELAB_RESELECT_MAX_MIN", 30)
 
 # --- Sortie : le gain croise sous sa moyenne, échantillonné toutes les 5 s ---

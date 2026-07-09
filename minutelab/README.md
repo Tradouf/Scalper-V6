@@ -2,14 +2,15 @@
 
 Recherche en continu la meilleure combinaison d'indicateurs (RSI, Supertrend,
 Stochastique, croisements de moyennes — 148 variantes de paramètres) sur les
-**60 dernières minutes**, en exigeant que la stratégie soit gagnante **net de
-frais** sur la fenêtre entière ET sur les **20 dernières minutes**. La
-championne est appliquée en **paper trading** et réévaluée à intervalle
-**adaptatif** (15 min par défaut, borné [5, 30] : se resserre quand le
-champion déçoit ou qu'on est flat, se détend quand il gagne). La sortie de
-position : le **gain croise sous sa moyenne mobile**, échantillonné toutes les
-**5 secondes** (12 échantillons par défaut), avec stop dur −0,4 % et durée max
-30 min en garde-fous. Si rien ne bat les frais → FLAT, par construction.
+**20 dernières minutes** (fenêtre unique par défaut), en exigeant un edge
+**net de frais** via le mode de qualification `pulse` (seuils liés au coût
+aller-retour). La championne est appliquée en **paper trading** avec
+**hystérésis anti-churn** (tenure minimale, marge de score, grace period
+avant FLAT) et réévaluée à intervalle **adaptatif** (15 min par défaut,
+borné [10, 30]). La sortie de position : le **gain croise sous sa moyenne
+mobile**, échantillonné toutes les **5 secondes** (12 échantillons par défaut),
+avec stop dur −0,4 % et durée max 30 min en garde-fous. Si rien ne bat les
+frais → FLAT, par construction.
 
 ## Commandes
 
@@ -25,7 +26,24 @@ python -m pytest tests/test_minutelab.py -v
 ```
 
 Tout est surchargeable par env `MINUTELAB_*` (voir `config.py`) : fenêtres,
-frais, rythme, MA de sortie, symbole.
+frais, rythme, MA de sortie, symbole, mode de qualification et hystérésis.
+
+### Modes de qualification (`MINUTELAB_QUAL_MODE`)
+
+| Mode | Comportement |
+|---|---|
+| `pulse` (défaut) | Fenêtre unique ou récente dominante + seuils `MIN_PNL_RECENT_PCT`, `MIN_SCORE_PCT`, `MIN_PROFIT_FACTOR` |
+| `dual` | Gagnant sur lookback ET recent avec seuils d'edge (ancien 60/20 durci) |
+| `legacy` | `pnl_pct > 0` ET `pnl_recent_pct > 0` sans seuil d'edge |
+
+### Hystérésis champion
+
+| Paramètre | Défaut | Rôle |
+|---|---|---|
+| `MINUTELAB_CHAMPION_MIN_TENURE_MIN` | 10 | Tenure minimale avant remplacement |
+| `MINUTELAB_CHAMPION_SCORE_MARGIN_PCT` | 0.0003 | Marge de score pour battre l'incumbent |
+| `MINUTELAB_CHAMPION_GRACE_SCANS` | 2 | Scans sans qualifié avant passage FLAT |
+| `MINUTELAB_CHAMPION_DEMOTE_PNL_PCT` | −0.002 | Démission forcée si PnL live depuis sélection |
 
 ## Résultat de recherche (2026-07-06, walk-forward BTC 72 h)
 

@@ -3,7 +3,14 @@
 import math
 import unittest
 
-from minutelab.backtester import run_lab_backtest
+from minutelab import config
+from minutelab.backtester import LabResult, run_lab_backtest
+from minutelab.champion import (
+    ChampionState,
+    count_near_misses,
+    pick_champion,
+    qualifies,
+)
 from minutelab.indicators import atr, ema, rsi, sma, stochastic, supertrend
 from minutelab.selector import select
 from minutelab.strategies import Strat, build_grid, compute_signals
@@ -161,18 +168,133 @@ class TestBacktester(unittest.TestCase):
 class TestSelector(unittest.TestCase):
     def test_short_history_returns_flat(self):
         res = select(make_candles([100.0] * 50))
-        self.assertIsNone(res["champion"])
+        self.assertIsNone(res["candidate"])
 
     def test_selector_runs_on_synthetic(self):
         # Sinusoïde ample : au moins le scan tourne et classe sans planter.
         closes = [30000 * (1 + 0.01 * math.sin(i / 8)) for i in range(400)]
         res = select(make_candles(closes, spread=1.0))
         self.assertGreater(res["scanned"], 100)
-        # Un champion éventuel doit respecter les critères de qualification
-        if res["champion"]:
-            self.assertGreater(res["champion"].pnl_pct, 0)
-            self.assertGreater(res["champion"].pnl_recent_pct, 0)
-            self.assertGreaterEqual(res["champion"].n_trades, 2)
+        if res["candidate"]:
+            self.assertGreaterEqual(res["candidate"].n_trades, config.MIN_TRADES)
+            self.assertGreaterEqual(res["candidate"].score, config.MIN_SCORE_PCT)
+
+
+class TestQualification(unittest.TestCase):
+    def _result(self, strat, n_trades=3, pnl=0.002, recent=0.002, pf=1.5):
+        return LabResult(
+            strat=strat, n_trades=n_trades, pnl_pct=pnl,
+            pnl_recent_pct=recent, winrate=0.5, profit_factor=pf,
+        )
+
+    def test_pulse_mode_single_window(self):
+        s = Strat("ema_cross", (3, 10))
+        r = self._result(s, recent=config.MIN_PNL_RECENT_PCT + 0.0001,
+                         pnl=config.MIN_PNL_RECENT_PCT + 0.0001)
+        self.assertTrue(qualifies(r, 2, 20, 20))
+
+    def test_min_edge_rejects_marginal(self):
+        s = Strat("ema_cross", (3, 10))
+        r = self._result(s, recent=0.0001, pnl=0.0001, pf=2.0)
+        self.assertFalse(qualifies(r, 2, 20, 20))
+
+    def test_legacy_mode_unchanged(self):
+        old = config.QUAL_MODE
+        try:
+            config.QUAL_MODE = "legacy"
+            s = Strat("ema_cross", (3, 10))
+            ok = self._result(s, pnl=0.001, recent=0.001)
+            bad = self._result(s, pnl=0.001, recent=-0.001)
+            self.assertTrue(qualifies(ok, 2, 60, 20))
+            self.assertFalse(qualifies(bad, 2, 60, 20))
+        finally:
+            config.QUAL_MODE = old
+
+    def test_near_miss_count(self):
+        s = Strat("ema_cross", (3, 10))
+        ranked = [
+            self._result(s, recent=0.0001, pnl=0.002, pf=2.0),
+            self._result(Strat("sma_cross", (5, 20)), recent=-0.001, pnl=0.002),
+        ]
+        n = count_near_misses(ranked, 2, 20, 20, top_n=2)
+        self.assertEqual(n, 1)
+
+
+class TestChampionHysteresis(unittest.TestCase):
+    def _lab(self, strat_spec, recent=0.002, pnl=None):
+        s = (Strat(*strat_spec) if isinstance(strat_spec, tuple) else strat_spec)
+        p = recent if pnl is None else pnl
+        return LabResult(strat=s, n_trades=3, pnl_pct=p, pnl_recent_pct=recent,
+                         winrate=0.6, profit_factor=1.5)
+
+    def test_grace_period_holds_incumbent(self):
+        inc = Strat("ema_cross", (3, 10))
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0)
+        strat, reason, new_state = pick_champion(
+            None, [], [], state, equity_pct=0.0, now=1100.0)
+        self.assertEqual(strat, inc)
+        self.assertIn("GRACE_HOLD", reason)
+        self.assertEqual(new_state.grace_misses, 1)
+
+    def test_grace_expires_to_flat(self):
+        inc = Strat("ema_cross", (3, 10))
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0, grace_misses=1)
+        strat, reason, _ = pick_champion(
+            None, [], [], state, equity_pct=0.0, now=2000.0)
+        self.assertIsNone(strat)
+        self.assertEqual(reason, "GRACE_EXPIRED")
+
+    def test_tenure_blocks_switch(self):
+        inc = Strat("ema_cross", (3, 10))
+        cand = self._lab(("sma_cross", (5, 20)), recent=0.01, pnl=0.0)
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0)
+        ranked = [cand, self._lab(inc, recent=0.001, pnl=0.0)]
+        strat, reason, _ = pick_champion(
+            cand, [cand], ranked, state, equity_pct=0.0, now=1300.0)
+        self.assertEqual(strat, inc)
+        self.assertEqual(reason, "TENURE_HOLD")
+
+    def test_score_margin_blocks_small_gain(self):
+        inc = Strat("ema_cross", (3, 10))
+        cand = self._lab(("sma_cross", (5, 20)), recent=0.001, pnl=0.0008)
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0)
+        ranked = [cand, self._lab(inc, recent=0.001, pnl=0.0004)]
+        strat, reason, _ = pick_champion(
+            cand, [cand], ranked, state, equity_pct=0.0,
+            now=1000.0 + config.CHAMPION_MIN_TENURE_MIN * 60 + 1)
+        self.assertEqual(strat, inc)
+        self.assertEqual(reason, "SCORE_MARGIN")
+
+    def test_demote_on_bad_live_pnl(self):
+        inc = Strat("ema_cross", (3, 10))
+        cand = self._lab(("sma_cross", (5, 20)), recent=0.01)
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0)
+        strat, reason, _ = pick_champion(
+            cand, [cand], [cand], state,
+            equity_pct=config.CHAMPION_DEMOTE_PNL_PCT - 0.001, now=1100.0)
+        self.assertEqual(strat, cand.strat)
+        self.assertEqual(reason, "DEMOTE_BAD_LIVE")
+
+    def test_incumbent_ok_when_still_qualified(self):
+        inc = Strat("ema_cross", (3, 10))
+        cand = self._lab(inc, recent=0.002)
+        other = self._lab(("sma_cross", (5, 20)), recent=0.01)
+        state = ChampionState(strat=inc, since=1000.0, entry_equity=0.0)
+        qualified = [other, cand]
+        strat, reason, _ = pick_champion(
+            other, qualified, qualified, state, equity_pct=0.0,
+            now=1000.0 + config.CHAMPION_MIN_TENURE_MIN * 60 + 1)
+        self.assertEqual(strat, inc)
+        self.assertEqual(reason, "INCUMBENT_OK")
+
+    def test_new_champion_when_flat(self):
+        cand = self._lab(("ema_cross", (3, 10)), recent=0.002)
+        state = ChampionState()
+        strat, reason, new_state = pick_champion(
+            cand, [cand], [cand], state, equity_pct=0.0, now=1000.0)
+        self.assertEqual(strat, cand.strat)
+        self.assertEqual(reason, "NEW_CHAMPION")
+        self.assertEqual(new_state.since, 1000.0)
 
 
 if __name__ == "__main__":

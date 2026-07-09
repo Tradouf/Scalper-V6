@@ -1,9 +1,10 @@
 """
 Sélecteur MinuteLab : passe toute la grille de stratégies au backtest sur la
-fenêtre glissante (60 min par défaut) et retient celles qui sont gagnantes
-NET DE FRAIS à la fois sur la fenêtre entière et sur la sous-fenêtre récente
-(20 min par défaut). Si rien ne passe → FLAT (aucune stratégie appliquée),
-c'est un résultat honnête, pas une erreur.
+fenêtre glissante et retient celles qui passent les critères de qualification
+(mode pulse / dual / legacy). Si rien ne passe → candidat None (FLAT honnête).
+
+L'hystérésis du champion (tenure, grace, marge de score) est appliquée dans
+engine.py via champion.pick_champion().
 """
 
 from __future__ import annotations
@@ -14,10 +15,10 @@ from typing import List, Optional
 
 from minutelab import config
 from minutelab.backtester import LabResult, run_lab_backtest
-from minutelab.strategies import build_grid
+from minutelab.champion import count_near_misses, qualify_results
+from minutelab.strategies import Strat, build_grid
 
 logger = logging.getLogger("sdm.minutelab.selector")
-
 
 _USE_CONFIG = object()
 
@@ -30,13 +31,15 @@ def select(
     exit_min_gain=_USE_CONFIG,
     fee_pct: float = None,
     slippage_pct: float = None,
+    incumbent: Optional[Strat] = None,
 ) -> dict:
     """
     candles : bougies 1 m CLÔTURÉES, warmup inclus (≥ WARMUP_HOURS conseillé).
     lookback_bars == recent_bars → mode « fenêtre unique » : seules les N
-    dernières minutes jugent la stratégie (le pouls du moment).
-    Retourne {"champion": LabResult|None, "qualified": [...], "ranked": [...],
-              "scanned": int, "ts": epoch}.
+    dernières minutes jugent la stratégie (pouls du moment).
+    incumbent : stratégie championne actuelle (informatif pour les logs).
+    Retourne {"candidate": LabResult|None, "qualified": [...], "ranked": [...],
+              "scanned": int, "ts": epoch, "qual_mode": str, "n_near_miss": int}.
     """
     lookback_bars = lookback_bars or config.LOOKBACK_MIN
     recent_bars = recent_bars or config.RECENT_MIN
@@ -52,8 +55,11 @@ def select(
     n = len(candles)
     if n < lookback_bars + 60:
         logger.warning("historique insuffisant : %d bougies", n)
-        return {"champion": None, "qualified": [], "ranked": [], "scanned": 0,
-                "ts": time.time()}
+        return {
+            "candidate": None, "champion": None, "qualified": [], "ranked": [],
+            "scanned": 0, "ts": time.time(), "qual_mode": config.QUAL_MODE,
+            "n_near_miss": 0, "incumbent": incumbent.name if incumbent else None,
+        }
 
     start_index = n - lookback_bars
     recent_index = n - recent_bars
@@ -77,21 +83,25 @@ def select(
         results.append(r)
 
     ranked = sorted(results, key=lambda r: r.score, reverse=True)
-    qualified = [
-        r for r in ranked
-        if r.n_trades >= min_trades and r.pnl_pct > 0 and r.pnl_recent_pct > 0
-    ]
-    champion: Optional[LabResult] = qualified[0] if qualified else None
+    qualified = qualify_results(ranked, min_trades, lookback_bars, recent_bars)
+    candidate: Optional[LabResult] = qualified[0] if qualified else None
+    n_near = count_near_misses(ranked, min_trades, lookback_bars, recent_bars)
 
     logger.info(
-        "sélection : %d stratégies testées, %d qualifiées, champion=%s",
-        len(results), len(qualified),
-        champion.strat.name if champion else "AUCUN (flat)",
+        "sélection [%s] : %d stratégies testées, %d qualifiées, "
+        "candidat=%s, near_miss=%d",
+        config.QUAL_MODE, len(results), len(qualified),
+        candidate.strat.name if candidate else "AUCUN (flat)",
+        n_near,
     )
     return {
-        "champion": champion,
+        "candidate": candidate,
+        "champion": candidate,  # alias rétrocompat ; engine remplace via hysteresis
         "qualified": qualified,
         "ranked": ranked,
         "scanned": len(results),
         "ts": time.time(),
+        "qual_mode": config.QUAL_MODE,
+        "n_near_miss": n_near,
+        "incumbent": incumbent.name if incumbent else None,
     }

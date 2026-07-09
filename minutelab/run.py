@@ -34,11 +34,12 @@ def scan_once(top: int = 15) -> int:
     res = select(candles)
 
     print(f"\n=== MinuteLab scan — {config.SYMBOL} 1m, fenêtre {config.LOOKBACK_MIN} min "
-          f"(récent {config.RECENT_MIN} min), {res['scanned']} stratégies, "
+          f"(récent {config.RECENT_MIN} min), mode {config.QUAL_MODE}, "
+          f"{res['scanned']} stratégies, "
           f"coût {2 * (config.FEE_PCT + config.SLIPPAGE_PCT) * 100:.3f}%/trade ===\n")
 
-    header = f"{'PnL60%':>9} {'PnL20%':>9} {'trades':>6} {'win%':>5}  stratégie"
-    print("QUALIFIÉES (gagnantes net de frais sur 60 min ET sur les 20 dernières) :")
+    header = f"{'PnL%':>9} {'PnLrec%':>9} {'trades':>6} {'win%':>5}  stratégie"
+    print(f"QUALIFIÉES (mode {config.QUAL_MODE}) :")
     if res["qualified"]:
         print(header)
         for r in res["qualified"][:top]:
