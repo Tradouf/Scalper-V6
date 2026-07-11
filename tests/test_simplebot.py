@@ -228,6 +228,79 @@ def test_optimizer_inactive_on_flat_market(tmp_path):
     assert state["symbols"]["TEST"]["active"] is False
 
 
+# ── Filtre symboles ──────────────────────────────────────────────────────────
+
+def _active_entry(pf_valid=1.8, pnl_valid=0.05, wr_valid=0.55, pf_train=1.2, pnl_train=0.03):
+    return {
+        "active": True,
+        "params": PARAMS.to_dict(),
+        "train": {
+            "n_trades": 20,
+            "total_pnl_pct": pnl_train,
+            "winrate": 0.50,
+            "profit_factor": pf_train,
+            "max_drawdown_pct": 0.01,
+        },
+        "valid": {
+            "n_trades": 20,
+            "total_pnl_pct": pnl_valid,
+            "winrate": wr_valid,
+            "profit_factor": pf_valid,
+            "max_drawdown_pct": 0.01,
+        },
+    }
+
+
+def test_symbol_filter_rejects_low_pf(monkeypatch):
+    from simplebot.symbol_filter import apply_symbol_filter
+
+    monkeypatch.setattr(config, "MAX_ACTIVE_SYMBOLS", 0)
+    out = apply_symbol_filter({"LOW": _active_entry(pf_valid=1.1)})
+    assert out["LOW"]["active"] is False
+    assert "valid_pf" in out["LOW"]["filter_reason"]
+
+
+def test_symbol_filter_cap_keeps_best(monkeypatch):
+    from simplebot.symbol_filter import apply_symbol_filter
+
+    monkeypatch.setattr(config, "MAX_ACTIVE_SYMBOLS", 2)
+    monkeypatch.setattr(config, "SYMBOL_ALLOWLIST", [])
+    monkeypatch.setattr(config, "SYMBOL_BLOCKLIST", [])
+    per = {
+        "A": _active_entry(pf_valid=1.5, pnl_valid=0.03),
+        "B": _active_entry(pf_valid=2.0, pnl_valid=0.08),
+        "C": _active_entry(pf_valid=1.6, pnl_valid=0.04),
+    }
+    out = apply_symbol_filter(per)
+    active = [s for s, e in out.items() if e.get("active")]
+    assert set(active) == {"B", "C"}
+    assert out["A"]["filter_reason"].startswith("cap_top_")
+
+
+def test_symbol_filter_blocklist(monkeypatch):
+    from simplebot.symbol_filter import apply_symbol_filter
+
+    monkeypatch.setattr(config, "SYMBOL_BLOCKLIST", ["SCAM"])
+    monkeypatch.setattr(config, "MAX_ACTIVE_SYMBOLS", 0)
+    out = apply_symbol_filter({"SCAM": _active_entry()})
+    assert out["SCAM"]["active"] is False
+    assert out["SCAM"]["filter_reason"] == "blocklist"
+
+
+def test_param_store_tradeable_symbols(tmp_path):
+    from simplebot.live_trader import ParamStore
+
+    best = tmp_path / "best_params.json"
+    best.write_text(json.dumps({
+        "symbols": {
+            "GOOD": {"active": True, "params": PARAMS.to_dict()},
+            "BAD": {"active": False, "reason": "test"},
+        }
+    }))
+    store = ParamStore(best)
+    assert store.tradeable_symbols() == ["GOOD"]
+
+
 # ── Données ──────────────────────────────────────────────────────────────────
 
 def test_closed_candles_drops_running_candle():
@@ -449,6 +522,10 @@ def test_kill_switch_flattens_and_pauses(tmp_path, monkeypatch):
     # pic à 1000 il y a 10 min → 900 = -10% > KILL_LOSS_PCT (5%)
     trader._live_state["equity_history"] = [[_time.time() - 600, 1000.0]]
 
+    # hystérésis : la 1ère lecture sous seuil ne fait que confirmer 1/2
+    assert trader._kill_switch_engaged() is False
+    assert client.closed == []
+    # 2ᵉ lecture consécutive sous seuil → kill effectif
     assert trader._kill_switch_engaged() is True
     assert client.closed == ["TEST"]
     assert trader._live_state["paused_until"] > _time.time()
@@ -544,6 +621,165 @@ def test_kill_switch_no_false_trigger_with_spot_collateral(tmp_path, monkeypatch
     assert client.closed == []
 
 
+def test_kill_switch_spot_zero_perp_funded_no_kill(tmp_path, monkeypatch):
+    """P0 brief : spot lu à 0 (lecture OK, capital réellement en perp) + perp=200
+    → total 200, aucun kill."""
+    import time as _time
+
+    client = FakeClient(account_value=200.0, spot_usdc=0.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._live_state["equity_history"] = [[_time.time() - 600, 200.0]]
+    assert trader._kill_switch_engaged() is False
+    assert trader._live_state["paused_until"] == 0
+    assert client.closed == []
+
+
+def test_kill_switch_hysteresis(tmp_path, monkeypatch):
+    """P0 : il faut KILL_CONFIRMATIONS lectures CONSÉCUTIVES sous le seuil avant
+    de flatten — une lecture aberrante isolée ne ferme plus rien, et une lecture
+    saine intercalée remet le compteur à zéro."""
+    import time as _time
+
+    monkeypatch.setattr(config, "KILL_CONFIRMATIONS", 2)
+    client = FakeClient(account_value=100.0, spot_usdc=0.0, portfolio_value=100.0)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._live_state["equity_history"] = [[_time.time() - 60, 200.0]]
+
+    # 1ère lecture sous le seuil : PAS de kill (confirmation 1/2)
+    assert trader._kill_switch_engaged() is False
+    assert trader._live_state["paused_until"] == 0
+    assert trader._kill_breach_count == 1
+
+    # lecture saine intercalée : le compteur repart à zéro
+    client.account_value = 200.0
+    client.portfolio_value = 200.0
+    assert trader._kill_switch_engaged() is False
+    assert trader._kill_breach_count == 0
+
+    # deux lectures consécutives sous le seuil : kill au 2ᵉ passage
+    client.account_value = 100.0
+    client.portfolio_value = 100.0
+    assert trader._kill_switch_engaged() is False   # 1/2
+    assert trader._kill_switch_engaged() is True    # 2/2 → flatten + pause
+    assert trader._live_state["paused_until"] > _time.time()
+
+
+def test_flip_cooldown_blocks_rapid_reflips(tmp_path, monkeypatch):
+    """P0 : deux signaux opposés sur 2 bougies consécutives → UN seul flip ;
+    le second est ignoré (cooldown), le troisième (cooldown écoulé) passe."""
+    import simplebot.live_trader as lt
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    monkeypatch.setattr(config, "FLIP_COOLDOWN_BARS", 2)
+
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {"TEST": {"active": True, "params": PARAMS.to_dict()}},
+    }))
+
+    base = make_candles(wave_closes(n=200))
+    interval_ms = 900_000
+    feed = {"candles": base}
+    trader = SimpleLiveTrader(store=ParamStore(best_file), dry_run=True,
+                              fetch=lambda s, i, d, **kw: feed["candles"])
+
+    # position papier LONG préexistante (TP/SL intouchables, déjà pointée)
+    t0 = base[-1]["ts"]
+    trader._live_state["paper"]["positions"]["TEST"] = {
+        "dir": 1, "entry": 100.0, "sl": 0.001, "tp": 1e9,
+        "entry_ts": t0 - interval_ms, "checked_ts": t0 + 100 * interval_ms,
+    }
+
+    sig_holder = {"signal": -1}
+
+    def fake_signal(candles, params):
+        return {"signal": sig_holder["signal"], "atr": 1.0,
+                "close": candles[-1]["close"], "ts": candles[-1]["ts"]}
+
+    monkeypatch.setattr(lt, "latest_signal", fake_signal)
+
+    def advance(n_bars, signal):
+        last = feed["candles"][-1]
+        feed["candles"] = feed["candles"] + [
+            dict(last, ts=last["ts"] + k * interval_ms) for k in range(1, n_bars + 1)
+        ]
+        sig_holder["signal"] = signal
+        trader._process_symbol("TEST", PARAMS)
+
+    trades = trader._live_state["paper"]["trades"]
+
+    # bougie 1 : signal opposé → flip (LONG fermé, SHORT ouvert)
+    trader._process_symbol("TEST", PARAMS)
+    assert len([t for t in trades if t["reason"] == "FLIP"]) == 1
+    assert trader._live_state["paper"]["positions"]["TEST"]["dir"] == -1
+
+    # bougie suivante : signal re-opposé → IGNORÉ (cooldown 2 bougies)
+    advance(1, +1)
+    assert len([t for t in trades if t["reason"] == "FLIP"]) == 1
+    assert trader._live_state["paper"]["positions"]["TEST"]["dir"] == -1
+
+    # 2 bougies plus tard : cooldown écoulé → flip autorisé
+    advance(2, +1)
+    assert len([t for t in trades if t["reason"] == "FLIP"]) == 2
+    assert trader._live_state["paper"]["positions"]["TEST"]["dir"] == 1
+
+
+def _store_with_scores(tmp_path):
+    """ParamStore avec 3 symboles actifs de qualités distinctes (BEST > MID > LOW)."""
+    from simplebot.live_trader import ParamStore
+
+    def entry(pf, pnl, wr):
+        return {
+            "active": True,
+            "params": PARAMS.to_dict(),
+            "train": {"profit_factor": 1.5, "total_pnl_pct": 0.05},
+            "valid": {"profit_factor": pf, "total_pnl_pct": pnl,
+                      "winrate": wr, "n_trades": 30},
+        }
+
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {
+            "LOW": entry(1.2, 0.01, 0.35),
+            "BEST": entry(2.5, 0.20, 0.65),
+            "MID": entry(1.6, 0.08, 0.50),
+        },
+    }))
+    return ParamStore(best_file)
+
+
+def test_tradeable_symbols_ordered_by_quality_score(tmp_path):
+    """P1.5 : à MAX_OPEN saturé, les slots vont aux mieux notés — l'itération
+    doit donc être par score décroissant, plus par ordre alphabétique."""
+    store = _store_with_scores(tmp_path)
+    assert store.tradeable_symbols() == ["BEST", "MID", "LOW"]
+
+
+def test_margin_pct_dynamic_interpolates_between_base_and_max(tmp_path, monkeypatch):
+    """P1.4 : meilleur actif → MARGIN_PCT_MAX, pire → MARGIN_PCT, milieu entre
+    les deux ; désactivé → base pour tous."""
+    from simplebot.live_trader import SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    monkeypatch.setattr(config, "MARGIN_PCT", 0.05)
+    monkeypatch.setattr(config, "MARGIN_PCT_MAX", 0.08)
+    monkeypatch.setattr(config, "SIZING_DYNAMIC", True)
+
+    trader = SimpleLiveTrader(store=_store_with_scores(tmp_path), dry_run=True,
+                              fetch=lambda *a, **k: [])
+    assert trader._margin_pct_for("BEST") == pytest.approx(0.08)
+    assert trader._margin_pct_for("LOW") == pytest.approx(0.05)
+    assert 0.05 < trader._margin_pct_for("MID") < 0.08
+    # symbole inconnu → base (prudence)
+    assert trader._margin_pct_for("UNKNOWN") == pytest.approx(0.05)
+
+    monkeypatch.setattr(config, "SIZING_DYNAMIC", False)
+    assert trader._margin_pct_for("BEST") == pytest.approx(0.05)
+
+
 def test_ensure_perp_margin_transfers_from_spot(tmp_path, monkeypatch):
     # perp vide, spot plein → top-up avant l'entrée
     client = FakeClient(account_value=0.0, spot_usdc=200.0)
@@ -586,8 +822,8 @@ def test_optimizer_validation_is_binary_filter(tmp_path, monkeypatch):
             return fake_result(params, 0.02, 0.5, 20) if is_valid \
                 else fake_result(params, 0.30, 3.0, 20)
         if params == p_b:
-            # 2e du train, confirme en validation (PnL valid modeste)
-            return fake_result(params, 0.01, 1.5, 20) if is_valid \
+            # 2e du train, confirme en validation (assez pour le filtre qualité)
+            return fake_result(params, 0.03, 1.5, 20) if is_valid \
                 else fake_result(params, 0.20, 2.5, 20)
         if params == p_c:
             # 3e du train, PnL de validation énorme — ne doit PAS être choisi

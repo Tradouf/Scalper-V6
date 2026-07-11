@@ -130,8 +130,35 @@ DRY_RUN = _env_str("SIMPLEBOT_DRY_RUN", "1") not in ("0", "false", "False")
 LEVERAGE = _env_int("SIMPLEBOT_LEVERAGE", 3)
 MARGIN_PCT = _env_float("SIMPLEBOT_MARGIN_PCT", 0.05)   # marge par trade en % de l'account value
 MIN_NOTIONAL_USD = 11.0                                  # minimum HL = $10, marge d'arrondi
+# Recommandation : MAX_OPEN_POSITIONS >= min(5, MAX_ACTIVE_SYMBOLS), sinon les
+# slots saturent et les signaux des symboles les mieux notés sont censurés.
+# (Le tick parcourt les symboles par quality_score décroissant : à slots pleins,
+# ce sont les moins bons qui attendent.)
 MAX_OPEN_POSITIONS = _env_int("SIMPLEBOT_MAX_OPEN_POSITIONS", 3)
 LOOP_SEC = _env_int("SIMPLEBOT_LOOP_SEC", 30)
+
+# ── Sizing dynamique par score de validation (P1) ────────────────────────────
+# margin_pct interpolé linéairement entre MARGIN_PCT (pire actif) et
+# MARGIN_PCT_MAX (meilleur actif) selon le quality_score normalisé sur les
+# symboles actifs. Ex. base 5 % / max 8 % : le top score trade 8 %, le symbole
+# limite du cap trade 5 %. SIMPLEBOT_SIZING_DYNAMIC=0 pour revenir au fixe.
+SIZING_DYNAMIC = _env_str("SIMPLEBOT_SIZING_DYNAMIC", "1") not in ("0", "false", "False")
+MARGIN_PCT_MAX = _env_float("SIMPLEBOT_MARGIN_PCT_MAX", 0.08)
+
+# ── Exécution maker-first (P1) ───────────────────────────────────────────────
+# L'edge brut est réel mais les frais taker le mangent (constat MinuteLab).
+# Les entrées tentent d'abord un limit post-only (Alo) au mid, timeout puis
+# fallback market. Compteurs maker/taker persistés dans live_state.json.
+EXEC_MAKER_FIRST = _env_str("SIMPLEBOT_EXEC_MAKER_FIRST", "1") not in ("0", "false", "False")
+EXEC_MAKER_TIMEOUT_SEC = _env_float("SIMPLEBOT_EXEC_MAKER_TIMEOUT_SEC", 30.0)
+EXEC_POLL_SEC = _env_float("SIMPLEBOT_EXEC_POLL_SEC", 2.0)
+FEE_MAKER_PCT = _env_float("SIMPLEBOT_FEE_MAKER_PCT", 0.00015)   # maker HL base tier
+
+# ── Anti-churn des flips (P0) ────────────────────────────────────────────────
+# Un flip ferme (taker) puis rouvre : 2 flips rapprochés = 4 legs de frais pour
+# du bruit. Après un flip sur un symbole, les signaux opposés sont ignorés
+# pendant FLIP_COOLDOWN_BARS bougies.
+FLIP_COOLDOWN_BARS = _env_int("SIMPLEBOT_FLIP_COOLDOWN_BARS", 2)
 
 # Collatéral : sur HL, spot USDC et perp USDC sont séparés. La valeur de compte
 # de SimpleBot = perp + spot USDC (sinon un solde logé en spot fait lire 0 au
@@ -147,6 +174,12 @@ AUTO_FUND_PERP = _env_str("SIMPLEBOT_AUTO_FUND_PERP", "1") not in ("0", "false",
 # ne fait que réduire l'exposition). 0 désactive le clamp.
 EQUITY_CANON_TOL = _env_float("SIMPLEBOT_EQUITY_CANON_TOL", 0.02)
 PERP_FUND_BUFFER = _env_float("SIMPLEBOT_PERP_FUND_BUFFER", 1.5)  # ×marge visée transférée
+# Hystérésis kill-switch (P0) : il faut KILL_CONFIRMATIONS lectures CONSÉCUTIVES
+# sous le seuil avant de fermer — une lecture isolée aberrante (429, résidu
+# fantôme, cohérence différée) ne peut plus tout flatten à elle seule.
+KILL_CONFIRMATIONS = _env_int("SIMPLEBOT_KILL_CONFIRMATIONS", 2)
+# Log détaillé equity_raw={perp,spot,canon,clamped} au plus toutes les N secondes.
+EQUITY_LOG_EVERY_SEC = _env_int("SIMPLEBOT_EQUITY_LOG_EVERY_SEC", 600)
 
 # ── Momentum 4h — stratégie PAPER à paramètres FIGÉS ─────────────────────────
 # Seule combinaison ayant survécu à la validation OOS 833j × 31 symboles

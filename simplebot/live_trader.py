@@ -87,6 +87,7 @@ class ParamStore:
         self.path = path or config.BEST_PARAMS_FILE
         self._mtime = 0.0
         self._state: dict = {}
+        self.maybe_reload()
 
     def maybe_reload(self) -> bool:
         try:
@@ -118,6 +119,26 @@ class ParamStore:
     def symbols(self) -> list:
         return list(self._state.get("symbols", {}).keys())
 
+    def tradeable_symbols(self) -> list:
+        """Symboles actifs après filtre qualité, par quality_score DÉCROISSANT
+        (tri alphabétique en secondaire, stable) : quand MAX_OPEN_POSITIONS
+        sature, ce sont les mieux notés qui prennent les slots — pas les
+        premiers de l'alphabet."""
+        scores = self.quality_scores()
+        return sorted(
+            (sym for sym in self.symbols if self.active_params(sym) is not None),
+            key=lambda s: (-scores.get(s, 0.0), s),
+        )
+
+    def quality_scores(self) -> dict:
+        """{symbole actif: quality_score} — score composite du filtre qualité."""
+        from simplebot.symbol_filter import quality_score
+        out = {}
+        for sym, entry in self._state.get("symbols", {}).items():
+            if entry.get("active"):
+                out[sym] = quality_score(entry)
+        return out
+
 
 # ── Trader ───────────────────────────────────────────────────────────────────
 
@@ -142,6 +163,8 @@ class SimpleLiveTrader:
         state.setdefault("paper", {"positions": {}, "trades": []})
         state.setdefault("equity_history", [])
         state.setdefault("paused_until", 0)
+        state.setdefault("last_flip_ts", {})
+        state.setdefault("exec_stats", {"maker": 0, "taker": 0, "mixed": 0})
         return state
 
     def _save_live_state(self) -> None:
@@ -159,6 +182,8 @@ class SimpleLiveTrader:
     def run_forever(self) -> None:
         mode = "DRY-RUN (aucun ordre envoyé)" if self.dry_run else "LIVE ⚠️ ordres réels"
         logger.info("SimpleLiveTrader démarré — %s — intervalle %s", mode, config.INTERVAL)
+        self._live_state["dry_run"] = self.dry_run
+        self._save_live_state()
         self.reconcile_positions()
         while True:
             try:
@@ -171,7 +196,7 @@ class SimpleLiveTrader:
         self.store.maybe_reload()
         if self._kill_switch_engaged():
             return
-        for symbol in self.store.symbols:
+        for symbol in self.store.tradeable_symbols():
             params = self.store.active_params(symbol)
             if params is None:
                 continue
@@ -279,6 +304,8 @@ class SimpleLiveTrader:
         # gèle les entrées après N échecs au lieu de décider sur un chiffre faux.
         spot = self.client.get_spot_usdc()
         total = perp + spot
+        # Composantes brutes exposées pour le log equity_raw du kill-check.
+        self._equity_raw = {"perp": perp, "spot": spot, "canon": None, "clamped": False}
         # Garde-fou : HL renvoie parfois un accountValue perp résiduel/fantôme (dust
         # non adossé à du capital réel, cohérence différée) qui gonfle faussement la
         # somme perp+spot — au point d'avoir déclenché de faux kill-switch au reflux
@@ -290,12 +317,20 @@ class SimpleLiveTrader:
             # somme brute laisserait entrer un pic fantôme (+5 à +15 % observés)
             # dans equity_history, d'où faux kill au retour du clamp.
             canon = self.client.get_portfolio_value()
+            self._equity_raw["canon"] = canon
             if canon > 0 and total > canon * (1 + config.EQUITY_CANON_TOL):
-                logger.info(
-                    "Equity: somme perp+spot %.2f > canon %.2f (+%.1f%%) — clamp sur "
-                    "la valeur canonique HL (résidu perp fantôme)",
-                    total, canon, (total / canon - 1) * 100,
-                )
+                self._equity_raw["clamped"] = True
+                # Throttlé : quand le résidu fantôme persiste (observé +14% sur
+                # des heures), ce log partait à CHAQUE tick 30s. Le détail vit
+                # déjà dans equity_raw ; ici on ne signale qu'aux 600s.
+                now = time.time()
+                if now - getattr(self, "_last_clamp_log", 0) >= config.EQUITY_LOG_EVERY_SEC:
+                    self._last_clamp_log = now
+                    logger.info(
+                        "Equity: somme perp+spot %.2f > canon %.2f (+%.1f%%) — clamp sur "
+                        "la valeur canonique HL (résidu perp fantôme)",
+                        total, canon, (total / canon - 1) * 100,
+                    )
                 return canon
         return total
 
@@ -364,6 +399,18 @@ class SimpleLiveTrader:
         if account_value <= 0:
             return False
 
+        # Log détaillé des composantes (throttlé — pas à chaque tick 30s).
+        if now - getattr(self, "_last_equity_log", 0) >= config.EQUITY_LOG_EVERY_SEC:
+            self._last_equity_log = now
+            raw = getattr(self, "_equity_raw", {}) or {}
+            logger.info(
+                "equity_raw perp=%.2f spot=%s canon=%s clamped=%s → retenu=%.2f",
+                raw.get("perp", account_value),
+                f"{raw['spot']:.2f}" if raw.get("spot") is not None else "n/a",
+                f"{raw['canon']:.2f}" if raw.get("canon") is not None else "n/a",
+                raw.get("clamped", False), account_value,
+            )
+
         hist = self._live_state["equity_history"]
         if not hist or now - hist[-1][0] >= 300:  # un point max toutes les 5 min
             hist.append([now, account_value])
@@ -372,6 +419,20 @@ class SimpleLiveTrader:
         peak = max(v for _, v in hist)
 
         if peak > 0 and account_value <= peak * (1 - config.KILL_LOSS_PCT):
+            # Hystérésis : une lecture isolée sous le seuil (429 résiduel, valeur
+            # aberrante passée entre les mailles) ne suffit plus — il faut
+            # KILL_CONFIRMATIONS lectures CONSÉCUTIVES avant de tout fermer.
+            self._kill_breach_count = getattr(self, "_kill_breach_count", 0) + 1
+            if self._kill_breach_count < config.KILL_CONFIRMATIONS:
+                logger.warning(
+                    "Kill-switch: account value %.2f ≤ pic %.2f × (1-%.1f%%) — "
+                    "confirmation %d/%d avant fermeture (hystérésis)",
+                    account_value, peak, config.KILL_LOSS_PCT * 100,
+                    self._kill_breach_count, config.KILL_CONFIRMATIONS,
+                )
+                self._save_live_state()
+                return False
+            self._kill_breach_count = 0
             logger.critical(
                 "KILL-SWITCH: account value %.2f ≤ pic %.2f × (1-%.1f%%) — "
                 "fermeture de toutes les positions, pause %dh",
@@ -383,6 +444,7 @@ class SimpleLiveTrader:
             self._save_live_state()
             return True
 
+        self._kill_breach_count = 0
         self._save_live_state()
         return False
 
@@ -435,8 +497,24 @@ class SimpleLiveTrader:
             return
 
         if current is not None and current * direction < 0:
+            # Anti-churn : après un flip, on ignore les signaux opposés pendant
+            # FLIP_COOLDOWN_BARS bougies — deux flips rapprochés = 4 legs de
+            # frais taker pour du bruit (rafales AVAX/VVV observées en logs).
+            last_flip = float(self._live_state["last_flip_ts"].get(symbol, 0) or 0)
+            cooldown_ms = config.FLIP_COOLDOWN_BARS * config.INTERVAL_MS
+            if sig["ts"] is not None and last_flip and sig["ts"] - last_flip < cooldown_ms:
+                logger.info(
+                    "%s: signal %+d opposé ignoré — cooldown post-flip (%d/%d bougies)",
+                    symbol, direction,
+                    int((sig["ts"] - last_flip) / config.INTERVAL_MS),
+                    config.FLIP_COOLDOWN_BARS,
+                )
+                return
             logger.info("%s: signal %+d opposé à la position → flip", symbol, direction)
             self._close_position(symbol, ref_price=sig["close"], ts=sig["ts"])
+            if sig["ts"] is not None:
+                self._live_state["last_flip_ts"][symbol] = sig["ts"]
+                self._save_live_state()
 
         if current is None and self._open_positions_count() >= config.MAX_OPEN_POSITIONS:
             logger.info("%s: signal %+d ignoré — MAX_OPEN_POSITIONS atteint", symbol, direction)
@@ -530,6 +608,20 @@ class SimpleLiveTrader:
         self.client.market_close(symbol)
         logger.info("%s: position clôturée (market)", symbol)
 
+    def _margin_pct_for(self, symbol: str) -> float:
+        """Sizing dynamique (P1) : marge interpolée entre MARGIN_PCT (pire
+        symbole actif) et MARGIN_PCT_MAX (meilleur) selon le quality_score
+        normalisé. Fixe si désactivé, symbole inconnu ou < 2 actifs."""
+        if not config.SIZING_DYNAMIC:
+            return config.MARGIN_PCT
+        scores = self.store.quality_scores()
+        if symbol not in scores or len(scores) < 2:
+            return config.MARGIN_PCT
+        lo, hi = min(scores.values()), max(scores.values())
+        norm = 1.0 if hi <= lo else (scores[symbol] - lo) / (hi - lo)
+        pct = config.MARGIN_PCT + norm * (config.MARGIN_PCT_MAX - config.MARGIN_PCT)
+        return min(config.MARGIN_PCT_MAX, max(config.MARGIN_PCT, pct))
+
     def _open_position(self, symbol: str, direction: int, ref_price: float,
                        atr_val: float, ts=None) -> None:
         side = "LONG" if direction == 1 else "SHORT"
@@ -557,24 +649,36 @@ class SimpleLiveTrader:
             return
 
         account_value = self._account_value()
-        margin = account_value * config.MARGIN_PCT
+        margin_pct = self._margin_pct_for(symbol)
+        margin = account_value * margin_pct
         notional = max(config.MIN_NOTIONAL_USD, margin * config.LEVERAGE)
         qty = notional / ref_price
 
         # La marge doit être dans le perp : vire du spot si nécessaire.
         self._ensure_perp_margin(notional / config.LEVERAGE)
         self.client.update_leverage(symbol, config.LEVERAGE, is_cross=False)
-        result = self.client.place_order(
-            coin=symbol,
-            is_buy=(direction == 1),
-            sz=qty,
-            limit_px=ref_price,
-            order_type="market",
-        )
+        if config.EXEC_MAKER_FIRST:
+            # Maker-first : limit Alo au mid, fallback market après timeout —
+            # les frais taker mangent l'edge (P1 brief), on paie maker si possible.
+            from simplebot.execution import smart_entry
+            result = smart_entry(self.client, symbol, direction == 1, qty, ref_price)
+            exec_mode = result["mode"]
+        else:
+            result = self.client.place_order(
+                coin=symbol,
+                is_buy=(direction == 1),
+                sz=qty,
+                limit_px=ref_price,
+                order_type="market",
+            )
+            exec_mode = "taker"
+        stats = self._live_state.setdefault("exec_stats", {})
+        stats[exec_mode] = int(stats.get(exec_mode, 0)) + 1
         fill_px = float(result.get("avg_px") or ref_price)
         fill_sz = float(result.get("total_sz") or qty)
-        logger.info("%s: OPEN %s sz=%.6f @ %.6g (notional≈$%.2f, lev=%dx)",
-                    symbol, side, fill_sz, fill_px, fill_sz * fill_px, config.LEVERAGE)
+        logger.info("%s: OPEN %s sz=%.6f @ %.6g (notional≈$%.2f, lev=%dx, marge=%.1f%%, exec=%s)",
+                    symbol, side, fill_sz, fill_px, fill_sz * fill_px, config.LEVERAGE,
+                    margin_pct * 100, exec_mode)
 
         # TP/SL natifs recalés sur le prix de fill réel
         sl_price = fill_px - direction * params.sl_atr * atr_val
