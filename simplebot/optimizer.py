@@ -35,6 +35,7 @@ from simplebot import config
 from simplebot.backtester import BacktestResult, run_backtest
 from simplebot.data import closed_candles, fetch_ohlcv
 from simplebot.strategy import StrategyParams, param_grid
+from simplebot.symbol_filter import apply_symbol_filter
 
 logger = logging.getLogger("sdm.simplebot.optimizer")
 
@@ -153,6 +154,11 @@ class BacktestOptimizerAgent:
                 )
             else:
                 logger.info("  %s ❌ inactif — %s", symbol, entry.get("reason"))
+
+        per_symbol = apply_symbol_filter(per_symbol)
+        for symbol, entry in per_symbol.items():
+            if not entry.get("active") and entry.get("filter_reason"):
+                logger.info("  %s ⛔ filtré — %s", symbol, entry["filter_reason"])
 
         state = {
             "updated_at": datetime.now(timezone.utc).isoformat(),

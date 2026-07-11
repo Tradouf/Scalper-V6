@@ -24,4 +24,4 @@ export SIMPLEBOT_DASHBOARD_PORT
 #   SIMPLEBOT_DASHBOARD_HOST=...       → interface de bind (défaut: 0.0.0.0)
 export SIMPLEBOT_DASHBOARD_PASSWORD SIMPLEBOT_DASHBOARD_USER SIMPLEBOT_DASHBOARD_HOST
 
-python3 -m simplebot.dashboard
+python3 -u -m simplebot.dashboard

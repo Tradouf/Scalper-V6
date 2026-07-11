@@ -91,6 +91,26 @@ MIN_VALID_PF = _env_float("SIMPLEBOT_MIN_VALID_PF", 1.2)
 # une fenêtre de validation courte est presque toujours du surapprentissage.
 MIN_TRAIN_PF = _env_float("SIMPLEBOT_MIN_TRAIN_PF", 1.0)
 
+
+def _env_csv(name: str, default: str = "") -> list:
+    raw = os.environ.get(name, default)
+    if not raw.strip():
+        return []
+    return [s.strip().upper() for s in raw.split(",") if s.strip()]
+
+
+# ── Filtre qualité symboles (post-optimiseur, voir symbol_filter.py) ─────────
+# Allowlist vide = pas de restriction. Blocklist = exclusion explicite.
+SYMBOL_ALLOWLIST = _env_csv("SIMPLEBOT_SYMBOL_ALLOWLIST")
+SYMBOL_BLOCKLIST = _env_csv("SIMPLEBOT_SYMBOL_BLOCKLIST")
+# 0 = pas de plafond ; sinon ne garde que le top-N par score de validation.
+MAX_ACTIVE_SYMBOLS = _env_int("SIMPLEBOT_MAX_ACTIVE_SYMBOLS", 8)
+# Seuils plus stricts que MIN_VALID_PF (1.2) pour concentrer le capital.
+QUALITY_MIN_VALID_PF = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PF", 1.4)
+QUALITY_MIN_VALID_PNL_PCT = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PNL_PCT", 0.02)
+QUALITY_MIN_VALID_WINRATE = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_WINRATE", 0.40)
+QUALITY_MIN_TRAIN_PF = _env_float("SIMPLEBOT_QUALITY_MIN_TRAIN_PF", 1.05)
+
 # Coûts par side (fill taker + glissement) appliqués au backtest ET au sizing.
 FEE_PCT = _env_float("SIMPLEBOT_FEE_PCT", 0.00045)
 SLIPPAGE_PCT = _env_float("SIMPLEBOT_SLIPPAGE_PCT", 0.0003)

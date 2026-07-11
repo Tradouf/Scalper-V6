@@ -271,10 +271,11 @@ def build_state() -> Dict[str, Any]:
     for name, entry in symbols_raw.items():
         is_active = bool(entry.get("active"))
         active_count += int(is_active)
+        reason = entry.get("filter_reason") or entry.get("reason")
         row: Dict[str, Any] = {
             "symbol": name,
             "active": is_active,
-            "reason": entry.get("reason"),
+            "reason": reason,
             "params": entry.get("params"),
             "train": entry.get("train"),
             "valid": entry.get("valid"),
@@ -287,6 +288,13 @@ def build_state() -> Dict[str, Any]:
             -((r.get("valid") or {}).get("profit_factor") or 0),
         )
     )
+
+    # Mode : priorité à live_state (reflète le bot en cours) puis config locale.
+    dry = live.get("dry_run")
+    if dry is None:
+        mode = "DRY-RUN" if config.DRY_RUN else "LIVE"
+    else:
+        mode = "DRY-RUN" if dry else "LIVE"
 
     # ── Equity / PnL ─────────────────────────────────────────────────────────
     # equity « fraîche » : historique local (points 5 min, valeurs clampées) ;
@@ -335,7 +343,7 @@ def build_state() -> Dict[str, Any]:
 
     return {
         "now": int(now),
-        "mode": "DRY-RUN" if config.DRY_RUN else "LIVE",
+        "mode": mode,
         "interval": best.get("interval") or config.INTERVAL,
         "backtest_days": best.get("backtest_days") or config.BACKTEST_DAYS,
         "updated_at": best.get("updated_at"),
@@ -823,18 +831,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
 
+def _make_server(host: str, port: int) -> ThreadingHTTPServer:
+    """Serveur HTTP ; dual-stack si host est 0.0.0.0/:: (localhost → ::1 OK)."""
+    if host not in ("0.0.0.0", "::"):
+        return ThreadingHTTPServer((host, port), Handler)
+
+    class _DualStackServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+    server = _DualStackServer(("::", port), Handler)
+    try:
+        server.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    except OSError:
+        pass
+    return server
+
+
 def main() -> int:
     host = HOST
     # Garde-fou : sans mot de passe, on interdit un bind au-delà du réseau privé.
     # (0.0.0.0 est toléré : il n'écoute que sur les interfaces locales de la
     #  machine ; le vrai risque — l'exposition Internet — passe par un port
     #  forwardé/tunnel, à protéger par SIMPLEBOT_DASHBOARD_PASSWORD.)
-    if not AUTH_PASSWORD and not (host == "0.0.0.0" or _is_private_host(host)):
+    if not AUTH_PASSWORD and not (host in ("0.0.0.0", "::") or _is_private_host(host)):
         print(f"⚠️  Bind {host} refusé sans SIMPLEBOT_DASHBOARD_PASSWORD "
               f"— repli sur 127.0.0.1 (accès local uniquement).")
         host = "127.0.0.1"
 
-    server = ThreadingHTTPServer((host, PORT), Handler)
+    server = _make_server(host, PORT)
 
     auth = "🔒 Basic Auth (user=%s)" % AUTH_USER if AUTH_PASSWORD else "🔓 sans auth"
     print(f"Dashboard SimpleBot — {auth} — Ctrl+C pour arrêter")
