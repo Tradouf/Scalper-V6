@@ -18,6 +18,54 @@ from simplebot.data import (  # noqa: F401 — API publique SuperBot
 from superbot import config
 
 
+def fetch_funding_history(symbol: str, days: float, timeout: float = 10.0) -> list:
+    """Historique de funding HORAIRE [(ts_ms, taux), ...] — endpoint public
+    fundingHistory, paginé (500 points max/requête → ~21 j ; on avance par
+    startTime jusqu'à couvrir `days`)."""
+    import time as _time
+
+    import requests
+
+    from simplebot.data import HL_INFO_URL
+
+    now_ms = int(_time.time() * 1000)
+    start = now_ms - int(days * 86_400_000)
+    out: list = []
+    guard = 0
+    while start < now_ms - 3_600_000 and guard < 40:
+        guard += 1
+        resp = requests.post(
+            HL_INFO_URL,
+            headers={"Content-Type": "application/json"},
+            json={"type": "fundingHistory", "coin": symbol, "startTime": int(start)},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        batch = resp.json() or []
+        if not batch:
+            break
+        out.extend((int(x["time"]), float(x["fundingRate"])) for x in batch)
+        start = out[-1][0] + 1
+        if len(batch) < 400:      # dernière page
+            break
+        _time.sleep(config.FETCH_THROTTLE_SEC)
+    return out
+
+
+def align_funding(candles: list, funding_points: list) -> list:
+    """Taux de funding horaire COURANT à chaque bougie (dernier taux connu au
+    ts de la bougie — strictement causal). 0.0 avant le premier point."""
+    import bisect
+
+    times = [t for t, _ in funding_points]
+    rates = [r for _, r in funding_points]
+    out = []
+    for c in candles:
+        j = bisect.bisect_right(times, c["ts"]) - 1
+        out.append(rates[j] if j >= 0 else 0.0)
+    return out
+
+
 def fetch_days_for(timeframe: str, wanted_days: float) -> float:
     """Jours effectivement récupérables sur un TF : l'endpoint candleSnapshot
     plafonne à ~5000 bougies/requête — au-delà il TRONQUE SILENCIEUSEMENT.

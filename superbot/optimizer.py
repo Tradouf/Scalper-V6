@@ -68,12 +68,15 @@ class SuperOptimizer:
         state_file=None,
         backtest_fn: Optional[Callable] = None,
         sleeves: Optional[List[Sleeve]] = None,
+        hmm_engine=None,
     ):
+        from superbot.hmm import HMMRegimeEngine
         self.symbols = symbols or config.SYMBOLS
         self._fetch = fetch                      # None → fetch réseau simplebot
         self.state_file = state_file or config.BEST_PARAMS_FILE
         self._backtest = backtest_fn or run_sleeve_backtest
         self.sleeves = sleeves or OPTIMIZABLE_SLEEVES
+        self.hmm = hmm_engine or HMMRegimeEngine()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
@@ -161,8 +164,51 @@ class SuperOptimizer:
 
     # ── Cycle complet ────────────────────────────────────────────────────────
 
+    # ── HMM (SPEC §8 étapes 0, 8, 9) ─────────────────────────────────────────
+
+    def _train_market_hmm(self) -> None:
+        """Étape 0 : HMM marché BTC 4h (features + funding historique).
+        Échec de fit/validation → pas de modèle → la façade régime retombe
+        automatiquement en fallback ADX."""
+        from superbot.data import align_funding, fetch_funding_history
+        try:
+            candles = fetch_closed("BTC", "4h", config.HMM_MARKET_DAYS,
+                                   fetch=self._fetch)
+        except Exception as e:
+            logger.warning("HMM marché: fetch BTC 4h échoué (%r)", e)
+            return
+        funding = None
+        if self._fetch is None:      # réseau réel uniquement
+            try:
+                pts = fetch_funding_history("BTC", config.HMM_MARKET_DAYS)
+                funding = align_funding(candles, pts)
+            except Exception as e:
+                logger.warning("HMM marché: funding indisponible (%r) — feature à 0", e)
+        try:
+            self.hmm.fit_market(candles, funding)
+        except Exception as e:
+            logger.error("HMM marché: entraînement échoué (%r)", e)
+
+    def _train_symbol_hmms(self, per_symbol: dict) -> None:
+        """Étapes 8-9 : un HMM K=3 par symbole actif (au TF de sa sleeve),
+        prune des .pkl devenus inactifs."""
+        actives = {s: e for s, e in per_symbol.items() if e.get("active")}
+        for symbol, entry in actives.items():
+            tf = entry.get("timeframe", "1h")
+            try:
+                candles = fetch_closed(symbol, tf, config.HMM_SYMBOL_DAYS,
+                                       fetch=self._fetch)
+                if config.FETCH_THROTTLE_SEC > 0 and self._fetch is None:
+                    time.sleep(config.FETCH_THROTTLE_SEC)
+                self.hmm.fit_symbol(symbol, candles, tf)
+            except Exception as e:
+                logger.warning("HMM %s: entraînement échoué (%r) — fallback ADX",
+                               symbol, e)
+        self.hmm.prune_stale(set(actives))
+
     def run_once(self) -> dict:
         t0 = time.time()
+        self._train_market_hmm()
         per_symbol = {}
         for sleeve in self.sleeves:
             logger.info("Optimisation %s — %d symboles × TFs %s, grille %d sets",
@@ -190,6 +236,7 @@ class SuperOptimizer:
                     logger.info("  %s ❌ inactif — %s", symbol, entry.get("reason"))
 
         per_symbol = apply_symbol_filter(per_symbol)
+        self._train_symbol_hmms(per_symbol)
 
         state = {
             "updated_at": datetime.now(timezone.utc).isoformat(),

@@ -371,3 +371,314 @@ def test_train_composite_blind_to_valid():
     s1 = train_composite(m)
     s2 = train_composite({**m, "valid": {"total_pnl_pct": 99.0}})
     assert s1 == s2 > 0
+
+
+# ═════════════════════════ PHASE 2 — HMM + double gate ═══════════════════════
+
+import random
+
+from superbot.hmm import (HMMRegimeEngine, MARKET_LABELS, SYMBOL_LABELS,
+                          _label_symbol)
+from superbot.markov import compute_latent_state, markov_transition_stats
+from superbot.orchestrator import (Orchestrator, allow_entry,
+                                   effective_margin_pct, hmm_size_mult,
+                                   market_size_mult, prioritize_candidates,
+                                   sleeve_allowed)
+from superbot.regime import RegimeFacade, fallback_symbol_state
+
+
+def regime_candles(segments, interval_ms=14_400_000, base=100.0, seed=42):
+    """Bougies synthétiques par segments de régime : (n, drift/bar, bruit, vol).
+    Régimes bien séparés → le GaussianHMM converge de façon déterministe."""
+    rng = random.Random(seed)
+    price = base
+    out = []
+    ts = T0
+    for (n, drift, noise, vol) in segments:
+        for _ in range(n):
+            step = drift + rng.gauss(0, noise)
+            new_price = max(price * (1 + step), 1e-6)
+            hi = max(price, new_price) * (1 + noise)
+            lo = min(price, new_price) * (1 - noise)
+            out.append({"ts": ts, "open": price, "high": hi, "low": lo,
+                        "close": new_price, "volume": vol * rng.uniform(0.8, 1.2)})
+            price = new_price
+            ts += interval_ms
+    return out
+
+
+def market_cycle(reps=6, n=60):
+    """bull / bear / range / chaos répétés — les 4 régimes présents dans le
+    train ET la validation (walk-forward 70/30 sans shift de distribution)."""
+    segs = []
+    for _ in range(reps):
+        segs += [
+            (n, +0.004, 0.002, 100.0),    # bull_orderly
+            (n, -0.004, 0.002, 100.0),    # bear_orderly
+            (n, 0.0, 0.0004, 60.0),       # range_compressed
+            (n, 0.0, 0.02, 300.0),        # high_vol_chaotic
+        ]
+    return regime_candles(segs)
+
+
+def symbol_cycle(reps=6, n=60, interval_ms=3_600_000):
+    segs = []
+    for _ in range(reps):
+        segs += [
+            (n, +0.005, 0.002, 120.0),    # trending_up
+            (n, -0.005, 0.002, 120.0),    # trending_down
+            (n, 0.0, 0.0005, 60.0),       # choppy
+        ]
+    return regime_candles(segs, interval_ms=interval_ms)
+
+
+@pytest.fixture()
+def hmm_engine(tmp_path):
+    return HMMRegimeEngine(hmm_dir=tmp_path / "hmm")
+
+
+# ── HMM marché ───────────────────────────────────────────────────────────────
+
+def test_hmm_market_train_and_save(hmm_engine, tmp_path):
+    fitted = hmm_engine.fit_market(market_cycle())
+    assert fitted is not None
+    assert (tmp_path / "hmm" / "market.pkl").exists()
+    assert set(fitted.label_map.values()) == set(MARKET_LABELS)
+
+
+def test_hmm_market_inference_confidence(hmm_engine):
+    candles = market_cycle()
+    assert hmm_engine.fit_market(candles) is not None
+    out = hmm_engine.infer_market(candles)
+    assert out["state"] in MARKET_LABELS
+    assert 0.0 < out["confidence"] <= 1.0
+    assert 0.0 <= out["transition_risk"] <= 1.0
+    assert sum(out["state_probs"].values()) == pytest.approx(1.0, abs=0.01)
+    assert out["source"] == "hmm"
+
+
+def test_hmm_market_fallback_when_no_model(tmp_path):
+    facade = RegimeFacade(engine=HMMRegimeEngine(hmm_dir=tmp_path / "vide"),
+                          market_file=tmp_path / "rm.json",
+                          symbols_file=tmp_path / "rs.json")
+    out = facade.market_regime(market_cycle(reps=2))
+    assert out["source"] == "fallback_adx"
+    assert out["state"] in MARKET_LABELS
+
+
+def test_hmm_market_hysteresis_blocks_flip():
+    """Un flip de régime exige confiance + 2 observations consécutives : la
+    première lecture opposée est retenue par l'hystérésis, la seconde bascule."""
+    prev = {"state": "bull_orderly", "recent_raw": ["bull_orderly"]}
+    raw = {"state": "bear_orderly", "confidence": 0.9, "transition_risk": 0.1}
+    once = RegimeFacade._apply_hysteresis(raw, prev, min_conf=0.55, max_risk=0.45)
+    assert once["state"] == "bull_orderly"          # retenu
+    assert once.get("held_by_hysteresis") is True
+    assert once["pending_state"] == "bear_orderly"
+    twice = RegimeFacade._apply_hysteresis(raw, once, min_conf=0.55, max_risk=0.45)
+    assert twice["state"] == "bear_orderly"         # 2ᵉ observation → bascule
+    # transition_risk trop haut → jamais de bascule même répétée
+    risky = {"state": "bear_orderly", "confidence": 0.9, "transition_risk": 0.6}
+    held = RegimeFacade._apply_hysteresis(risky, twice | {"state": "bull_orderly"},
+                                          min_conf=0.55, max_risk=0.45)
+    assert held["state"] == "bull_orderly"
+
+
+def test_hmm_market_walkforward_rejects_bad(hmm_engine, tmp_path):
+    """Distribution radicalement différente en OOS (30 % finaux) → dégradation
+    de log-vraisemblance → modèle REJETÉ, aucun .pkl écrit."""
+    calm = [(400, 0.0005, 0.001, 100.0), (400, -0.0005, 0.001, 100.0),
+            (200, 0.0, 0.0006, 80.0)]
+    shifted = [(430, 0.0, 0.08, 900.0)]              # 30 % finaux : chaos ×80
+    candles = regime_candles(calm + shifted)
+    assert hmm_engine.fit_market(candles) is None
+    assert not (tmp_path / "hmm" / "market.pkl").exists()
+
+
+# ── HMM par symbole ──────────────────────────────────────────────────────────
+
+def test_hmm_symbol_train_per_active_symbol(tmp_path, hmm_engine):
+    """SPEC §8 étapes 8-9 : run_once entraîne un .pkl par symbole ACTIF
+    uniquement (au TF de sa sleeve) et prune les inactifs."""
+    sleeve = AdaptiveEMASleeve()
+
+    def fetch(symbol, tf, days, **kw):
+        return symbol_cycle(interval_ms=config.INTERVAL_MS.get(tf, 3_600_000))
+
+    def bt(sleeve_, candles, params, start_index=0, **kw):
+        good = candles[0]["volume"] is not None     # tous bons…
+        if start_index == 0:
+            return mk_result(20, 0.30, 1.8, wr=0.55)
+        # …mais seul ACTIVE confirme en validation
+        return (mk_result(10, 0.05, 1.6, wr=0.50)
+                if getattr(bt, "sym", "") == "ACTIVE" else mk_result(1, -0.1, 0.5))
+
+    # bt a besoin de savoir le symbole → wrapper
+    def bt_for(symbol):
+        def inner(sleeve_, candles, params, start_index=0, **kw):
+            if start_index == 0:
+                return mk_result(20, 0.30, 1.8, wr=0.55)
+            return (mk_result(10, 0.05, 1.6, wr=0.50)
+                    if symbol["cur"] == "ACTIVE" else mk_result(1, -0.1, 0.5))
+        return inner
+
+    cur = {"cur": ""}
+    opt = SuperOptimizer(symbols=["ACTIVE", "DEAD"], fetch=fetch,
+                         backtest_fn=bt_for(cur),
+                         state_file=tmp_path / "bp.json", hmm_engine=hmm_engine)
+    orig = opt.optimize_symbol
+    opt.optimize_symbol = lambda s, sl: (cur.__setitem__("cur", s) or orig(s, sl))
+    # pkl périmé d'un symbole plus actif → doit être pruné
+    hmm_engine.hmm_dir.mkdir(parents=True, exist_ok=True)
+    (hmm_engine.hmm_dir / "OLD.pkl").write_bytes(b"stale")
+
+    import unittest.mock as um
+    with um.patch.object(config, "OPTIMIZER_HISTORY_FILE", tmp_path / "h.jsonl"):
+        opt.run_once()
+
+    assert (hmm_engine.hmm_dir / "ACTIVE.pkl").exists()
+    assert not (hmm_engine.hmm_dir / "DEAD.pkl").exists()
+    assert not (hmm_engine.hmm_dir / "OLD.pkl").exists()      # pruné
+
+
+def test_hmm_symbol_label_mapping_by_centroids():
+    """trending_up = centroïde de log-return MAX (jamais un index arbitraire)."""
+    class StubModel:
+        means_ = __import__("numpy").array([
+            [0.0, 0.5, 0.1, 0.0, 1.0],     # ret ~0  → choppy
+            [+2.0, 0.5, 0.6, 0.5, 1.0],    # ret max → trending_up
+            [-2.0, 0.5, 0.6, -0.5, 1.0],   # ret min → trending_down
+        ])
+    import numpy as np
+    labels = _label_symbol(StubModel(), np.zeros(5), np.ones(5))
+    assert labels[1] == "trending_up"
+    assert labels[2] == "trending_down"
+    assert labels[0] == "choppy"
+
+
+def test_hmm_symbol_inference_functional(hmm_engine):
+    """Sur une fin de série en tendance haussière nette, l'état inféré est
+    trending_up (mapping + inférence bout-en-bout)."""
+    candles = symbol_cycle()
+    assert hmm_engine.fit_symbol("SOL", candles, "1h") is not None
+    up_tail = candles + regime_candles([(40, +0.005, 0.002, 120.0)],
+                                       interval_ms=3_600_000, seed=7,
+                                       base=candles[-1]["close"])[0:]
+    out = hmm_engine.infer_symbol("SOL", up_tail)
+    assert out["state"] == "trending_up"
+    assert out["timeframe"] == "1h"
+
+
+def test_hmm_symbol_blocks_long_in_trending_down():
+    market = {"state": "bull_orderly", "confidence": 0.8, "transition_risk": 0.1}
+    sym = {"state": "trending_down", "confidence": 0.7, "transition_risk": 0.1}
+    ok, reason = allow_entry(+1, "adaptive_ema", market, sym)
+    assert (ok, reason) == (False, "hmm_no_long")
+    ok, reason = allow_entry(-1, "adaptive_ema", market, sym)
+    assert (ok, reason) == (True, "ok")
+
+
+def test_hmm_symbol_blocks_entry_in_choppy():
+    market = {"state": "bull_orderly", "confidence": 0.8, "transition_risk": 0.1}
+    sym = {"state": "choppy", "confidence": 0.9, "transition_risk": 0.1}
+    for sig in (+1, -1):
+        ok, reason = allow_entry(sig, "adaptive_ema", market, sym)
+        assert (ok, reason) == (False, "hmm_choppy")
+
+
+def test_hmm_symbol_fallback_when_no_pkl(tmp_path):
+    facade = RegimeFacade(engine=HMMRegimeEngine(hmm_dir=tmp_path / "vide"),
+                          market_file=tmp_path / "rm.json",
+                          symbols_file=tmp_path / "rs.json")
+    up = regime_candles([(120, +0.005, 0.002, 120.0)], interval_ms=3_600_000)
+    out = facade.symbol_regime("SOL", up, "1h")
+    assert out["source"] == "fallback_adx"
+    assert out["state"] == "trending_up"           # ADX fort + close > EMA50
+    assert out["allowed"] == {"long": True, "short": False}
+    # persistance pour le dashboard
+    saved = json.loads((tmp_path / "rs.json").read_text())
+    assert saved["SOL"]["state"] == "trending_up"
+
+
+def test_hmm_symbol_prune_stale_pkls(hmm_engine):
+    hmm_engine.hmm_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("market", "SOL", "XPL", "DEAD1", "DEAD2"):
+        (hmm_engine.hmm_dir / f"{name}.pkl").write_bytes(b"x")
+    removed = hmm_engine.prune_stale({"SOL", "XPL"})
+    assert sorted(removed) == ["DEAD1", "DEAD2"]
+    assert (hmm_engine.hmm_dir / "market.pkl").exists()      # jamais pruné
+    assert (hmm_engine.hmm_dir / "SOL.pkl").exists()
+
+
+def test_hmm_symbol_sizing_scales_with_confidence():
+    up_conf = {"state": "trending_up", "confidence": 0.8}
+    assert hmm_size_mult(+1, up_conf) == pytest.approx(0.8)
+    assert hmm_size_mult(-1, up_conf) == 0.0
+    assert hmm_size_mult(+1, {"state": "choppy", "confidence": 0.99}) == 0.0
+    # margin effectif = base × (dir×conf) × mult marché
+    market = {"state": "range_compressed"}
+    eff = effective_margin_pct(0.04, +1, market, up_conf)
+    assert eff == pytest.approx(0.04 * 0.8 * 0.7)
+    assert market_size_mult({"state": "high_vol_chaotic"}) == 0.5
+
+
+# ── Markov + orchestrateur ───────────────────────────────────────────────────
+
+def test_markov_transition_probs():
+    states = ["bull"] * 8 + ["bear"] * 2 + ["bull"] * 10
+    stats = markov_transition_stats(states, "bull")
+    assert stats["stay_probability"] > 0.7
+    assert stats["stay_probability"] + stats["switch_probability"] == pytest.approx(1.0)
+    latent = compute_latent_state("bull", 0.9, states, previous_latent="bull")
+    assert 0.0 <= latent["transition_risk"] <= 1.0
+    # peu confiant + instable → inertie sur l'état précédent
+    unstable = ["bull", "bear"] * 10
+    held = compute_latent_state("bear", 0.1, unstable, previous_latent="bull")
+    assert held["latent_state"] == "bull"
+
+
+def test_orchestrator_double_gate_market_and_symbol():
+    """Gate 1 : range_compressed coupe momentum/breakout mais pas adaptive_ema ;
+    gate 2 : le symbole doit ÊTRE en tendance dans le sens du signal."""
+    market = {"state": "range_compressed", "confidence": 0.8, "transition_risk": 0.1}
+    sym_up = {"state": "trending_up", "confidence": 0.7, "transition_risk": 0.1}
+    assert allow_entry(+1, "momentum", market, sym_up) == (False, "sleeve_blocked")
+    assert allow_entry(+1, "breakout", market, sym_up) == (False, "sleeve_blocked")
+    assert allow_entry(+1, "adaptive_ema", market, sym_up) == (True, "ok")
+    assert sleeve_allowed("breakout", "high_vol_chaotic") is False
+    assert sleeve_allowed("momentum", "high_vol_chaotic") is True
+
+
+def test_orchestrator_freezes_on_high_transition_risk():
+    sym = {"state": "trending_up", "confidence": 0.7, "transition_risk": 0.1}
+    mkt_ok = {"state": "bull_orderly", "confidence": 0.8, "transition_risk": 0.1}
+    mkt_hot = dict(mkt_ok, transition_risk=0.6)
+    assert allow_entry(+1, "adaptive_ema", mkt_hot, sym) == (False, "market_transition")
+    sym_hot = dict(sym, transition_risk=0.6)
+    assert allow_entry(+1, "adaptive_ema", mkt_ok, sym_hot) == (False, "symbol_transition")
+
+
+def test_orchestrator_allows_long_only_when_trending_up():
+    market = {"state": "bull_orderly", "confidence": 0.8, "transition_risk": 0.1}
+    sym = {"state": "trending_up", "confidence": 0.7, "transition_risk": 0.1}
+    assert allow_entry(+1, "adaptive_ema", market, sym) == (True, "ok")
+    assert allow_entry(-1, "adaptive_ema", market, sym) == (False, "hmm_no_short")
+    low_conf = dict(sym, confidence=0.3)
+    assert allow_entry(+1, "adaptive_ema", market, low_conf) == (False, "hmm_low_conf")
+
+
+def test_orchestrator_filter_entries_prioritizes_and_sizes():
+    market = {"state": "bull_orderly", "confidence": 0.8, "transition_risk": 0.1}
+    cands = [
+        {"symbol": "A", "sleeve": "adaptive_ema", "signal": +1, "quality_score": 1.0,
+         "symbol_regime": {"state": "trending_up", "confidence": 0.9, "transition_risk": 0.1}},
+        {"symbol": "B", "sleeve": "adaptive_ema", "signal": +1, "quality_score": 5.0,
+         "symbol_regime": {"state": "trending_up", "confidence": 0.6, "transition_risk": 0.1}},
+        {"symbol": "C", "sleeve": "adaptive_ema", "signal": +1, "quality_score": 9.0,
+         "symbol_regime": {"state": "choppy", "confidence": 0.9, "transition_risk": 0.1}},
+    ]
+    accepted = Orchestrator().filter_entries(cands, market=market)
+    assert [c["symbol"] for c in accepted] == ["B", "A"]     # C refusé (choppy)
+    assert accepted[0]["margin_mult"] == pytest.approx(0.6 * 1.0)
+    ordered = prioritize_candidates(cands)
+    assert ordered[0]["symbol"] == "C"      # priorisé par score×conf avant gate
