@@ -780,6 +780,91 @@ def test_margin_pct_dynamic_interpolates_between_base_and_max(tmp_path, monkeypa
     assert trader._margin_pct_for("BEST") == pytest.approx(0.05)
 
 
+def test_kill_switch_rebases_on_withdrawal_instead_of_killing(tmp_path, monkeypatch):
+    """Incident 2026-07-11 20:53 : un send de $100 sortant a fait chuter l'equity
+    de moitié → kill+flatten à tort. Désormais : chute expliquée par le ledger
+    → REBASE de l'historique, pas de fermeture."""
+    import time as _time
+
+    client = FakeClient(account_value=99.92, spot_usdc=0.0, portfolio_value=99.92)
+    client.wallet_address = "0xME"
+    ledger = [{"time": int((_time.time() - 30) * 1000),
+               "delta": {"type": "send", "user": "0xme", "destination": "0xdead",
+                         "usdc": "100.0"}}]
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._ledger_fetch = lambda addr, start_ms: ledger
+    trader._live_state["equity_history"] = [[_time.time() - 60, 200.0]]
+
+    assert trader._kill_switch_engaged() is False
+    assert client.closed == []                             # pas de flatten
+    assert trader._live_state["paused_until"] == 0
+    hist = trader._live_state["equity_history"]
+    assert len(hist) == 1 and hist[0][1] == pytest.approx(99.92)   # rebase
+    # tick suivant : plus de breach (pic rebasé)
+    assert trader._kill_switch_engaged() is False
+
+
+def test_kill_switch_kills_when_no_withdrawal_explains_drop(tmp_path, monkeypatch):
+    """Une vraie perte (ledger vide) suit le protocole normal : hystérésis puis kill."""
+    import time as _time
+
+    monkeypatch.setattr(config, "KILL_CONFIRMATIONS", 2)
+    client = FakeClient(account_value=99.92, spot_usdc=0.0, portfolio_value=99.92)
+    client.wallet_address = "0xME"
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._ledger_fetch = lambda addr, start_ms: []       # aucun mouvement
+    trader._live_state["equity_history"] = [[_time.time() - 60, 200.0]]
+
+    assert trader._kill_switch_engaged() is False          # confirmation 1/2
+    assert trader._kill_switch_engaged() is True           # kill
+    assert trader._live_state["paused_until"] > _time.time()
+
+
+def test_equity_recorded_during_pause(tmp_path, monkeypatch):
+    """Le dashboard restait figé pendant les pauses (constat 12-07) : l'equity
+    doit continuer d'être enregistrée même kill-switch actif."""
+    import time as _time
+
+    client = FakeClient(account_value=199.9, spot_usdc=0.0, portfolio_value=199.9)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    now = _time.time()
+    trader._live_state["paused_until"] = now + 3600
+    trader._live_state["equity_history"] = [[now - 900, 199.9]]
+
+    assert trader._kill_switch_engaged() is True           # toujours en pause
+    hist = trader._live_state["equity_history"]
+    assert len(hist) == 2                                  # nouveau point ajouté
+    assert hist[-1][1] == pytest.approx(199.9)
+
+
+def test_net_transfer_flow_signs():
+    from simplebot.data import net_transfer_flow
+    ups = [
+        {"delta": {"type": "send", "user": "0xme", "destination": "0xother", "usdc": "100"}},
+        {"delta": {"type": "send", "user": "0xother", "destination": "0xme", "usdc": "40"}},
+        {"delta": {"type": "deposit", "usdc": "10"}},
+        {"delta": {"type": "withdraw", "usdc": "5"}},
+        {"delta": {"type": "accountClassTransfer", "usdc": "999"}},   # interne : ignoré
+    ]
+    assert net_transfer_flow(ups, "0xME") == pytest.approx(-100 + 40 + 10 - 5)
+
+
+def test_single_instance_lock(tmp_path, monkeypatch):
+    """Deux acquisitions du verrou → la seconde échoue (incident double-instance
+    du 11-07 : lancement manuel + systemd sur le même wallet)."""
+    from simplebot.run import acquire_single_instance_lock
+
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path)
+    first = acquire_single_instance_lock()
+    assert first is not None
+    second = acquire_single_instance_lock()
+    assert second is None
+    first.close()                                          # libère le flock
+    third = acquire_single_instance_lock()
+    assert third is not None
+    third.close()
+
+
 def test_ensure_perp_margin_transfers_from_spot(tmp_path, monkeypatch):
     # perp vide, spot plein → top-up avant l'entrée
     client = FakeClient(account_value=0.0, spot_usdc=200.0)

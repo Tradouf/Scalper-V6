@@ -159,6 +159,53 @@ def fetch_funding_rates(timeout: float = 10.0) -> dict:
     return out
 
 
+def fetch_ledger_updates(address: str, start_ms: int, timeout: float = 10.0) -> List[dict]:
+    """Mouvements non-funding du compte (dépôts, retraits, transferts) depuis
+    start_ms — endpoint public userNonFundingLedgerUpdates, adresse seule.
+    Sert au kill-switch pour distinguer un RETRAIT d'une perte de trading."""
+    resp = requests.post(
+        HL_INFO_URL,
+        headers={"Content-Type": "application/json"},
+        json={"type": "userNonFundingLedgerUpdates", "user": address,
+              "startTime": int(start_ms)},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json() or []
+
+
+def net_transfer_flow(updates: List[dict], address: str) -> float:
+    """Flux net (USDC) des mouvements EXTERNES du compte : dépôts/entrées > 0,
+    retraits/sorties < 0. Les transferts internes spot<->perp (accountClassTransfer)
+    sont ignorés : ils ne changent pas la valeur totale du compte."""
+    addr = (address or "").lower()
+    net = 0.0
+    for u in updates:
+        d = u.get("delta") or {}
+        typ = d.get("type", "")
+        amount = 0.0
+        for key in ("usdc", "amount", "sz"):
+            try:
+                amount = abs(float(d.get(key)))
+                break
+            except (TypeError, ValueError):
+                continue
+        if amount <= 0:
+            continue
+        if typ == "deposit":
+            net += amount
+        elif typ == "withdraw":
+            net -= amount
+        elif typ in ("send", "spotTransfer", "subAccountTransfer", "internalTransfer"):
+            dest = str(d.get("destination", "")).lower()
+            src = str(d.get("user", "")).lower()
+            if dest == addr and src != addr:
+                net += amount
+            elif src == addr and dest != addr:
+                net -= amount
+    return net
+
+
 def closed_candles(candles: List[dict], interval_ms: int, now_ms: Optional[int] = None) -> List[dict]:
     """Ne garde que les bougies dont la fenêtre est terminée."""
     if now_ms is None:

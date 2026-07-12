@@ -32,7 +32,8 @@ from pathlib import Path
 from typing import Optional
 
 from simplebot import config
-from simplebot.data import closed_candles, fetch_ohlcv
+from simplebot.data import (closed_candles, fetch_ledger_updates, fetch_ohlcv,
+                            net_transfer_flow)
 from simplebot.strategy import StrategyParams, atr, latest_signal
 
 logger = logging.getLogger("sdm.simplebot.live")
@@ -145,11 +146,12 @@ class ParamStore:
 class SimpleLiveTrader:
 
     def __init__(self, client=None, store: ParamStore = None, dry_run: bool = None,
-                 fetch=None):
+                 fetch=None, ledger_fetch=None):
         self.dry_run = config.DRY_RUN if dry_run is None else dry_run
         self.client = client
         self.store = store or ParamStore()
         self._fetch = fetch or fetch_ohlcv
+        self._ledger_fetch = ledger_fetch or fetch_ledger_updates
         self._live_state = self._load_live_state()
 
     # état persistant : dernière bougie traitée, positions papier, kill-switch
@@ -360,22 +362,27 @@ class SimpleLiveTrader:
                     amount, perp, required_margin)
         self.client.transfer_spot_to_perp(amount)
 
+    def _external_outflow_since(self, since_ts_sec: float) -> float:
+        """USDC net SORTI du compte (retraits/sends externes) depuis since_ts_sec.
+        0.0 si aucun mouvement ou adresse inconnue. Peut lever (réseau)."""
+        addr = getattr(self.client, "wallet_address", "") or ""
+        if not addr:
+            return 0.0
+        updates = self._ledger_fetch(addr, int(since_ts_sec * 1000))
+        return -min(0.0, net_transfer_flow(updates, addr))
+
     def _kill_switch_engaged(self) -> bool:
         """
         True si le trading est en pause. Suit l'account value en fenêtre
-        glissante ; en cas de perte > KILL_LOSS_PCT vs le pic, ferme tout
+        glissante ; en cas de perte > KILL_LOSS_PCT vs le pic (confirmée
+        KILL_CONFIRMATIONS fois et non expliquée par un retrait), ferme tout
         et met le trading en pause KILL_PAUSE_SEC.
         """
         if self.dry_run or self.client is None:
             return False
         now = time.time()
         paused_until = float(self._live_state.get("paused_until", 0))
-        if now < paused_until:
-            if now - getattr(self, "_last_pause_log", 0) > 600:
-                self._last_pause_log = now
-                logger.warning("Kill-switch actif — reprise dans %.0f min",
-                               (paused_until - now) / 60)
-            return True
+        paused = now < paused_until
 
         try:
             account_value = self._account_value()
@@ -383,6 +390,8 @@ class SimpleLiveTrader:
             # Fail-safe : après N échecs consécutifs on gèle les entrées plutôt
             # que d'ignorer le check (les positions gardent leur TP/SL natif).
             self._acct_read_failures = getattr(self, "_acct_read_failures", 0) + 1
+            if paused:
+                return True
             if self._acct_read_failures >= config.KILL_MAX_READ_FAILURES:
                 logger.critical(
                     "Kill-switch: account value illisible %d cycles consécutifs (%r) "
@@ -396,29 +405,76 @@ class SimpleLiveTrader:
             )
             return False
         self._acct_read_failures = 0
+
+        if account_value > 0:
+            # Log détaillé des composantes (throttlé — pas à chaque tick 30s).
+            if now - getattr(self, "_last_equity_log", 0) >= config.EQUITY_LOG_EVERY_SEC:
+                self._last_equity_log = now
+                raw = getattr(self, "_equity_raw", {}) or {}
+                logger.info(
+                    "equity_raw perp=%.2f spot=%s canon=%s clamped=%s → retenu=%.2f",
+                    raw.get("perp", account_value),
+                    f"{raw['spot']:.2f}" if raw.get("spot") is not None else "n/a",
+                    f"{raw['canon']:.2f}" if raw.get("canon") is not None else "n/a",
+                    raw.get("clamped", False), account_value,
+                )
+            # L'historique continue de vivre PENDANT la pause : sans ça le
+            # dashboard restait figé sur le point du kill (constat 12-07).
+            hist = self._live_state["equity_history"]
+            if not hist or now - hist[-1][0] >= 300:  # un point max toutes les 5 min
+                hist.append([now, account_value])
+                cutoff = now - config.KILL_WINDOW_SEC
+                hist[:] = [pt for pt in hist if pt[0] >= cutoff]
+                self._save_live_state()
+
+        if paused:
+            if now - getattr(self, "_last_pause_log", 0) > 600:
+                self._last_pause_log = now
+                logger.warning("Kill-switch actif — reprise dans %.0f min",
+                               (paused_until - now) / 60)
+            return True
         if account_value <= 0:
+            # Valeur nulle = wallet vide ou lectures dégradées : on ne kill pas,
+            # mais on ne reste plus SILENCIEUX (le silence a masqué un wallet
+            # réellement vidé le 12-07 pendant une heure de diagnostic).
+            if now - getattr(self, "_last_zero_log", 0) > 600:
+                self._last_zero_log = now
+                raw = getattr(self, "_equity_raw", {}) or {}
+                logger.warning(
+                    "Account value nulle (perp=%.2f spot=%s canon=%s) — wallet vide "
+                    "ou API dégradée : kill-check suspendu, aucune entrée possible",
+                    raw.get("perp", 0.0),
+                    f"{raw['spot']:.2f}" if raw.get("spot") is not None else "n/a",
+                    f"{raw['canon']:.2f}" if raw.get("canon") is not None else "n/a",
+                )
             return False
 
-        # Log détaillé des composantes (throttlé — pas à chaque tick 30s).
-        if now - getattr(self, "_last_equity_log", 0) >= config.EQUITY_LOG_EVERY_SEC:
-            self._last_equity_log = now
-            raw = getattr(self, "_equity_raw", {}) or {}
-            logger.info(
-                "equity_raw perp=%.2f spot=%s canon=%s clamped=%s → retenu=%.2f",
-                raw.get("perp", account_value),
-                f"{raw['spot']:.2f}" if raw.get("spot") is not None else "n/a",
-                f"{raw['canon']:.2f}" if raw.get("canon") is not None else "n/a",
-                raw.get("clamped", False), account_value,
-            )
-
         hist = self._live_state["equity_history"]
-        if not hist or now - hist[-1][0] >= 300:  # un point max toutes les 5 min
-            hist.append([now, account_value])
-        cutoff = now - config.KILL_WINDOW_SEC
-        hist[:] = [pt for pt in hist if pt[0] >= cutoff]
-        peak = max(v for _, v in hist)
+        peak = max(v for _, v in hist) if hist else account_value
 
         if peak > 0 and account_value <= peak * (1 - config.KILL_LOSS_PCT):
+            # Un RETRAIT n'est pas une perte : si la chute vs pic est expliquée
+            # par un flux sortant au ledger (incident du 11-07 : send de $100
+            # → kill + flatten à tort), on REBASE l'historique sur la nouvelle
+            # valeur au lieu de fermer. Les TP/SL natifs restent en place.
+            peak_ts = max(hist, key=lambda p: p[1])[0] if hist else now
+            try:
+                outflow = self._external_outflow_since(peak_ts - 60)
+            except Exception as e:
+                logger.warning("Kill-switch: ledger illisible (%r) — rebase impossible, "
+                               "on poursuit le protocole normal", e)
+                outflow = 0.0
+            drop = peak - account_value
+            if outflow > 0 and outflow >= drop * 0.8:
+                logger.warning(
+                    "Kill-switch: chute %.2f vs pic expliquée par un RETRAIT de "
+                    "%.2f USDC (ledger) — rebase de l'equity sur %.2f, PAS de fermeture",
+                    drop, outflow, account_value,
+                )
+                self._live_state["equity_history"] = [[now, account_value]]
+                self._kill_breach_count = 0
+                self._save_live_state()
+                return False
             # Hystérésis : une lecture isolée sous le seuil (429 résiduel, valeur
             # aberrante passée entre les mailles) ne suffit plus — il faut
             # KILL_CONFIRMATIONS lectures CONSÉCUTIVES avant de tout fermer.
