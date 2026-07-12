@@ -17,6 +17,9 @@ import time
 from hyperliquid.utils.signing import sign_l1_action, get_timestamp_ms
 
 HL_MAINNET_URL = "https://api.hyperliquid.xyz"
+# Timeout HTTP appliqué à TOUS les appels SDK (Info + Exchange). Le défaut SDK
+# est None = blocage potentiellement infini sur socket zombie (vu 2026-07-12).
+HL_HTTP_TIMEOUT_SEC = float(os.environ.get("HL_HTTP_TIMEOUT_SEC", "15"))
 HL_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 HL_WALLET_CONFIG = "hl_config.json"
 USE_TESTNET = False
@@ -44,7 +47,11 @@ class HyperliquidClient:
         self._api_url = HL_TESTNET_URL if self._testnet else HL_MAINNET_URL
 
         _empty_spot_meta = {"universe": [], "tokens": []}
-        self.info = Info(self._api_url, skip_ws=True, spot_meta=_empty_spot_meta)
+        # Timeout OBLIGATOIRE : le défaut SDK est None → un appel requests peut
+        # bloquer indéfiniment sur une socket zombie (observé 2026-07-12 : thread
+        # live gelé en poll après un storm 429, plus aucun kill-check ni equity).
+        self.info = Info(self._api_url, skip_ws=True, spot_meta=_empty_spot_meta,
+                         timeout=HL_HTTP_TIMEOUT_SEC)
 
         self.exchange = None
         self.wallet = None
@@ -117,6 +124,7 @@ class HyperliquidClient:
                 self._api_url,
                 account_address=account_address,
                 spot_meta=_empty_spot,
+                timeout=HL_HTTP_TIMEOUT_SEC,   # jamais de requête sans timeout
             )
 
             logger.info(
