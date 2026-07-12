@@ -3,3 +3,4 @@ sgmllib3k==1.0.0
 requests
 python-dotenv
 hyperliquid-python-sdk>=0.24.0
+hmmlearn>=0.3.0
