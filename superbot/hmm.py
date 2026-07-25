@@ -161,9 +161,15 @@ class HMMRegimeEngine:
         return self.hmm_dir / f"{name}.pkl"
 
     def _save(self, name: str, fitted: _FittedModel) -> None:
+        """Écriture ATOMIQUE (tmp + rename) : le trader peut charger le .pkl à
+        tout instant — une écriture directe l'exposait à un pickle tronqué
+        (observé au premier démarrage : load silencieux → fallback ADX à tort)."""
+        import os
         self.hmm_dir.mkdir(parents=True, exist_ok=True)
-        with open(self._path(name), "wb") as f:
+        tmp = self._path(name).with_suffix(".tmp")
+        with open(tmp, "wb") as f:
             pickle.dump(fitted, f)
+        os.replace(tmp, self._path(name))
         self._cache[name] = fitted
 
     def load(self, name: str) -> Optional[_FittedModel]:

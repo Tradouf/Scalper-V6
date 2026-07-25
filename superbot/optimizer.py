@@ -37,14 +37,16 @@ from typing import Callable, List, Optional
 from superbot import config
 from superbot.backtester import run_sleeve_backtest
 from superbot.data import fetch_closed
-from superbot.sleeves.adaptive_ema import AdaptiveEMASleeve
+from superbot.sleeves import all_sleeves
 from superbot.sleeves.base import Sleeve
 from superbot.symbol_filter import apply_symbol_filter
 
 logger = logging.getLogger("sdm.superbot.optimizer")
 
-#: sleeves optimisées par le walk-forward (A/momentum = params figés, hors scope)
-OPTIMIZABLE_SLEEVES: List[Sleeve] = [AdaptiveEMASleeve()]
+
+def optimizable_sleeves() -> List[Sleeve]:
+    """Sleeves passées au walk-forward (momentum = params figés, exclue §8.4)."""
+    return [s for s in all_sleeves().values() if s.optimizable]
 
 
 def train_composite(train: dict) -> float:
@@ -75,7 +77,7 @@ class SuperOptimizer:
         self._fetch = fetch                      # None → fetch réseau simplebot
         self.state_file = state_file or config.BEST_PARAMS_FILE
         self._backtest = backtest_fn or run_sleeve_backtest
-        self.sleeves = sleeves or OPTIMIZABLE_SLEEVES
+        self.sleeves = sleeves or optimizable_sleeves()
         self.hmm = hmm_engine or HMMRegimeEngine()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -206,34 +208,50 @@ class SuperOptimizer:
                                symbol, e)
         self.hmm.prune_stale(set(actives))
 
+    def optimize_symbol_all_sleeves(self, symbol: str) -> dict:
+        """Arbitrage inter-sleeves : chaque sleeve optimisable est walk-forwardée ;
+        parmi celles qui confirment, la meilleure au COMPOSITE TRAIN gagne —
+        même règle anti-snooping que le choix du timeframe (la validation reste
+        un filtre binaire, jamais un critère de choix)."""
+        entries = []
+        for sleeve in self.sleeves:
+            try:
+                entries.append(self.optimize_symbol(symbol, sleeve))
+            except Exception as e:
+                logger.error("Optimisation %s/%s échouée: %r", symbol, sleeve.name, e)
+                entries.append({"active": False, "sleeve": sleeve.name,
+                                "reason": f"erreur: {e}"})
+        actives = [e for e in entries if e.get("active")]
+        if not actives:
+            reasons = {e["sleeve"]: e.get("reason", "?") for e in entries}
+            return {"active": False, "sleeve": None,
+                    "reason": "aucune_sleeve_confirmee",
+                    "sleeve_reasons": reasons}
+        best = max(actives, key=lambda e: e.get("train_score", 0.0))
+        best["sleeve_candidates"] = {e["sleeve"]: e.get("train_score", 0.0)
+                                     for e in actives}
+        return best
+
     def run_once(self) -> dict:
         t0 = time.time()
         self._train_market_hmm()
         per_symbol = {}
-        for sleeve in self.sleeves:
-            logger.info("Optimisation %s — %d symboles × TFs %s, grille %d sets",
-                        sleeve.name, len(self.symbols), list(sleeve.timeframes),
-                        len(sleeve.grid()))
-            for symbol in self.symbols:
-                try:
-                    entry = self.optimize_symbol(symbol, sleeve)
-                except Exception as e:
-                    logger.error("Optimisation %s/%s échouée: %r",
-                                 symbol, sleeve.name, e)
-                    entry = {"active": False, "sleeve": sleeve.name,
-                             "reason": f"erreur: {e}"}
-                per_symbol[symbol] = entry
-                if entry.get("active"):
-                    logger.info(
-                        "  %s ✅ %s@%s %s | train PnL=%.2f%% PF=%.2f | valid PnL=%.2f%% PF=%.2f",
-                        symbol, sleeve.name, entry["timeframe"], entry["params"],
-                        entry["train"]["total_pnl_pct"] * 100,
-                        entry["train"]["profit_factor"],
-                        entry["valid"]["total_pnl_pct"] * 100,
-                        entry["valid"]["profit_factor"],
-                    )
-                else:
-                    logger.info("  %s ❌ inactif — %s", symbol, entry.get("reason"))
+        logger.info("Optimisation — %d symboles × sleeves %s",
+                    len(self.symbols), [s.name for s in self.sleeves])
+        for symbol in self.symbols:
+            entry = self.optimize_symbol_all_sleeves(symbol)
+            per_symbol[symbol] = entry
+            if entry.get("active"):
+                logger.info(
+                    "  %s ✅ %s@%s %s | train PnL=%.2f%% PF=%.2f | valid PnL=%.2f%% PF=%.2f",
+                    symbol, entry["sleeve"], entry["timeframe"], entry["params"],
+                    entry["train"]["total_pnl_pct"] * 100,
+                    entry["train"]["profit_factor"],
+                    entry["valid"]["total_pnl_pct"] * 100,
+                    entry["valid"]["profit_factor"],
+                )
+            else:
+                logger.info("  %s ❌ inactif — %s", symbol, entry.get("reason"))
 
         per_symbol = apply_symbol_filter(per_symbol)
         self._train_symbol_hmms(per_symbol)

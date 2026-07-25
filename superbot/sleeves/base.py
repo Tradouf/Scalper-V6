@@ -61,3 +61,9 @@ class Sleeve(ABC):
     def warmup_bars(self, params: object) -> int:
         """Bougies à ignorer en début de fenêtre (indicateurs non convergés)."""
         return 50
+
+    def allow_live_entry(self, signal: int, context: dict) -> tuple:
+        """Filtres LIVE propres à la sleeve (funding, spread…), appliqués par
+        l'orchestrateur avant toute entrée réelle. context peut contenir :
+        funding_hourly, spread_pct, open_positions… (bool, raison)."""
+        return True, "ok"

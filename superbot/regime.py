@@ -146,6 +146,9 @@ class RegimeFacade:
                 raw = self.engine.infer_market(candles_btc_4h, funding)
             except Exception as e:
                 logger.warning("Inférence HMM marché échouée (%r) — fallback", e)
+        else:
+            logger.info("HMM marché absent/illisible — fallback ADX (transitoire "
+                        "au premier entraînement, sinon vérifier state/hmm/)")
         if raw is None or raw["confidence"] < config.HMM_MARKET_MIN_CONF:
             fb = fallback_market_state(candles_btc_4h)
             if raw is not None:      # HMM peu confiant : trace mais bascule

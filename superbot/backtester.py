@@ -40,7 +40,10 @@ def run_sleeve_backtest(
     fee_pct: Optional[float] = None,
     slippage_pct: Optional[float] = None,
     maker_fee_pct: Optional[float] = None,
+    funding_hourly: Optional[List[float]] = None,
 ) -> BacktestResult:
+    """funding_hourly : taux horaire aligné par bougie (SPEC §7, Sleeve A) —
+    accru pendant la tenue au signe de la position (long paie si taux > 0)."""
     entry_mode = entry_mode or config.ENTRY_MODE
     fee_pct = config.FEE_PCT if fee_pct is None else fee_pct
     slippage_pct = config.SLIPPAGE_PCT if slippage_pct is None else slippage_pct
@@ -50,16 +53,22 @@ def run_sleeve_backtest(
     signals = sleeve.signals(candles, params)
     atr_v = atr(candles, policy.atr_len)
 
+    # heures par bougie (pour l'accrual funding) depuis l'espacement des ts
+    hours_per_bar = 0.0
+    if funding_hourly is not None and len(candles) >= 2:
+        hours_per_bar = (candles[1]["ts"] - candles[0]["ts"]) / 3_600_000.0
+
     taker_side = fee_pct + slippage_pct
     maker_side = maker_fee_pct
 
     trades: List[dict] = []
-    pos = None       # {"dir","entry","sl","tp","bar","entry_cost","no_tp_bar"}
+    pos = None       # {"dir","entry","sl","tp","bar","entry_cost","no_tp_bar","funding"}
     pending = None   # (direction, atr_ref, ref_close)
 
     def close_trade(exit_px: float, reason: str, bar: int) -> None:
         cost = pos["entry_cost"] + taker_side
-        pnl = pos["dir"] * (exit_px - pos["entry"]) / pos["entry"] - cost
+        pnl = (pos["dir"] * (exit_px - pos["entry"]) / pos["entry"] - cost
+               + pos.get("funding", 0.0))
         trades.append({
             "dir": pos["dir"],
             "entry": pos["entry"],
@@ -103,10 +112,14 @@ def run_sleeve_backtest(
                     "bar": i,
                     "entry_cost": entry_cost,
                     "no_tp_bar": no_tp_bar,
+                    "funding": 0.0,
                 }
 
         # 2) Sorties : SL prioritaire, puis TP (si présent), puis time-exit
         if pos is not None:
+            # accrual funding par bougie de tenue (hors bougie d'entrée)
+            if funding_hourly is not None and i > pos["bar"] and i < len(funding_hourly):
+                pos["funding"] -= pos["dir"] * funding_hourly[i] * hours_per_bar
             d = pos["dir"]
             tp_allowed = pos["tp"] is not None and i != pos["no_tp_bar"]
             exited = False

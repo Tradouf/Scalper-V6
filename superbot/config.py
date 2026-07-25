@@ -126,11 +126,11 @@ ENTRY_MODE = _env_str("SUPERBOT_ENTRY_MODE", "maker")       # maker-first partou
 # ── Filtre qualité symboles (SPEC §3B) ───────────────────────────────────────
 SYMBOL_ALLOWLIST = _env_csv("SUPERBOT_SYMBOL_ALLOWLIST")
 SYMBOL_BLOCKLIST = _env_csv("SUPERBOT_SYMBOL_BLOCKLIST")
-MAX_ACTIVE_SYMBOLS = _env_int("SUPERBOT_MAX_ACTIVE_SYMBOLS", 8)
-QUALITY_MIN_VALID_PF = _env_float("SUPERBOT_QUALITY_MIN_VALID_PF", 1.4)
-QUALITY_MIN_VALID_PNL_PCT = _env_float("SUPERBOT_QUALITY_MIN_VALID_PNL_PCT", 0.02)
-QUALITY_MIN_VALID_WINRATE = _env_float("SUPERBOT_QUALITY_MIN_VALID_WINRATE", 0.40)
-QUALITY_MIN_TRAIN_PF = _env_float("SUPERBOT_QUALITY_MIN_TRAIN_PF", 1.05)
+MAX_ACTIVE_SYMBOLS = _env_int("SUPERBOT_MAX_ACTIVE_SYMBOLS", 12)
+QUALITY_MIN_VALID_PF = _env_float("SUPERBOT_QUALITY_MIN_VALID_PF", 1.30)
+QUALITY_MIN_VALID_PNL_PCT = _env_float("SUPERBOT_QUALITY_MIN_VALID_PNL_PCT", 0.015)
+QUALITY_MIN_VALID_WINRATE = _env_float("SUPERBOT_QUALITY_MIN_VALID_WINRATE", 0.38)
+QUALITY_MIN_TRAIN_PF = _env_float("SUPERBOT_QUALITY_MIN_TRAIN_PF", 1.03)
 
 # ── Allocations sleeves (SPEC §3 — doivent sommer à 1.0) ─────────────────────
 MOMENTUM_ALLOC = _env_float("SUPERBOT_MOMENTUM_ALLOC", 0.35)
@@ -138,7 +138,9 @@ EMA_ALLOC = _env_float("SUPERBOT_EMA_ALLOC", 0.45)
 BREAKOUT_ALLOC = _env_float("SUPERBOT_BREAKOUT_ALLOC", 0.20)
 
 # ── Risque (SPEC §5 — consommé en Phase 2) ───────────────────────────────────
+LOOP_SEC = _env_int("SUPERBOT_LOOP_SEC", 30)  # période de la boucle live
 LEVERAGE = _env_int("SUPERBOT_LEVERAGE", 3)
+MIN_NOTIONAL_USD = 11.0                       # minimum HL = $10, marge d'arrondi
 MARGIN_PCT = _env_float("SUPERBOT_MARGIN_PCT", 0.04)
 MARGIN_PCT_MAX = _env_float("SUPERBOT_MARGIN_PCT_MAX", 0.07)
 DAILY_LOSS_LIMIT_PCT = _env_float("SUPERBOT_DAILY_LOSS_LIMIT_PCT", 0.03)
@@ -150,14 +152,25 @@ MAX_SAME_DIRECTION = _env_int("SUPERBOT_MAX_SAME_DIRECTION", 6)
 FLIP_COOLDOWN_BARS = _env_int("SUPERBOT_FLIP_COOLDOWN_BARS", 2)
 EXEC_MAKER_FIRST = _env_bool("SUPERBOT_EXEC_MAKER_FIRST", "1")
 
+# ── Sleeve A — Momentum 4h (SPEC §3A — params FIGÉS, jamais optimisés) ───────
+MOMENTUM_ROC_BARS = 12            # ROC sur 48h (12 bougies 4h)
+MOMENTUM_THR = 0.02               # seuil ±2 %
+MOMENTUM_SL_ATR = 2.0             # SL natif 2×ATR(14)
+MOMENTUM_TIME_EXIT_BARS = 72      # 12 jours
+# Filtres live obligatoires (SPEC §3A) : on ne paie pas la foule.
+MOMENTUM_FUNDING_GATE = _env_float("SUPERBOT_MOMENTUM_FUNDING_GATE", 0.0001)  # ±0.01%/h
+MAX_SPREAD_PCT = _env_float("SUPERBOT_MAX_SPREAD_PCT", 0.0015)                # 0.15 %
+
 # ── HMM (SPEC §4 — consommé en Phase 2) ──────────────────────────────────────
 HMM_MARKET_STATES = _env_int("SUPERBOT_HMM_MARKET_STATES", 4)
 HMM_SYMBOL_STATES = _env_int("SUPERBOT_HMM_SYMBOL_STATES", 3)
 HMM_MARKET_MIN_CONF = _env_float("SUPERBOT_HMM_MARKET_MIN_CONF", 0.55)
-HMM_SYMBOL_MIN_CONF = _env_float("SUPERBOT_HMM_SYMBOL_MIN_CONF", 0.50)
+HMM_SYMBOL_MIN_CONF = _env_float("SUPERBOT_HMM_SYMBOL_MIN_CONF", 0.42)
+HMM_CHOPPY_MIN_CONF = _env_float("SUPERBOT_HMM_CHOPPY_MIN_CONF", 0.42)
+HMM_CHOPPY_SIZE_MULT = _env_float("SUPERBOT_HMM_CHOPPY_SIZE_MULT", 0.35)
 HMM_MARKET_DAYS = _env_int("SUPERBOT_HMM_MARKET_DAYS", 180)
 HMM_SYMBOL_DAYS = _env_int("SUPERBOT_HMM_SYMBOL_DAYS", 90)
-HMM_TRANSITION_FREEZE = _env_float("SUPERBOT_HMM_TRANSITION_FREEZE", 0.50)
+HMM_TRANSITION_FREEZE = _env_float("SUPERBOT_HMM_TRANSITION_FREEZE", 0.58)
 
 # ── Débit API (anti-429 — mêmes leçons que simplebot) ────────────────────────
 FETCH_THROTTLE_SEC = _env_float("SUPERBOT_FETCH_THROTTLE_SEC", 0.35)

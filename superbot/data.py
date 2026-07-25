@@ -34,6 +34,9 @@ def fetch_funding_history(symbol: str, days: float, timeout: float = 10.0) -> li
     guard = 0
     while start < now_ms - 3_600_000 and guard < 40:
         guard += 1
+        from hl_rate_limit import throttle_before_hl_request
+
+        throttle_before_hl_request()
         resp = requests.post(
             HL_INFO_URL,
             headers={"Content-Type": "application/json"},
