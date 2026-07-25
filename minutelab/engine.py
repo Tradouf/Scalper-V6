@@ -38,6 +38,9 @@ HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
 def fetch_mid(symbol: str, timeout: float = 5.0) -> Optional[float]:
     try:
+        from hl_rate_limit import throttle_before_hl_request
+
+        throttle_before_hl_request()
         resp = requests.post(
             HL_INFO_URL,
             headers={"Content-Type": "application/json"},
