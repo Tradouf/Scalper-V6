@@ -1,0 +1,449 @@
+{
+ "started_at": 1784800634.766213,
+ "equity": 999.9357156632555,
+ "equity_history": [
+  [
+   1784800634.7662723,
+   999.9786
+  ],
+  [
+   1784852292.4572356,
+   999.6434
+  ],
+  [
+   1784938725.870138,
+   998.3414
+  ]
+ ],
+ "tranches": [
+  {
+   "PUMP": {
+    "dir": 1,
+    "entry": 0.001913,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "ETH": {
+    "dir": 1,
+    "entry": 1933.4,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00036337840000000006,
+    "funding_ts": 1784937434766
+   },
+   "LDO": {
+    "dir": 1,
+    "entry": 0.39915,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "LINK": {
+    "dir": 1,
+    "entry": 8.6246,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.0003577504,
+    "funding_ts": 1784937434766
+   },
+   "ONDO": {
+    "dir": 1,
+    "entry": 0.41291,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "ENA": {
+    "dir": 1,
+    "entry": 0.090173,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "UNI": {
+    "dir": 1,
+    "entry": 3.7824,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "KAITO": {
+    "dir": 1,
+    "entry": 0.98491,
+    "notional": 8.928571428571429,
+    "funding_pct": -8.6728e-05,
+    "funding_ts": 1784937434766
+   },
+   "WLFI": {
+    "dir": -1,
+    "entry": 0.056124,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "HYPE": {
+    "dir": -1,
+    "entry": 59.336,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00036391000000000006,
+    "funding_ts": 1784937434766
+   },
+   "kBONK": {
+    "dir": -1,
+    "entry": 0.002997,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00044401520000000004,
+    "funding_ts": 1784937434766
+   },
+   "MORPHO": {
+    "dir": -1,
+    "entry": 1.9145,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.0015672868,
+    "funding_ts": 1784937434766
+   },
+   "TAO": {
+    "dir": -1,
+    "entry": 197.51,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "FARTCOIN": {
+    "dir": -1,
+    "entry": 0.13601,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "NEAR": {
+    "dir": -1,
+    "entry": 1.8675,
+    "notional": 8.928571428571429,
+    "funding_pct": 0.00047500000000000005,
+    "funding_ts": 1784937434766
+   },
+   "WLD": {
+    "dir": -1,
+    "entry": 0.38443,
+    "notional": 8.928571428571429,
+    "funding_pct": -0.0013995056,
+    "funding_ts": 1784937434766
+   }
+  },
+  {
+   "LTC": {
+    "dir": 1,
+    "entry": 46.936,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "LINK": {
+    "dir": 1,
+    "entry": 8.4681,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.0001827504,
+    "funding_ts": 1784938692457
+   },
+   "UNI": {
+    "dir": 1,
+    "entry": 3.7564,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "ONDO": {
+    "dir": 1,
+    "entry": 0.40161,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "ENA": {
+    "dir": 1,
+    "entry": 0.088824,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "XMR": {
+    "dir": 1,
+    "entry": 355.07,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "LDO": {
+    "dir": 1,
+    "entry": 0.38928,
+    "notional": 8.928380102040816,
+    "funding_pct": -0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "KAITO": {
+    "dir": 1,
+    "entry": 1.0173,
+    "notional": 8.928380102040816,
+    "funding_pct": 8.8272e-05,
+    "funding_ts": 1784938692457
+   },
+   "HYPE": {
+    "dir": -1,
+    "entry": 57.429,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "kBONK": {
+    "dir": -1,
+    "entry": 0.002872,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "TAO": {
+    "dir": -1,
+    "entry": 192.8,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "XPL": {
+    "dir": -1,
+    "entry": 0.081192,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.00030000000000000003,
+    "funding_ts": 1784938692457
+   },
+   "ZRO": {
+    "dir": -1,
+    "entry": 0.79206,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.0016716576000000002,
+    "funding_ts": 1784938692457
+   },
+   "DOGE": {
+    "dir": -1,
+    "entry": 0.069189,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.000193392,
+    "funding_ts": 1784938692457
+   },
+   "AVAX": {
+    "dir": -1,
+    "entry": 6.2621,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.0001520568,
+    "funding_ts": 1784938692457
+   },
+   "FARTCOIN": {
+    "dir": -1,
+    "entry": 0.13242,
+    "notional": 8.928380102040816,
+    "funding_pct": 0.00030000000000000003,
+    "funding_ts": 1784938692457
+   }
+  },
+  {
+   "VVV": {
+    "dir": 1,
+    "entry": 12.425,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "ENA": {
+    "dir": 1,
+    "entry": 0.087213,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "ACE": {
+    "dir": 1,
+    "entry": 0.1048,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "ONDO": {
+    "dir": 1,
+    "entry": 0.38358,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "UNI": {
+    "dir": 1,
+    "entry": 3.7823,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "PUMP": {
+    "dir": 1,
+    "entry": 0.001833,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "XMR": {
+    "dir": 1,
+    "entry": 364.2,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "KAITO": {
+    "dir": 1,
+    "entry": 0.95528,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "kBONK": {
+    "dir": -1,
+    "entry": 0.00293,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "HYPE": {
+    "dir": -1,
+    "entry": 57.398,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "TAO": {
+    "dir": -1,
+    "entry": 191.31,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "FARTCOIN": {
+    "dir": -1,
+    "entry": 0.12491,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "LIT": {
+    "dir": -1,
+    "entry": 2.0365,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "DOGE": {
+    "dir": -1,
+    "entry": 0.069536,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "SOL": {
+    "dir": -1,
+    "entry": 73.915,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   },
+   "AVAX": {
+    "dir": -1,
+    "entry": 6.2991,
+    "notional": 8.928188779610059,
+    "funding_pct": 0.0,
+    "funding_ts": 1784938725870
+   }
+  },
+  {},
+  {},
+  {},
+  {}
+ ],
+ "last_rebalance_day": 20659,
+ "fees_paid": 0.06428433674453346,
+ "funding_net": 0.0,
+ "rebalances": [
+  {
+   "day": 20657,
+   "tranche": 0,
+   "longs": [
+    "PUMP",
+    "ETH",
+    "LDO",
+    "LINK",
+    "ONDO",
+    "ENA",
+    "UNI",
+    "KAITO"
+   ],
+   "shorts": [
+    "WLFI",
+    "HYPE",
+    "kBONK",
+    "MORPHO",
+    "TAO",
+    "FARTCOIN",
+    "NEAR",
+    "WLD"
+   ],
+   "realized_usd": 0.0,
+   "equity": 999.9786
+  },
+  {
+   "day": 20658,
+   "tranche": 1,
+   "longs": [
+    "LTC",
+    "LINK",
+    "UNI",
+    "ONDO",
+    "ENA",
+    "XMR",
+    "LDO",
+    "KAITO"
+   ],
+   "shorts": [
+    "HYPE",
+    "kBONK",
+    "TAO",
+    "XPL",
+    "ZRO",
+    "DOGE",
+    "AVAX",
+    "FARTCOIN"
+   ],
+   "realized_usd": 0.0,
+   "equity": 999.9571
+  },
+  {
+   "day": 20659,
+   "tranche": 2,
+   "longs": [
+    "VVV",
+    "ENA",
+    "ACE",
+    "ONDO",
+    "UNI",
+    "PUMP",
+    "XMR",
+    "KAITO"
+   ],
+   "shorts": [
+    "kBONK",
+    "HYPE",
+    "TAO",
+    "FARTCOIN",
+    "LIT",
+    "DOGE",
+    "SOL",
+    "AVAX"
+   ],
+   "realized_usd": 0.0,
+   "equity": 999.9357
+  }
+ ]
+}
