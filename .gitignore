@@ -6,4 +6,10 @@ __pycache__/
 .env
 .venv/
 simplebot/state/
+superbot/state/
 minutelab/state/
+xsmom/state/
+llmbot/state/
+# caches inter-process racine (rate-limiter, OHLCV)
+state/
+*.bak
