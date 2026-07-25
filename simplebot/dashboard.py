@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional
 from simplebot import config
 
 PORT = int(os.environ.get("SIMPLEBOT_DASHBOARD_PORT", "8083"))
-HOST = os.environ.get("SIMPLEBOT_DASHBOARD_HOST", "0.0.0.0")
+HOST = os.environ.get("SIMPLEBOT_DASHBOARD_HOST", "127.0.0.1")
 AUTH_USER = os.environ.get("SIMPLEBOT_DASHBOARD_USER", "simplebot")
 AUTH_PASSWORD = os.environ.get("SIMPLEBOT_DASHBOARD_PASSWORD", "")
 
@@ -681,7 +681,7 @@ async function refresh() {
   document.getElementById('btdays').textContent = s.backtest_days + 'j';
   document.getElementById('lev').textContent = s.config.leverage + 'x';
   const optWhen = s.updated_at ? new Date(s.updated_at).toLocaleString() : '–';
-  const optStale = s.updated_age_sec!=null && s.updated_age_sec>25200; // > 7h (optim toutes les 6h)
+  const optStale = s.updated_age_sec!=null && s.updated_age_sec>16200; // > 4.5h (optim toutes les 3h)
   document.getElementById('optmeta').innerHTML =
     'dernière optim '+optWhen+' <span class="'+(optStale?'red':'mut')+'">('+ago(s.updated_age_sec)+')</span>';
 

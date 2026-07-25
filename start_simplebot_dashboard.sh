@@ -19,9 +19,9 @@ fi
 export SIMPLEBOT_DASHBOARD_PORT
 
 # Accès distant : définir dans .env (ou l'environnement)
-#   SIMPLEBOT_DASHBOARD_PASSWORD=...   → active la Basic Auth (obligatoire hors LAN)
+#   SIMPLEBOT_DASHBOARD_PASSWORD=...   → Basic Auth (obligatoire pour bind LAN / 0.0.0.0)
 #   SIMPLEBOT_DASHBOARD_USER=...       → identifiant (défaut: simplebot)
-#   SIMPLEBOT_DASHBOARD_HOST=...       → interface de bind (défaut: 0.0.0.0)
+#   SIMPLEBOT_DASHBOARD_HOST=...       → interface de bind (défaut: 127.0.0.1)
 export SIMPLEBOT_DASHBOARD_PASSWORD SIMPLEBOT_DASHBOARD_USER SIMPLEBOT_DASHBOARD_HOST
 
 python3 -u -m simplebot.dashboard

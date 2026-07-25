@@ -1,7 +1,7 @@
 """
 BacktestOptimizerAgent — agent d'optimisation périodique des paramètres.
 
-Toutes les OPTIMIZE_INTERVAL_SEC (6 h par défaut), pour chaque symbole :
+Toutes les OPTIMIZE_INTERVAL_SEC (3 h par défaut), pour chaque symbole :
 1. télécharge BACKTEST_DAYS jours d'OHLCV ;
 2. backteste toute la grille de paramètres sur la fenêtre de TRAIN (70 %) ;
 3. les TOP_K meilleurs sets du train sont rejoués sur la fenêtre de

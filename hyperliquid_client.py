@@ -27,6 +27,14 @@ USE_TESTNET = False
 logger = logging.getLogger("sdm.hl_client")
 
 
+def _throttle_hl_api() -> None:
+    try:
+        from hl_rate_limit import throttle_before_hl_request
+        throttle_before_hl_request()
+    except Exception:
+        pass
+
+
 class HyperliquidClientError(Exception):
     """Erreur spécifique au client Hyperliquid."""
     pass
@@ -789,6 +797,7 @@ class HyperliquidClient:
 
     def get_account_value(self) -> float:
         self._require_exchange()
+        _throttle_hl_api()
         try:
             state = self.info.user_state(self._wallet_address)
             summary = state.get("marginSummary", {})
@@ -799,6 +808,7 @@ class HyperliquidClient:
     def get_spot_usdc(self) -> float:
         """Solde USDC du wallet SPOT (séparé du collatéral perp sur Hyperliquid)."""
         self._require_exchange()
+        _throttle_hl_api()
         try:
             state = self.info.spot_user_state(self._wallet_address)
             for b in state.get("balances", []):
@@ -816,6 +826,7 @@ class HyperliquidClient:
         `portfolio` (dernier point de `accountValueHistory`) nette les deux côté HL et
         colle à la réalité. Retourne 0.0 si l'historique est vide."""
         self._require_exchange()
+        _throttle_hl_api()
         try:
             pf = self.info.portfolio(self._wallet_address)
             for period, data in pf:

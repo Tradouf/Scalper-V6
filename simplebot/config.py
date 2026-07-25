@@ -78,7 +78,7 @@ INTERVAL_MS = {
 # Attention : l'API candleSnapshot plafonne à ~5000 bougies par requête,
 # soit ~52 jours en 15m — ne pas dépasser sans paginer fetch_ohlcv.
 BACKTEST_DAYS = _env_int("SIMPLEBOT_BACKTEST_DAYS", 45)
-OPTIMIZE_INTERVAL_SEC = _env_int("SIMPLEBOT_OPTIMIZE_INTERVAL_SEC", 6 * 3600)
+OPTIMIZE_INTERVAL_SEC = _env_int("SIMPLEBOT_OPTIMIZE_INTERVAL_SEC", 3 * 3600)
 
 # Split walk-forward : la grille est classée sur le train ; la validation est
 # un filtre BINAIRE (le 1er set du classement train qui confirme est retenu).
@@ -104,12 +104,12 @@ def _env_csv(name: str, default: str = "") -> list:
 SYMBOL_ALLOWLIST = _env_csv("SIMPLEBOT_SYMBOL_ALLOWLIST")
 SYMBOL_BLOCKLIST = _env_csv("SIMPLEBOT_SYMBOL_BLOCKLIST")
 # 0 = pas de plafond ; sinon ne garde que le top-N par score de validation.
-MAX_ACTIVE_SYMBOLS = _env_int("SIMPLEBOT_MAX_ACTIVE_SYMBOLS", 8)
-# Seuils plus stricts que MIN_VALID_PF (1.2) pour concentrer le capital.
-QUALITY_MIN_VALID_PF = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PF", 1.4)
-QUALITY_MIN_VALID_PNL_PCT = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PNL_PCT", 0.02)
-QUALITY_MIN_VALID_WINRATE = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_WINRATE", 0.40)
-QUALITY_MIN_TRAIN_PF = _env_float("SIMPLEBOT_QUALITY_MIN_TRAIN_PF", 1.05)
+MAX_ACTIVE_SYMBOLS = _env_int("SIMPLEBOT_MAX_ACTIVE_SYMBOLS", 12)
+# Seuils qualité post-optimiseur (assouplis juillet 2026 : 1 seul actif avec PF≥1.4).
+QUALITY_MIN_VALID_PF = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PF", 1.30)
+QUALITY_MIN_VALID_PNL_PCT = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_PNL_PCT", 0.015)
+QUALITY_MIN_VALID_WINRATE = _env_float("SIMPLEBOT_QUALITY_MIN_VALID_WINRATE", 0.38)
+QUALITY_MIN_TRAIN_PF = _env_float("SIMPLEBOT_QUALITY_MIN_TRAIN_PF", 1.03)
 
 # Coûts par side (fill taker + glissement) appliqués au backtest ET au sizing.
 FEE_PCT = _env_float("SIMPLEBOT_FEE_PCT", 0.00045)
@@ -214,6 +214,8 @@ KILL_PAUSE_SEC = _env_int("SIMPLEBOT_KILL_PAUSE_SEC", 24 * 3600)
 # que la lecture ne repasse pas. Les positions ouvertes restent protégées par
 # leur TP/SL natif sur l'exchange.
 KILL_MAX_READ_FAILURES = _env_int("SIMPLEBOT_KILL_MAX_READ_FAILURES", 3)
+# Sync périodique des positions HL pour logger les closes TP/SL exchange.
+POSITION_SYNC_SEC = _env_int("SIMPLEBOT_POSITION_SYNC_SEC", 120)
 
 # Second wallet — NE PAS réutiliser le wallet de la V6.
 ENV_PRIVATE_KEY = "HL2_PRIVATE_KEY"

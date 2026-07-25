@@ -166,6 +166,7 @@ class SimpleLiveTrader:
         state.setdefault("equity_history", [])
         state.setdefault("paused_until", 0)
         state.setdefault("last_flip_ts", {})
+        state.setdefault("live_tracked", {})
         state.setdefault("exec_stats", {"maker": 0, "taker": 0, "mixed": 0})
         return state
 
@@ -196,6 +197,11 @@ class SimpleLiveTrader:
 
     def tick(self) -> None:
         self.store.maybe_reload()
+        if not self.dry_run and self.client is not None:
+            now = time.time()
+            if now - getattr(self, "_last_pos_sync", 0) >= config.POSITION_SYNC_SEC:
+                self._last_pos_sync = now
+                self._sync_exchange_closes()
         if self._kill_switch_engaged():
             return
         for symbol in self.store.tradeable_symbols():
@@ -239,6 +245,15 @@ class SimpleLiveTrader:
             )
             if has_sl:
                 logger.info("Réconciliation %s: SL natif présent — OK", coin)
+                direction = 1 if szi > 0 else -1
+                entry_px = float(p.get("entry_px", 0) or 0)
+                self._live_state.setdefault("live_tracked", {})[coin] = {
+                    "dir": direction,
+                    "entry": entry_px,
+                    "sl": None,
+                    "tp": None,
+                    "entry_ts": int(time.time() * 1000),
+                }
                 continue
             logger.warning("Réconciliation %s: position ouverte SANS SL natif → réparation", coin)
             self._protect_or_close(coin, szi, float(p.get("entry_px", 0) or 0))
@@ -292,8 +307,16 @@ class SimpleLiveTrader:
         except Exception as e:
             logger.critical("%s: FERMETURE DE SÉCURITÉ ÉCHOUÉE: %r — POSITION SANS SL !", coin, e)
 
+    def _kill_account_value(self) -> float:
+        """Valeur canonique HL (portfolio) — seule source du kill-switch.
+        Évite les faux positifs quand perp seul ou spot seul est lu à tort
+        (incident 11/07 : 99.92 lu alors que portfolio ≈ 200)."""
+        canon = self.client.get_portfolio_value()
+        self._equity_raw = {"perp": None, "spot": None, "canon": canon, "clamped": False}
+        return canon
+
     def _account_value(self) -> float:
-        """Valeur de compte pour le kill-switch ET le sizing : collatéral perp
+        """Valeur de compte pour le sizing : collatéral perp
         + solde spot USDC (sur HL les deux sont séparés ; un solde logé en spot
         ferait lire ~0 au perp et déclencherait un faux kill-switch)."""
         perp = self.client.get_account_value()  # peut lever → fail-safe kill-switch
@@ -385,7 +408,7 @@ class SimpleLiveTrader:
         paused = now < paused_until
 
         try:
-            account_value = self._account_value()
+            account_value = self._kill_account_value()
         except Exception as e:
             # Fail-safe : après N échecs consécutifs on gèle les entrées plutôt
             # que d'ignorer le check (les positions gardent leur TP/SL natif).
@@ -412,8 +435,8 @@ class SimpleLiveTrader:
                 self._last_equity_log = now
                 raw = getattr(self, "_equity_raw", {}) or {}
                 logger.info(
-                    "equity_raw perp=%.2f spot=%s canon=%s clamped=%s → retenu=%.2f",
-                    raw.get("perp", account_value),
+                    "equity_raw perp=%s spot=%s canon=%s clamped=%s → retenu=%.2f",
+                    f"{raw['perp']:.2f}" if raw.get("perp") is not None else "n/a",
                     f"{raw['spot']:.2f}" if raw.get("spot") is not None else "n/a",
                     f"{raw['canon']:.2f}" if raw.get("canon") is not None else "n/a",
                     raw.get("clamped", False), account_value,
@@ -580,6 +603,42 @@ class SimpleLiveTrader:
 
     # ── Lecture des positions ────────────────────────────────────────────────
 
+    def _sync_exchange_closes(self) -> None:
+        """Détecte les positions fermées côté exchange (TP/SL natif) non vues par le bot."""
+        tracked = self._live_state.setdefault("live_tracked", {})
+        if not tracked:
+            return
+        try:
+            open_coins = {
+                p["coin"]
+                for p in self.client.get_positions()
+                if abs(float(p.get("szi", 0))) > 0
+            }
+        except Exception as e:
+            logger.warning("Sync positions: lecture HL impossible (%r)", e)
+            return
+        for symbol in list(tracked.keys()):
+            if symbol in open_coins:
+                continue
+            pos = tracked.pop(symbol, None)
+            if not pos:
+                continue
+            side = "LONG" if pos.get("dir") == 1 else "SHORT"
+            logger.info(
+                "%s: CLOSE %s @ exchange (TP/SL natif ou fill externe) — "
+                "entrée=%.6g SL=%.6g TP=%.6g",
+                symbol, side, pos.get("entry", 0),
+                pos.get("sl", 0), pos.get("tp", 0),
+            )
+            self._live_state.setdefault("closed_trades", []).append({
+                "symbol": symbol,
+                "dir": pos.get("dir"),
+                "entry": pos.get("entry"),
+                "reason": "EXCHANGE_CLOSE",
+                "closed_at": time.time(),
+            })
+            self._save_live_state()
+
     def _current_position(self, symbol: str) -> Optional[float]:
         """szi signé de la position ouverte (±1 papier en dry-run), None si flat."""
         if self.dry_run or self.client is None:
@@ -662,6 +721,8 @@ class SimpleLiveTrader:
         except Exception as e:
             logger.warning("%s: cancel_all_orders: %r", symbol, e)
         self.client.market_close(symbol)
+        self._live_state.setdefault("live_tracked", {}).pop(symbol, None)
+        self._save_live_state()
         logger.info("%s: position clôturée (market)", symbol)
 
     def _margin_pct_for(self, symbol: str) -> float:
@@ -748,6 +809,14 @@ class SimpleLiveTrader:
                 sl_price=sl_price,
             )
             logger.info("%s: TP/SL natifs posés TP=%.6g SL=%.6g", symbol, tp_price, sl_price)
+            self._live_state.setdefault("live_tracked", {})[symbol] = {
+                "dir": direction,
+                "entry": fill_px,
+                "sl": sl_price,
+                "tp": tp_price,
+                "entry_ts": ts or int(time.time() * 1000),
+            }
+            self._save_live_state()
         except Exception as e:
             # sans protection → on referme immédiatement
             logger.error("%s: pose TP/SL échouée (%r) → fermeture de sécurité", symbol, e)

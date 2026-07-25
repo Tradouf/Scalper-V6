@@ -27,9 +27,18 @@ def fetch_ohlcv(
     [{"ts", "open", "high", "low", "close", "volume"}, ...]
     La dernière bougie peut être EN COURS (non clôturée) — à filtrer côté appelant.
     """
+    now_ms = int(time.time() * 1000)
     if end_ms is None:
-        end_ms = int(time.time() * 1000)
+        end_ms = now_ms
     start_ms = end_ms - int(days * 24 * 3600 * 1000)
+
+    # Cache disque partagé inter-processus (SimpleBot + SuperBot + outils sur
+    # la même IP) — voir hl_ohlcv_cache. Best-effort, jamais bloquant.
+    from hl_ohlcv_cache import cache_get, cache_put
+
+    cached = cache_get(symbol, interval, start_ms, end_ms, now_ms)
+    if cached is not None:
+        return cached
 
     payload = {
         "type": "candleSnapshot",
@@ -47,8 +56,11 @@ def fetch_ohlcv(
 
     attempts = max(1, config.FETCH_MAX_RETRIES)
     raw = None
+    from hl_rate_limit import throttle_before_hl_request
+
     for attempt in range(1, attempts + 1):
         try:
+            throttle_before_hl_request()
             resp = requests.post(
                 HL_INFO_URL,
                 headers={"Content-Type": "application/json"},
@@ -92,6 +104,8 @@ def fetch_ohlcv(
         for c in raw
     ]
     candles.sort(key=lambda c: c["ts"])
+    if end_ms >= now_ms - 1000:           # seules les fenêtres « jusqu'à maintenant »
+        cache_put(symbol, interval, candles, now_ms)
     return candles
 
 
@@ -111,6 +125,9 @@ def fetch_perp_universe(
 
     Lève une exception en cas d'échec réseau : l'appelant gère le fallback.
     """
+    from hl_rate_limit import throttle_before_hl_request
+
+    throttle_before_hl_request()
     resp = requests.post(
         HL_INFO_URL,
         headers={"Content-Type": "application/json"},
@@ -139,6 +156,9 @@ def fetch_perp_universe(
 def fetch_funding_rates(timeout: float = 10.0) -> dict:
     """{coin: taux de funding HORAIRE courant} via metaAndAssetCtxs (public).
     Positif = les longs paient. Lève en cas d'échec réseau (l'appelant gère)."""
+    from hl_rate_limit import throttle_before_hl_request
+
+    throttle_before_hl_request()
     resp = requests.post(
         HL_INFO_URL,
         headers={"Content-Type": "application/json"},
@@ -163,6 +183,9 @@ def fetch_ledger_updates(address: str, start_ms: int, timeout: float = 10.0) -> 
     """Mouvements non-funding du compte (dépôts, retraits, transferts) depuis
     start_ms — endpoint public userNonFundingLedgerUpdates, adresse seule.
     Sert au kill-switch pour distinguer un RETRAIT d'une perte de trading."""
+    from hl_rate_limit import throttle_before_hl_request
+
+    throttle_before_hl_request()
     resp = requests.post(
         HL_INFO_URL,
         headers={"Content-Type": "application/json"},

@@ -554,14 +554,12 @@ def test_account_value_combines_perp_and_spot(tmp_path, monkeypatch):
 
 
 def test_spot_read_failure_freezes_instead_of_false_kill(tmp_path, monkeypatch):
-    """Régression (incident 2026-07-04 08:16) : un 429 sur la lecture spot faisait
-    retomber sur « perp seul » (résidu fantôme ~20$) → faux kill-switch qui a tout
-    fermé. Une lecture partielle doit PROPAGER l'erreur (chemin fail-safe : gel
-    après N échecs), jamais produire une valeur basse qui déclenche le kill."""
+    """Régression : un échec de lecture portfolio pour le kill-switch doit PROPAGER
+    l'erreur (gel après N échecs), jamais retomber sur perp/spot partiel."""
     client = FakeClient(account_value=19.96, spot_usdc=0.0)
     def boom():
         raise RuntimeError("429 Too Many Requests")
-    client.get_spot_usdc = boom
+    client.get_portfolio_value = boom
     trader = _live_trader_with(client, tmp_path, monkeypatch)
     # historique avec un pic à 200 : l'ancienne logique aurait killé (19.96 < 190)
     import time as _time
@@ -609,11 +607,10 @@ def test_account_value_keeps_real_perp_gain_within_tolerance(tmp_path, monkeypat
 
 
 def test_kill_switch_no_false_trigger_with_spot_collateral(tmp_path, monkeypatch):
-    """Régression : perp lu à 0 alors que les fonds sont en spot ne doit PAS
-    déclencher le kill-switch (c'est ce qui avait fermé ZEC à tort)."""
+    """Régression : portfolio HL reflète le spot même si perp=0 — pas de kill."""
     import time as _time
 
-    client = FakeClient(account_value=0.0, spot_usdc=199.97)
+    client = FakeClient(account_value=0.0, spot_usdc=199.97, portfolio_value=199.97)
     trader = _live_trader_with(client, tmp_path, monkeypatch)
     trader._live_state["equity_history"] = [[_time.time() - 600, 200.04]]
     assert trader._kill_switch_engaged() is False
@@ -622,16 +619,26 @@ def test_kill_switch_no_false_trigger_with_spot_collateral(tmp_path, monkeypatch
 
 
 def test_kill_switch_spot_zero_perp_funded_no_kill(tmp_path, monkeypatch):
-    """P0 brief : spot lu à 0 (lecture OK, capital réellement en perp) + perp=200
-    → total 200, aucun kill."""
+    """Portfolio HL = source kill-switch : perp financé, spot=0 → pas de kill."""
     import time as _time
 
-    client = FakeClient(account_value=200.0, spot_usdc=0.0)
+    client = FakeClient(account_value=200.0, spot_usdc=0.0, portfolio_value=200.0)
     trader = _live_trader_with(client, tmp_path, monkeypatch)
     trader._live_state["equity_history"] = [[_time.time() - 600, 200.0]]
     assert trader._kill_switch_engaged() is False
     assert trader._live_state["paused_until"] == 0
     assert client.closed == []
+
+
+def test_kill_switch_uses_portfolio_not_phantom_perp(tmp_path, monkeypatch):
+    """Régression 11/07 : perp lu à 99.92 alors que portfolio=199.92 ne doit pas kill."""
+    import time as _time
+
+    client = FakeClient(account_value=99.92, spot_usdc=100.0, portfolio_value=199.92)
+    trader = _live_trader_with(client, tmp_path, monkeypatch)
+    trader._live_state["equity_history"] = [[_time.time() - 600, 200.54]]
+    assert trader._kill_switch_engaged() is False
+    assert trader._live_state["paused_until"] == 0
 
 
 def test_kill_switch_hysteresis(tmp_path, monkeypatch):
@@ -992,6 +999,7 @@ def test_fetch_ohlcv_retries_on_429_then_succeeds(monkeypatch):
     sleeps = []
     monkeypatch.setattr(data_mod.requests, "post", fake_post)
     monkeypatch.setattr(data_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("hl_rate_limit.throttle_before_hl_request", lambda *a, **k: None)
     monkeypatch.setattr(config, "FETCH_MAX_RETRIES", 3)
     monkeypatch.setattr(config, "FETCH_BACKOFF_SEC", 0.5)
 
@@ -1013,6 +1021,7 @@ def test_fetch_ohlcv_gives_up_after_max_retries(monkeypatch):
     sleeps = []
     monkeypatch.setattr(data_mod.requests, "post", fake_post)
     monkeypatch.setattr(data_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("hl_rate_limit.throttle_before_hl_request", lambda *a, **k: None)
     monkeypatch.setattr(config, "FETCH_MAX_RETRIES", 3)
     monkeypatch.setattr(config, "FETCH_BACKOFF_SEC", 0.5)
 
