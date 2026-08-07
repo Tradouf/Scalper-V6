@@ -1,6 +1,10 @@
 """
 Configuration SimpleBot — tout est surchargeable par variable d'environnement.
 Indépendant de config/settings.py (la V6 et SimpleBot ne partagent rien).
+
+Charge automatiquement le `.env` du repo (sans écraser l'env déjà exporté),
+pour que `python -m simplebot.optimizer` se comporte comme `start_simplebot.sh`
+et n'écrase pas best_params.json avec le fallback BTC/ETH/SOL.
 """
 
 from __future__ import annotations
@@ -8,11 +12,60 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-STATE_DIR = Path(__file__).resolve().parent / "state"
+# Racine repo (simplebot/ → parent)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _load_dotenv() -> None:
+    """Charge `.env` du repo. N'écrase JAMAIS une variable déjà présente
+    (shell, systemd, tests monkeypatch)."""
+    env_path = _REPO_ROOT / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        raw = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        key, _, val = s.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        os.environ[key] = val
+
+
+_load_dotenv()
+# Aligné sur start_simplebot.sh : univers large par défaut en standalone.
+os.environ.setdefault("SIMPLEBOT_SYMBOLS", "ALL")
+
+
+def _resolve_state_dir(env_key: str, default: Path) -> Path:
+    """STATE_DIR surchargeable (A/B paper isolé via SIMPLEBOT_STATE_DIR)."""
+    raw = (os.environ.get(env_key) or "").strip()
+    if raw:
+        p = Path(raw).expanduser().resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    default.mkdir(parents=True, exist_ok=True)
+    return default
+
+
+# Après dotenv pour que SIMPLEBOT_STATE_DIR du .env soit pris en compte.
+STATE_DIR = _resolve_state_dir(
+    "SIMPLEBOT_STATE_DIR",
+    Path(__file__).resolve().parent / "state",
+)
 BEST_PARAMS_FILE = STATE_DIR / "best_params.json"
 OPTIMIZER_HISTORY_FILE = STATE_DIR / "optimizer_history.jsonl"
 LIVE_STATE_FILE = STATE_DIR / "live_state.json"
+# Equity paper initiale (dry-run A/B). Live ignore ce flag.
+PAPER_START_EQUITY = float(os.environ.get("SIMPLEBOT_PAPER_START_EQUITY", "200") or 200)
 
 
 def _env_str(name: str, default: str) -> str:
@@ -62,7 +115,9 @@ def _resolve_symbols(raw: str) -> list:
     return list(_SYMBOLS_FALLBACK)
 
 
-SYMBOLS = _resolve_symbols(_env_str("SIMPLEBOT_SYMBOLS", "BTC,ETH,SOL"))
+# Défaut ALL (comme start_simplebot.sh). Fallback BTC/ETH/SOL seulement si
+# la résolution réseau de l'univers échoue (_resolve_symbols).
+SYMBOLS = _resolve_symbols(_env_str("SIMPLEBOT_SYMBOLS", "ALL"))
 INTERVAL = _env_str("SIMPLEBOT_INTERVAL", "15m")
 
 INTERVAL_MS = {
@@ -115,6 +170,18 @@ QUALITY_MIN_TRAIN_PF = _env_float("SIMPLEBOT_QUALITY_MIN_TRAIN_PF", 1.03)
 FEE_PCT = _env_float("SIMPLEBOT_FEE_PCT", 0.00045)
 SLIPPAGE_PCT = _env_float("SIMPLEBOT_SLIPPAGE_PCT", 0.0003)
 
+# ── Edge Phase 1 (2026-07) ───────────────────────────────────────────────────
+# Filtre de tendance FIXE (hors grille) : +23 % edge/trade en R&D, mais overfit
+# s'il est mis dans la grille. 0 = désactivé (rétro-compat tests).
+TREND_EMA_FIXED = _env_int("SIMPLEBOT_TREND_EMA_FIXED", 200)
+# R:R minimum tp_atr/sl_atr dans la grille. < 1.5 ⇒ expectancy négative à WR
+# réaliste 45–55 %. Ex. tp=1.5/sl=4.0 (R:R 0.375) exige WR > 73 % hors frais.
+MIN_RR_RATIO = _env_float("SIMPLEBOT_MIN_RR_RATIO", 1.5)
+# Gate live : après N closes mesurés, PF live < seuil → symbole désactivé
+# jusqu'au prochain reload optimiseur.
+LIVE_GATE_MIN_TRADES = _env_int("SIMPLEBOT_LIVE_GATE_MIN_TRADES", 8)
+LIVE_GATE_MIN_PF = _env_float("SIMPLEBOT_LIVE_GATE_MIN_PF", 0.9)
+
 # ── Débit API (anti-429) ─────────────────────────────────────────────────────
 # Le sweep multi-symboles (jusqu'à MAX_SYMBOLS) enchaîne les requêtes /info et
 # peut se faire throttler (HTTP 429). On lisse le débit (pause entre symboles)
@@ -147,17 +214,22 @@ MARGIN_PCT_MAX = _env_float("SIMPLEBOT_MARGIN_PCT_MAX", 0.08)
 
 # ── Exécution maker-first (P1) ───────────────────────────────────────────────
 # L'edge brut est réel mais les frais taker le mangent (constat MinuteLab).
-# Les entrées tentent d'abord un limit post-only (Alo) au mid, timeout puis
-# fallback market. Compteurs maker/taker persistés dans live_state.json.
+# Les entrées tentent d'abord un limit post-only (Alo) au mid. Par défaut on
+# N'ENVOIE PAS de market en fallback (Phase 1) : un skip vaut mieux qu'un fill
+# taker qui détruit l'edge. SIMPLEBOT_EXEC_MARKET_FALLBACK=1 pour l'ancien
+# comportement. Compteurs maker/taker/skip persistés dans live_state.json.
 EXEC_MAKER_FIRST = _env_str("SIMPLEBOT_EXEC_MAKER_FIRST", "1") not in ("0", "false", "False")
+EXEC_MARKET_FALLBACK = _env_str("SIMPLEBOT_EXEC_MARKET_FALLBACK", "0") not in ("0", "false", "False")
 EXEC_MAKER_TIMEOUT_SEC = _env_float("SIMPLEBOT_EXEC_MAKER_TIMEOUT_SEC", 30.0)
 EXEC_POLL_SEC = _env_float("SIMPLEBOT_EXEC_POLL_SEC", 2.0)
 FEE_MAKER_PCT = _env_float("SIMPLEBOT_FEE_MAKER_PCT", 0.00015)   # maker HL base tier
 
-# ── Anti-churn des flips (P0) ────────────────────────────────────────────────
+# ── Anti-churn des flips / re-entries (P0 + Phase 1) ─────────────────────────
 # Un flip ferme (taker) puis rouvre : 2 flips rapprochés = 4 legs de frais pour
 # du bruit. Après un flip sur un symbole, les signaux opposés sont ignorés
-# pendant FLIP_COOLDOWN_BARS bougies.
+# pendant FLIP_COOLDOWN_BARS bougies. Après un close TP/SL/EXCHANGE, les
+# nouvelles entrées sont aussi bloquées le même nombre de bougies (anti
+# re-chop GRAM/kBONK observé en logs).
 FLIP_COOLDOWN_BARS = _env_int("SIMPLEBOT_FLIP_COOLDOWN_BARS", 2)
 
 # Collatéral : sur HL, spot USDC et perp USDC sont séparés. La valeur de compte

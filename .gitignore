@@ -9,6 +9,7 @@ simplebot/state/
 superbot/state/
 minutelab/state/
 xsmom/state/
+grokwatch/state/
 llmbot/state/
 # caches inter-process racine (rate-limiter, OHLCV)
 state/

@@ -209,5 +209,23 @@ class BacktestOptimizerAgent:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
-    BacktestOptimizerAgent().run_once()
+    # config.py charge déjà .env + setdefault SIMPLEBOT_SYMBOLS=ALL. On
+    # re-résout explicitement ici pour journaliser l'univers et éviter tout
+    # piège d'import (best_params écrasé avec 3 majors — incident 2026-07-27).
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    )
+    os.environ.setdefault("SIMPLEBOT_SYMBOLS", "ALL")
+    symbols = config._resolve_symbols(os.environ.get("SIMPLEBOT_SYMBOLS", "ALL"))
+    logger.info(
+        "Standalone optimizer — %d symboles (SIMPLEBOT_SYMBOLS=%s)",
+        len(symbols), os.environ.get("SIMPLEBOT_SYMBOLS", "ALL"),
+    )
+    if len(symbols) <= 3 and os.environ.get("SIMPLEBOT_SYMBOLS", "ALL").upper() == "ALL":
+        logger.warning(
+            "Univers ALL n'a renvoyé que %s — probable échec réseau, "
+            "best_params risque d'être incomplet",
+            symbols,
+        )
+    BacktestOptimizerAgent(symbols=symbols).run_once()

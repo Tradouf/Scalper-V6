@@ -126,6 +126,22 @@ def test_param_grid_valid():
     grid = param_grid()
     assert len(grid) > 20
     assert all(p.ema_slow >= p.ema_fast * 2 for p in grid)
+    # Phase 1 : R:R minimum et trend_ema fixe
+    min_rr = float(getattr(config, "MIN_RR_RATIO", 1.5) or 0)
+    fixed = int(getattr(config, "TREND_EMA_FIXED", 0) or 0)
+    assert all(p.tp_atr / p.sl_atr >= min_rr - 1e-12 for p in grid)
+    if fixed > 0:
+        assert all(p.trend_ema == fixed for p in grid)
+    # combos toxiques bannis (ex. tp=1.5 / sl=4.0)
+    assert not any(p.tp_atr == 1.5 and p.sl_atr >= 3.0 for p in grid)
+
+
+def test_from_dict_forces_trend_ema_fixed(monkeypatch):
+    monkeypatch.setattr(config, "TREND_EMA_FIXED", 200)
+    p = StrategyParams.from_dict({
+        "ema_fast": 9, "ema_slow": 26, "tp_atr": 2.5, "sl_atr": 1.5, "trend_ema": 0,
+    })
+    assert p.trend_ema == 200
 
 
 # ── Backtester ───────────────────────────────────────────────────────────────
@@ -317,6 +333,8 @@ def test_live_trader_dry_run_acts_once_per_candle(tmp_path, monkeypatch):
     from simplebot.live_trader import ParamStore, SimpleLiveTrader
 
     monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    # Série V calibrée sans filtre tendance ; on désactive le forçage pour ce test.
+    monkeypatch.setattr(config, "TREND_EMA_FIXED", 0)
 
     best = {
         "updated_at": "test",
@@ -355,6 +373,7 @@ def test_dry_run_tracks_paper_positions(tmp_path, monkeypatch):
     from simplebot.live_trader import ParamStore, SimpleLiveTrader
 
     monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    monkeypatch.setattr(config, "TREND_EMA_FIXED", 0)
 
     best_file = tmp_path / "best_params.json"
     best_file.write_text(json.dumps({
@@ -473,7 +492,8 @@ def _live_trader_with(client, tmp_path, monkeypatch, active_symbols=None):
         client=client,
         store=ParamStore(best_file),
         dry_run=False,
-        fetch=lambda s, i, d, **kw: make_candles(wave_closes(n=200)),
+        # trend_ema=200 ⇒ warmup ~205 bougies : fournir assez d'historique
+        fetch=lambda s, i, d, **kw: make_candles(wave_closes(n=400)),
     )
 
 
@@ -731,6 +751,118 @@ def test_flip_cooldown_blocks_rapid_reflips(tmp_path, monkeypatch):
     advance(2, +1)
     assert len([t for t in trades if t["reason"] == "FLIP"]) == 2
     assert trader._live_state["paper"]["positions"]["TEST"]["dir"] == 1
+
+
+def test_post_close_cooldown_blocks_reentry(tmp_path, monkeypatch):
+    """Phase 1 : après un SL paper, pas de re-entry pendant FLIP_COOLDOWN_BARS."""
+    import simplebot.live_trader as lt
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    monkeypatch.setattr(config, "FLIP_COOLDOWN_BARS", 2)
+
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {"TEST": {"active": True, "params": PARAMS.to_dict()}},
+    }))
+    base = make_candles(wave_closes(n=200))
+    interval_ms = 900_000
+    feed = {"candles": base}
+    trader = SimpleLiveTrader(store=ParamStore(best_file), dry_run=True,
+                              fetch=lambda s, i, d, **kw: feed["candles"])
+
+    t0 = base[-1]["ts"]
+    # Force un SL immédiat via last_close_ts déjà posé (simule close précédent)
+    trader._live_state["last_close_ts"]["TEST"] = t0
+
+    sig_holder = {"signal": 1}
+
+    def fake_signal(candles, params):
+        return {"signal": sig_holder["signal"], "atr": 1.0,
+                "close": candles[-1]["close"], "ts": candles[-1]["ts"]}
+
+    monkeypatch.setattr(lt, "latest_signal", fake_signal)
+
+    # même bougie que last_close → bloqué
+    trader._process_symbol("TEST", PARAMS)
+    assert "TEST" not in trader._live_state["paper"]["positions"]
+
+    # +1 bougie (encore dans cooldown 2) → bloqué
+    last = feed["candles"][-1]
+    feed["candles"] = feed["candles"] + [dict(last, ts=last["ts"] + interval_ms)]
+    trader._process_symbol("TEST", PARAMS)
+    assert "TEST" not in trader._live_state["paper"]["positions"]
+
+    # +2 bougies depuis last_close → OK
+    last = feed["candles"][-1]
+    feed["candles"] = feed["candles"] + [dict(last, ts=last["ts"] + interval_ms)]
+    trader._process_symbol("TEST", PARAMS)
+    assert trader._live_state["paper"]["positions"]["TEST"]["dir"] == 1
+
+
+def test_live_gate_disables_losing_symbol(tmp_path, monkeypatch):
+    """Phase 1 : PF live < 0.9 sur ≥ 8 trades → live_disabled."""
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    monkeypatch.setattr(config, "LIVE_GATE_MIN_TRADES", 8)
+    monkeypatch.setattr(config, "LIVE_GATE_MIN_PF", 0.9)
+
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {"BAD": {"active": True, "params": PARAMS.to_dict()}},
+    }))
+    trader = SimpleLiveTrader(store=ParamStore(best_file), dry_run=True,
+                              fetch=lambda s, i, d, **kw: make_candles(wave_closes(n=50)))
+
+    # 8 pertes → PF = 0
+    for i in range(8):
+        trader._live_state.setdefault("closed_trades", []).append({
+            "symbol": "BAD", "dir": 1, "entry": 100.0, "exit": 99.0,
+            "pnl_usd": -1.0, "pnl_pct": -0.01, "reason": "SL",
+        })
+    trader._maybe_live_disable("BAD")
+    assert "BAD" in trader._live_state["live_disabled"]
+    assert trader._live_state["live_disabled"]["BAD"]["n"] == 8
+
+    # tick ignore le symbole disabled
+    trader.tick()  # ne doit pas crasher
+
+
+def test_classify_exit_reason_near_tp_sl():
+    from simplebot.live_trader import SimpleLiveTrader
+    pos = {"dir": 1, "entry": 100.0, "sl": 97.0, "tp": 105.0}
+    assert SimpleLiveTrader._classify_exit_reason(pos, 105.01) == "TP"
+    assert SimpleLiveTrader._classify_exit_reason(pos, 96.99) == "SL"
+    assert SimpleLiveTrader._classify_exit_reason(pos, 101.5) == "EXCHANGE"
+    assert SimpleLiveTrader._classify_exit_reason(pos, None) == "EXCHANGE"
+
+
+def test_record_closed_trade_computes_pnl(tmp_path, monkeypatch):
+    from simplebot.live_trader import ParamStore, SimpleLiveTrader
+
+    monkeypatch.setattr(config, "LIVE_STATE_FILE", tmp_path / "live_state.json")
+    best_file = tmp_path / "best_params.json"
+    best_file.write_text(json.dumps({
+        "updated_at": "test",
+        "symbols": {"X": {"active": True, "params": PARAMS.to_dict()}},
+    }))
+    trader = SimpleLiveTrader(store=ParamStore(best_file), dry_run=True,
+                              fetch=lambda s, i, d, **kw: [])
+    pos = {
+        "dir": 1, "entry": 100.0, "sl": 97.0, "tp": 105.0,
+        "sz": 1.0, "notional": 100.0, "exec": "maker",
+    }
+    trade = trader._record_closed_trade(
+        "X", pos, exit_px=105.0, reason="TP", set_reentry_cooldown=True, ts=123,
+    )
+    assert trade["pnl_pct"] is not None and trade["pnl_pct"] > 0
+    assert trade["pnl_usd"] is not None and trade["pnl_usd"] > 0
+    assert trade["reason"] == "TP"
+    assert trader._live_state["last_close_ts"]["X"] == 123
+    assert len(trader._live_state["closed_trades"]) == 1
 
 
 def _store_with_scores(tmp_path):

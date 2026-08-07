@@ -107,6 +107,10 @@ class ParamStore:
             logger.warning("Lecture %s échouée: %r", self.path, e)
             return False
 
+    @property
+    def updated_at(self) -> str:
+        return str(self._state.get("updated_at") or "")
+
     def active_params(self, symbol: str) -> Optional[StrategyParams]:
         entry = self._state.get("symbols", {}).get(symbol)
         if not entry or not entry.get("active"):
@@ -166,8 +170,14 @@ class SimpleLiveTrader:
         state.setdefault("equity_history", [])
         state.setdefault("paused_until", 0)
         state.setdefault("last_flip_ts", {})
+        state.setdefault("last_close_ts", {})   # cooldown re-entry après TP/SL/EXCHANGE
         state.setdefault("live_tracked", {})
-        state.setdefault("exec_stats", {"maker": 0, "taker": 0, "mixed": 0})
+        state.setdefault("closed_trades", [])
+        state.setdefault("live_disabled", {})  # {sym: {reason, pf, n, disabled_at}}
+        state.setdefault("exec_stats", {"maker": 0, "taker": 0, "mixed": 0, "skip": 0})
+        # Equity paper $ (A/B dry-run) — indépendante du wallet live.
+        if "paper_equity" not in state:
+            state["paper_equity"] = float(getattr(config, "PAPER_START_EQUITY", 200.0) or 200.0)
         return state
 
     def _save_live_state(self) -> None:
@@ -184,8 +194,16 @@ class SimpleLiveTrader:
 
     def run_forever(self) -> None:
         mode = "DRY-RUN (aucun ordre envoyé)" if self.dry_run else "LIVE ⚠️ ordres réels"
-        logger.info("SimpleLiveTrader démarré — %s — intervalle %s", mode, config.INTERVAL)
+        logger.info(
+            "SimpleLiveTrader démarré — %s — intervalle %s — state=%s — paper_equity=%.2f",
+            mode, config.INTERVAL, config.STATE_DIR,
+            float(self._live_state.get("paper_equity") or 0),
+        )
         self._live_state["dry_run"] = self.dry_run
+        if self.dry_run and not self._live_state.get("equity_history"):
+            self._live_state["equity_history"] = [
+                [time.time(), float(self._live_state.get("paper_equity") or config.PAPER_START_EQUITY)],
+            ]
         self._save_live_state()
         self.reconcile_positions()
         while True:
@@ -196,7 +214,16 @@ class SimpleLiveTrader:
             time.sleep(config.LOOP_SEC)
 
     def tick(self) -> None:
-        self.store.maybe_reload()
+        reloaded = self.store.maybe_reload()
+        if reloaded:
+            # Nouveau run optimiseur → on redonne sa chance aux symboles gated.
+            if self._live_state.get("live_disabled"):
+                logger.info(
+                    "Reload params : clear live_disabled (%s)",
+                    list(self._live_state["live_disabled"].keys()),
+                )
+                self._live_state["live_disabled"] = {}
+                self._save_live_state()
         if not self.dry_run and self.client is not None:
             now = time.time()
             if now - getattr(self, "_last_pos_sync", 0) >= config.POSITION_SYNC_SEC:
@@ -204,7 +231,10 @@ class SimpleLiveTrader:
                 self._sync_exchange_closes()
         if self._kill_switch_engaged():
             return
+        disabled = self._live_state.get("live_disabled") or {}
         for symbol in self.store.tradeable_symbols():
+            if symbol in disabled:
+                continue
             params = self.store.active_params(symbol)
             if params is None:
                 continue
@@ -569,6 +599,7 @@ class SimpleLiveTrader:
 
         direction = sig["signal"]
         current = self._current_position(symbol)
+        cooldown_ms = config.FLIP_COOLDOWN_BARS * config.INTERVAL_MS
 
         if current is not None and current * direction > 0:
             logger.info("%s: signal %+d mais position déjà dans le sens — rien à faire",
@@ -576,11 +607,8 @@ class SimpleLiveTrader:
             return
 
         if current is not None and current * direction < 0:
-            # Anti-churn : après un flip, on ignore les signaux opposés pendant
-            # FLIP_COOLDOWN_BARS bougies — deux flips rapprochés = 4 legs de
-            # frais taker pour du bruit (rafales AVAX/VVV observées en logs).
+            # Anti-churn flip : ignore signaux opposés pendant FLIP_COOLDOWN_BARS.
             last_flip = float(self._live_state["last_flip_ts"].get(symbol, 0) or 0)
-            cooldown_ms = config.FLIP_COOLDOWN_BARS * config.INTERVAL_MS
             if sig["ts"] is not None and last_flip and sig["ts"] - last_flip < cooldown_ms:
                 logger.info(
                     "%s: signal %+d opposé ignoré — cooldown post-flip (%d/%d bougies)",
@@ -590,14 +618,29 @@ class SimpleLiveTrader:
                 )
                 return
             logger.info("%s: signal %+d opposé à la position → flip", symbol, direction)
-            self._close_position(symbol, ref_price=sig["close"], ts=sig["ts"])
+            self._close_position(symbol, ref_price=sig["close"], ts=sig["ts"], reason="FLIP")
             if sig["ts"] is not None:
                 self._live_state["last_flip_ts"][symbol] = sig["ts"]
                 self._save_live_state()
-
-        if current is None and self._open_positions_count() >= config.MAX_OPEN_POSITIONS:
-            logger.info("%s: signal %+d ignoré — MAX_OPEN_POSITIONS atteint", symbol, direction)
-            return
+            # Flip : ouverture immédiate dans le nouveau sens (pas de cooldown re-entry).
+        else:
+            # Flat : cooldown re-entry après TP/SL/EXCHANGE (Phase 1 anti re-chop).
+            last_close = float(
+                (self._live_state.get("last_close_ts") or {}).get(symbol, 0) or 0
+            )
+            if (sig["ts"] is not None and last_close
+                    and sig["ts"] - last_close < cooldown_ms):
+                logger.info(
+                    "%s: signal %+d ignoré — cooldown post-close (%d/%d bougies)",
+                    symbol, direction,
+                    int((sig["ts"] - last_close) / config.INTERVAL_MS),
+                    config.FLIP_COOLDOWN_BARS,
+                )
+                return
+            if self._open_positions_count() >= config.MAX_OPEN_POSITIONS:
+                logger.info("%s: signal %+d ignoré — MAX_OPEN_POSITIONS atteint",
+                            symbol, direction)
+                return
 
         self._open_position(symbol, direction, sig["close"], sig["atr"], ts=sig["ts"])
 
@@ -623,21 +666,215 @@ class SimpleLiveTrader:
             pos = tracked.pop(symbol, None)
             if not pos:
                 continue
-            side = "LONG" if pos.get("dir") == 1 else "SHORT"
-            logger.info(
-                "%s: CLOSE %s @ exchange (TP/SL natif ou fill externe) — "
-                "entrée=%.6g SL=%.6g TP=%.6g",
-                symbol, side, pos.get("entry", 0),
-                pos.get("sl", 0), pos.get("tp", 0),
+            exit_px, pnl_usd, fee = self._resolve_exit_from_fills(symbol, pos)
+            reason = self._classify_exit_reason(pos, exit_px)
+            self._record_closed_trade(
+                symbol, pos, exit_px=exit_px, reason=reason,
+                pnl_usd=pnl_usd, fee=fee, exec_mode="exchange",
+                set_reentry_cooldown=True,
             )
-            self._live_state.setdefault("closed_trades", []).append({
-                "symbol": symbol,
-                "dir": pos.get("dir"),
-                "entry": pos.get("entry"),
-                "reason": "EXCHANGE_CLOSE",
-                "closed_at": time.time(),
-            })
-            self._save_live_state()
+
+    def _resolve_exit_from_fills(self, symbol: str, pos: dict) -> tuple:
+        """(exit_px, pnl_usd|None, fee) depuis user_fills HL, sinon mid."""
+        entry_ts = int(pos.get("entry_ts") or 0)
+        # entry_ts live est souvent en ms bougie ; fills en ms epoch
+        since_ms = entry_ts if entry_ts > 1_000_000_000_000 else int(entry_ts * 1000)
+        # marge de sécurité : si ts bougie 15m, accepte fills un peu avant
+        since_ms = max(0, since_ms - 60_000)
+        exit_px = None
+        pnl_usd = None
+        fee = 0.0
+        try:
+            fills = self.client.get_user_fills(coin=symbol, limit=40)
+        except Exception as e:
+            logger.debug("%s: get_user_fills pour close (%r)", symbol, e)
+            fills = []
+        closing = []
+        for f in fills or []:
+            t = int(f.get("time") or 0)
+            if since_ms and t and t < since_ms:
+                continue
+            c_pnl = float(f.get("closed_pnl") or 0)
+            start_pos = abs(float(f.get("start_position") or 0))
+            fill_sz = abs(float(f.get("sz") or 0))
+            if c_pnl != 0.0 or (start_pos > 0 and fill_sz > 0 and fill_sz <= start_pos + 1e-12):
+                closing.append(f)
+        if closing:
+            closing.sort(key=lambda x: int(x.get("time") or 0), reverse=True)
+            # agrège les fills de clôture récents (partial closes)
+            latest_t = int(closing[0].get("time") or 0)
+            window = [f for f in closing if abs(int(f.get("time") or 0) - latest_t) < 10_000]
+            qty = sum(abs(float(f.get("sz") or 0)) for f in window)
+            if qty > 0:
+                exit_px = sum(
+                    float(f.get("px") or 0) * abs(float(f.get("sz") or 0)) for f in window
+                ) / qty
+            else:
+                exit_px = float(closing[0].get("px") or 0) or None
+            pnl_usd = sum(float(f.get("closed_pnl") or 0) for f in window)
+            fee = sum(abs(float(f.get("fee") or 0)) for f in window)
+            if pnl_usd is not None:
+                pnl_usd = float(pnl_usd) - fee
+        if exit_px is None or exit_px <= 0:
+            try:
+                mids = self.client.get_all_mids()
+                exit_px = float(mids.get(symbol) or 0) or None
+            except Exception:
+                exit_px = None
+        return exit_px, pnl_usd, fee
+
+    @staticmethod
+    def _classify_exit_reason(pos: dict, exit_px: Optional[float]) -> str:
+        """Infère TP/SL/EXCHANGE selon proximité du prix de sortie aux niveaux."""
+        if exit_px is None or exit_px <= 0:
+            return "EXCHANGE"
+        sl = pos.get("sl")
+        tp = pos.get("tp")
+        entry = float(pos.get("entry") or 0)
+        candidates = []
+        if sl is not None:
+            try:
+                candidates.append(("SL", abs(float(exit_px) - float(sl))))
+            except (TypeError, ValueError):
+                pass
+        if tp is not None:
+            try:
+                candidates.append(("TP", abs(float(exit_px) - float(tp))))
+            except (TypeError, ValueError):
+                pass
+        if not candidates:
+            return "EXCHANGE"
+        reason, dist = min(candidates, key=lambda x: x[1])
+        # Tolérance : 0.35 % du prix d'entrée (couvre mark vs trigger HL).
+        tol = max(abs(entry) * 0.0035, abs(exit_px) * 0.0035, 1e-12)
+        if dist <= tol:
+            return reason
+        # Si clairement du bon côté du trade et plus près d'un niveau, accepte
+        # une tolérance élargie (1 %).
+        if dist <= tol * 3:
+            return reason
+        return "EXCHANGE"
+
+    def _record_closed_trade(
+        self,
+        symbol: str,
+        pos: dict,
+        exit_px: Optional[float],
+        reason: str,
+        pnl_usd: Optional[float] = None,
+        fee: float = 0.0,
+        exec_mode: Optional[str] = None,
+        set_reentry_cooldown: bool = False,
+        ts=None,
+    ) -> dict:
+        """Persiste un close live avec PnL, log, gate live, cooldown re-entry."""
+        direction = int(pos.get("dir") or 0)
+        entry = float(pos.get("entry") or 0)
+        notional = float(pos.get("notional") or 0)
+        sz = float(pos.get("sz") or 0)
+        if notional <= 0 and entry > 0 and sz > 0:
+            notional = entry * sz
+
+        pnl_pct = None
+        if pnl_usd is None and exit_px and entry > 0 and direction:
+            # estimation prix si fills indisponibles
+            raw = direction * (float(exit_px) - entry) / entry
+            # frais aller-retour approx (close taker + entry déjà payée à l'open)
+            cost = config.FEE_PCT + config.SLIPPAGE_PCT
+            if exec_mode == "maker":
+                cost = config.FEE_MAKER_PCT
+            elif exec_mode in ("taker", "exchange", "FLIP", None):
+                cost = config.FEE_PCT + config.SLIPPAGE_PCT
+            pnl_pct = raw - cost
+            if notional > 0:
+                pnl_usd = pnl_pct * notional
+            else:
+                pnl_usd = None
+        elif pnl_usd is not None and notional > 0:
+            pnl_pct = float(pnl_usd) / notional
+        elif pnl_usd is not None and entry > 0 and exit_px and direction:
+            pnl_pct = direction * (float(exit_px) - entry) / entry
+
+        trade = {
+            "symbol": symbol,
+            "dir": direction,
+            "entry": entry,
+            "exit": exit_px,
+            "sl": pos.get("sl"),
+            "tp": pos.get("tp"),
+            "pnl_usd": pnl_usd,
+            "pnl_pct": pnl_pct,
+            "fee": fee,
+            "notional": notional or None,
+            "reason": reason,
+            "exec": exec_mode or pos.get("exec"),
+            "entry_ts": pos.get("entry_ts"),
+            "closed_at": time.time(),
+            "exit_ts": ts,
+        }
+        self._live_state.setdefault("closed_trades", []).append(trade)
+
+        # Cooldown re-entry (TP/SL/EXCHANGE) — pas pour FLIP (ré-entrée immédiate).
+        if set_reentry_cooldown:
+            close_ts = ts if ts is not None else int(time.time() * 1000)
+            self._live_state.setdefault("last_close_ts", {})[symbol] = close_ts
+
+        side = "LONG" if direction == 1 else "SHORT"
+        pnl_s = f"{pnl_usd:+.4f}$" if pnl_usd is not None else "n/a"
+        pct_s = f"{pnl_pct * 100:+.3f}%" if pnl_pct is not None else "n/a"
+        exit_s = f"{exit_px:.6g}" if exit_px else "?"
+        logger.info(
+            "%s: CLOSE %s @ %s (%s) pnl=%s (%s) entry=%.6g SL=%s TP=%s",
+            symbol, side, exit_s, reason, pnl_s, pct_s, entry,
+            pos.get("sl"), pos.get("tp"),
+        )
+        self._maybe_live_disable(symbol)
+        self._save_live_state()
+        return trade
+
+    def _live_symbol_stats(self, symbol: str) -> dict:
+        trades = [
+            t for t in self._live_state.get("closed_trades") or []
+            if t.get("symbol") == symbol and t.get("pnl_usd") is not None
+        ]
+        if not trades:
+            return {"n": 0, "pf": 0.0, "sum": 0.0, "wr": 0.0}
+        wins = [float(t["pnl_usd"]) for t in trades if float(t["pnl_usd"]) > 0]
+        losses = [float(t["pnl_usd"]) for t in trades if float(t["pnl_usd"]) <= 0]
+        gross_win = sum(wins)
+        gross_loss = abs(sum(losses))
+        pf = (gross_win / gross_loss) if gross_loss > 0 else (999.0 if gross_win > 0 else 0.0)
+        return {
+            "n": len(trades),
+            "pf": pf,
+            "sum": sum(float(t["pnl_usd"]) for t in trades),
+            "wr": len(wins) / len(trades),
+        }
+
+    def _maybe_live_disable(self, symbol: str) -> None:
+        """Désactive un symbole jusqu'au prochain reload si PF live pourri."""
+        min_n = int(getattr(config, "LIVE_GATE_MIN_TRADES", 8) or 8)
+        min_pf = float(getattr(config, "LIVE_GATE_MIN_PF", 0.9) or 0.9)
+        stats = self._live_symbol_stats(symbol)
+        if stats["n"] < min_n:
+            return
+        if stats["pf"] >= min_pf:
+            return
+        disabled = self._live_state.setdefault("live_disabled", {})
+        if symbol in disabled:
+            return
+        disabled[symbol] = {
+            "reason": f"live_pf<{min_pf:.2f}",
+            "pf": round(stats["pf"], 4),
+            "n": stats["n"],
+            "sum_pnl_usd": round(stats["sum"], 4),
+            "disabled_at": time.time(),
+        }
+        logger.warning(
+            "%s: LIVE GATE — désactivé (n=%d PF=%.3f sum=%+.2f$ < seuil PF %.2f) "
+            "jusqu'au prochain reload optimiseur",
+            symbol, stats["n"], stats["pf"], stats["sum"], min_pf,
+        )
 
     def _current_position(self, symbol: str) -> Optional[float]:
         """szi signé de la position ouverte (±1 papier en dry-run), None si flat."""
@@ -689,41 +926,99 @@ class SimpleLiveTrader:
             return
         cost = 2.0 * (config.FEE_PCT + config.SLIPPAGE_PCT)
         pnl = pos["dir"] * (exit_px - pos["entry"]) / pos["entry"] - cost
+        # $ equity paper : notional = equity × margin_pct × lev (sizing dry-run).
+        eq = float(self._live_state.get("paper_equity") or config.PAPER_START_EQUITY or 200.0)
+        notional = max(config.MIN_NOTIONAL_USD, eq * config.MARGIN_PCT * config.LEVERAGE)
+        pnl_usd = pnl * notional
+        eq_new = eq + pnl_usd
+        self._live_state["paper_equity"] = eq_new
+        self._live_state.setdefault("equity_history", []).append([time.time(), eq_new])
         paper["trades"].append({
             "symbol": symbol,
             "dir": pos["dir"],
             "entry": pos["entry"],
             "exit": exit_px,
             "pnl_pct": pnl,
+            "pnl_usd": pnl_usd,
+            "notional": notional,
             "reason": reason,
             "entry_ts": pos["entry_ts"],
             "exit_ts": ts,
         })
+        # Phase 1 : cooldown re-entry aussi en paper (sauf FLIP).
+        if reason != "FLIP" and ts is not None:
+            self._live_state.setdefault("last_close_ts", {})[symbol] = ts
         trades = paper["trades"]
         total = sum(t["pnl_pct"] for t in trades)
         wins = len([t for t in trades if t["pnl_pct"] > 0])
         logger.info(
-            "[PAPER] %s: EXIT %s @ %.6g (%s) pnl=%+.3f%% | cumul: %d trades, "
-            "%+.3f%%, winrate %.0f%%",
+            "[PAPER] %s: EXIT %s @ %.6g (%s) pnl=%+.3f%% (%+.2f$) | equity=%.2f | "
+            "cumul: %d trades, %+.3f%%, winrate %.0f%%",
             symbol, "LONG" if pos["dir"] == 1 else "SHORT", exit_px, reason,
-            pnl * 100, len(trades), total * 100, 100.0 * wins / len(trades),
+            pnl * 100, pnl_usd, eq_new, len(trades), total * 100,
+            100.0 * wins / len(trades),
         )
 
     # ── Exécution ────────────────────────────────────────────────────────────
 
-    def _close_position(self, symbol: str, ref_price: float = None, ts=None) -> None:
+    def _close_position(self, symbol: str, ref_price: float = None, ts=None,
+                        reason: str = "FLIP") -> None:
         if self.dry_run:
             if ref_price is not None:
-                self._paper_close(symbol, ref_price, "FLIP", ts)
+                self._paper_close(symbol, ref_price, reason, ts)
             return
+        tracked = self._live_state.setdefault("live_tracked", {})
+        pos = tracked.get(symbol) or {
+            "dir": 0, "entry": ref_price or 0, "sl": None, "tp": None,
+        }
+        # direction depuis la position HL si tracking incomplet
+        if not pos.get("dir"):
+            cur = self._current_position(symbol)
+            if cur is not None:
+                pos = dict(pos)
+                pos["dir"] = 1 if cur > 0 else -1
         try:
             self.client.cancel_all_orders(symbol)   # purge TP/SL natifs orphelins
         except Exception as e:
             logger.warning("%s: cancel_all_orders: %r", symbol, e)
-        self.client.market_close(symbol)
-        self._live_state.setdefault("live_tracked", {}).pop(symbol, None)
-        self._save_live_state()
-        logger.info("%s: position clôturée (market)", symbol)
+        close_started_ms = int(time.time() * 1000) - 5_000
+        try:
+            self.client.market_close(symbol)
+        except Exception as e:
+            logger.error("%s: market_close échoué: %r", symbol, e)
+            raise
+        tracked.pop(symbol, None)
+        # Récupère le fill de clôture pour PnL réel
+        exit_px = ref_price
+        pnl_usd = None
+        fee = 0.0
+        try:
+            fill = None
+            if hasattr(self.client, "get_recent_closed_trade"):
+                fill = self.client.get_recent_closed_trade(
+                    symbol, since_ms=close_started_ms, max_wait_sec=2.0,
+                )
+            if fill:
+                exit_px = float(fill.get("px") or exit_px or 0) or exit_px
+                fee = abs(float(fill.get("fee") or 0))
+                c_pnl = float(fill.get("closed_pnl") or 0)
+                pnl_usd = c_pnl - fee
+            else:
+                exit_px2, pnl2, fee2 = self._resolve_exit_from_fills(
+                    symbol, {**pos, "entry_ts": close_started_ms},
+                )
+                exit_px = exit_px2 or exit_px
+                pnl_usd = pnl2
+                fee = fee2
+        except Exception as e:
+            logger.debug("%s: résolution fill close (%r)", symbol, e)
+        self._record_closed_trade(
+            symbol, pos, exit_px=exit_px, reason=reason,
+            pnl_usd=pnl_usd, fee=fee, exec_mode="taker",
+            set_reentry_cooldown=(reason != "FLIP"),
+            ts=ts if ts is not None else close_started_ms,
+        )
+        logger.info("%s: position clôturée (market, reason=%s)", symbol, reason)
 
     def _margin_pct_for(self, symbol: str) -> float:
         """Sizing dynamique (P1) : marge interpolée entre MARGIN_PCT (pire
@@ -775,8 +1070,8 @@ class SimpleLiveTrader:
         self._ensure_perp_margin(notional / config.LEVERAGE)
         self.client.update_leverage(symbol, config.LEVERAGE, is_cross=False)
         if config.EXEC_MAKER_FIRST:
-            # Maker-first : limit Alo au mid, fallback market après timeout —
-            # les frais taker mangent l'edge (P1 brief), on paie maker si possible.
+            # Maker-first : limit Alo ; skip si non fill (Phase 1, pas de market
+            # sauf SIMPLEBOT_EXEC_MARKET_FALLBACK=1).
             from simplebot.execution import smart_entry
             result = smart_entry(self.client, symbol, direction == 1, qty, ref_price)
             exec_mode = result["mode"]
@@ -791,6 +1086,15 @@ class SimpleLiveTrader:
             exec_mode = "taker"
         stats = self._live_state.setdefault("exec_stats", {})
         stats[exec_mode] = int(stats.get(exec_mode, 0)) + 1
+
+        if exec_mode == "skip" or float(result.get("total_sz") or 0) <= 0:
+            logger.info(
+                "%s: OPEN %s annulé — maker non rempli (skip, pas de market)",
+                symbol, side,
+            )
+            self._save_live_state()
+            return
+
         fill_px = float(result.get("avg_px") or ref_price)
         fill_sz = float(result.get("total_sz") or qty)
         logger.info("%s: OPEN %s sz=%.6f @ %.6g (notional≈$%.2f, lev=%dx, marge=%.1f%%, exec=%s)",
@@ -814,6 +1118,9 @@ class SimpleLiveTrader:
                 "entry": fill_px,
                 "sl": sl_price,
                 "tp": tp_price,
+                "sz": fill_sz,
+                "notional": fill_sz * fill_px,
+                "exec": exec_mode,
                 "entry_ts": ts or int(time.time() * 1000),
             }
             self._save_live_state()
