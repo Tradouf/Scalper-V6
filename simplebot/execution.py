@@ -11,12 +11,13 @@ Stratégie d'exécution :
   2. si le mid croiserait (spread d'un tick), repli : limit Alo au meilleur
      bid/ask de notre côté ;
   3. poll du book d'ordres ouverts pendant EXEC_MAKER_TIMEOUT_SEC ;
-  4. timeout → cancel + market pour le reliquat (fallback taker).
+  4. timeout → cancel ; si EXEC_MARKET_FALLBACK : market du reliquat,
+     sinon skip (mode="skip", total_sz=0) — défaut Phase 1.
 
 Un fill partiel maker + reliquat market est compté « mixed ».
 
 Le module est sans état : le trader passe le client, la fonction rend
-{"mode": "maker"|"taker"|"mixed", "avg_px": float, "total_sz": float}.
+{"mode": "maker"|"taker"|"mixed"|"skip", "avg_px": float, "total_sz": float}.
 `sleep`/`monotonic` sont injectables pour des tests sans horloge.
 """
 
@@ -66,6 +67,11 @@ def _position_size(client, coin: str) -> float:
     return 0.0
 
 
+def _skip(coin: str, why: str) -> dict:
+    logger.info("%s: entrée SKIP — %s (pas de fallback market)", coin, why)
+    return {"mode": "skip", "avg_px": 0.0, "total_sz": 0.0, "reason": why}
+
+
 def smart_entry(
     client,
     coin: str,
@@ -74,13 +80,17 @@ def smart_entry(
     ref_price: float,
     timeout_sec: Optional[float] = None,
     poll_sec: Optional[float] = None,
+    market_fallback: Optional[bool] = None,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict:
-    """Entrée maker-first avec fallback market. Suppose la position FLAT au
-    départ (les entrées SimpleBot se font à plat ou après clôture du flip)."""
+    """Entrée maker-first. Si market_fallback est False (défaut Phase 1), un
+    limit non rempli / rejeté renvoie mode='skip' au lieu d'un market.
+    Suppose la position FLAT au départ."""
     timeout_sec = config.EXEC_MAKER_TIMEOUT_SEC if timeout_sec is None else timeout_sec
     poll_sec = config.EXEC_POLL_SEC if poll_sec is None else poll_sec
+    if market_fallback is None:
+        market_fallback = bool(getattr(config, "EXEC_MARKET_FALLBACK", False))
 
     best_bid, best_ask = _best_bid_ask(client, coin)
     if best_bid is None:
@@ -114,6 +124,8 @@ def smart_entry(
             break
 
     if resting is None:
+        if not market_fallback:
+            return _skip(coin, "aucun limit Alo accepté")
         logger.info("%s: aucun limit Alo accepté → entrée market", coin)
         return _market_entry(client, coin, is_buy, sz, ref_price)
 
@@ -133,7 +145,7 @@ def smart_entry(
             logger.info("%s: entrée MAKER remplie @%.6g (sz=%.6f)", coin, entry_px, filled)
             return {"mode": "maker", "avg_px": entry_px, "total_sz": filled}
 
-    # 3) timeout → cancel + market du reliquat
+    # 3) timeout → cancel ; market du reliquat seulement si fallback activé
     try:
         client.cancel_order(coin, resting)
     except Exception as e:
@@ -146,8 +158,17 @@ def smart_entry(
             logger.info("%s: entrée MAKER partielle @%.6g (sz=%.6f, reliquat<min)",
                         coin, px_sent, filled)
             return {"mode": "maker", "avg_px": px_sent or ref_price, "total_sz": filled}
+        if not market_fallback:
+            return _skip(coin, f"limit non rempli en {timeout_sec:.0f}s")
         logger.info("%s: limit non rempli en %.0fs → entrée market", coin, timeout_sec)
         return _market_entry(client, coin, is_buy, sz, ref_price)
+
+    if not market_fallback:
+        if filled > 0:
+            logger.info("%s: entrée MAKER partielle @%.6g (sz=%.6f, skip reliquat)",
+                        coin, px_sent, filled)
+            return {"mode": "maker", "avg_px": px_sent or ref_price, "total_sz": filled}
+        return _skip(coin, f"limit non rempli en {timeout_sec:.0f}s")
 
     taker = _market_entry(client, coin, is_buy, remaining, ref_price)
     if filled > 0:
@@ -156,4 +177,118 @@ def smart_entry(
         logger.info("%s: entrée MIXTE maker %.6f + taker %.6f", coin, filled, taker["total_sz"])
         return {"mode": "mixed", "avg_px": avg, "total_sz": total}
     logger.info("%s: limit non rempli en %.0fs → entrée market", coin, timeout_sec)
+    return taker
+
+
+def smart_close(
+    client,
+    coin: str,
+    is_buy: bool,
+    sz: float,
+    ref_price: float,
+    timeout_sec: Optional[float] = None,
+    poll_sec: Optional[float] = None,
+    market_fallback: bool = True,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> dict:
+    """
+    Sortie maker-first (P1 2026-08-07) : réduction/fermeture de position en
+    limit Alo REDUCE-ONLY au mid, au lieu d'un market taker. Mesuré sur les
+    backtests SimpleBot : ~+2.4 bps/trade (sortie 1.5 bps maker vs 7.5 bps
+    taker+slippage, ~40 % des sorties concernées).
+
+    Différence de posture avec smart_entry : ici market_fallback est TRUE par
+    défaut — un skip d'ENTRÉE est sûr (pas de position), un skip de SORTIE
+    laisse de l'exposition non désirée. is_buy = côté de l'ordre de sortie
+    (True pour fermer un short). Tous les ordres sont reduce-only : au pire
+    l'ordre est rejeté/annulé par l'exchange, jamais une sur-position.
+    """
+    timeout_sec = config.EXEC_MAKER_TIMEOUT_SEC if timeout_sec is None else timeout_sec
+    poll_sec = config.EXEC_POLL_SEC if poll_sec is None else poll_sec
+
+    def _market_close_leg(qty: float) -> dict:
+        result = client.place_order(
+            coin=coin, is_buy=is_buy, sz=qty, limit_px=ref_price,
+            order_type="market", reduce_only=True,
+        )
+        return {
+            "mode": "taker",
+            "avg_px": float(result.get("avg_px") or ref_price),
+            "total_sz": float(result.get("total_sz") or qty),
+        }
+
+    start_pos = _position_size(client, coin)
+
+    best_bid, best_ask = _best_bid_ask(client, coin)
+    if best_bid is None:
+        px_try = [ref_price]
+    else:
+        mid = (best_bid + best_ask) / 2.0
+        join = best_bid if is_buy else best_ask
+        px_try = [mid] if mid == join else [mid, join]
+
+    resting = None
+    px_sent = None
+    for px in px_try:
+        try:
+            res = client.place_order(
+                coin=coin, is_buy=is_buy, sz=sz,
+                limit_px=px, order_type="limit", tif="Alo", reduce_only=True,
+            )
+        except Exception as e:
+            logger.info("%s: limit Alo close @%.6g rejeté (%r) — essai suivant", coin, px, e)
+            continue
+        px_sent = px
+        if res.get("filled"):
+            return {
+                "mode": "maker",
+                "avg_px": float(res.get("avg_px") or px),
+                "total_sz": float(res.get("total_sz") or sz),
+            }
+        if res.get("oid") is not None:
+            resting = int(res["oid"])
+            break
+
+    if resting is None:
+        if not market_fallback:
+            logger.warning("%s: sortie SKIP — aucun limit Alo accepté (position conservée)", coin)
+            return {"mode": "skip", "avg_px": 0.0, "total_sz": 0.0}
+        logger.info("%s: aucun limit Alo close accepté → sortie market", coin)
+        return _market_close_leg(sz)
+
+    deadline = monotonic() + timeout_sec
+    while monotonic() < deadline:
+        sleep(poll_sec)
+        try:
+            open_orders = client.get_open_orders(coin)
+        except Exception as e:
+            logger.debug("%s: get_open_orders (%r) — retry", coin, e)
+            continue
+        if not any(int(o.get("oid", -1)) == resting for o in open_orders):
+            closed = max(0.0, start_pos - _position_size(client, coin)) or sz
+            logger.info("%s: sortie MAKER remplie @%.6g (sz=%.6f)", coin, px_sent, closed)
+            return {"mode": "maker", "avg_px": px_sent or ref_price, "total_sz": closed}
+
+    try:
+        client.cancel_order(coin, resting)
+    except Exception as e:
+        logger.warning("%s: cancel du limit close %d échoué (%r)", coin, resting, e)
+
+    closed = max(0.0, start_pos - _position_size(client, coin))
+    remaining = max(0.0, sz - closed)
+    if remaining <= 0:
+        return {"mode": "maker", "avg_px": px_sent or ref_price, "total_sz": closed}
+    if not market_fallback:
+        logger.warning("%s: sortie partielle maker %.6f, reliquat %.6f CONSERVÉ (pas de fallback)",
+                       coin, closed, remaining)
+        return {"mode": "maker" if closed > 0 else "skip",
+                "avg_px": px_sent or ref_price, "total_sz": closed}
+    taker = _market_close_leg(remaining)
+    if closed > 0:
+        total = closed + taker["total_sz"]
+        avg = ((px_sent or ref_price) * closed + taker["avg_px"] * taker["total_sz"]) / total
+        logger.info("%s: sortie MIXTE maker %.6f + taker %.6f", coin, closed, taker["total_sz"])
+        return {"mode": "mixed", "avg_px": avg, "total_sz": total}
+    logger.info("%s: limit close non rempli en %.0fs → sortie market", coin, timeout_sec)
     return taker

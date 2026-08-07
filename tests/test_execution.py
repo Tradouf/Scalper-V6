@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from simplebot.backtester import run_backtest
-from simplebot.execution import smart_entry
+from simplebot.execution import smart_close, smart_entry
 from simplebot.strategy import StrategyParams
 
 from tests.test_simplebot import make_candles, vshape_closes
@@ -39,7 +39,7 @@ class FakeExecClient:
 
     def place_order(self, coin, is_buy, sz, limit_px, order_type="limit",
                     reduce_only=False, tif="Alo"):
-        self.placed.append((order_type, limit_px, sz, tif))
+        self.placed.append((order_type, limit_px, sz, tif, reduce_only))
         if order_type == "market":
             return {"status": "ok", "filled": True, "avg_px": limit_px, "total_sz": sz}
         if not self.alo_ok:
@@ -93,23 +93,40 @@ def test_maker_fill_before_timeout():
     assert client.placed[0][0] == "limit" and client.placed[0][3] == "Alo"
 
 
-def test_timeout_falls_back_to_market():
-    # l'ordre reste au book jusqu'au timeout → cancel + market
+def test_timeout_falls_back_to_market_when_enabled():
+    # l'ordre reste au book jusqu'au timeout → cancel + market si fallback ON
     client = FakeExecClient(open_orders_sequence=[[42]] * 50)
-    res = _run(client)
+    res = _run(client, market_fallback=True)
     assert res["mode"] == "taker"
     assert client.cancelled == [42]
     assert client.placed[-1][0] == "market"
 
 
-def test_alo_rejected_goes_market():
-    # post-only rejeté (croiserait) sur mid ET sur best bid → market direct
+def test_timeout_skips_without_market_fallback():
+    # Phase 1 : défaut = skip, pas de market
+    client = FakeExecClient(open_orders_sequence=[[42]] * 50)
+    res = _run(client, market_fallback=False)
+    assert res["mode"] == "skip"
+    assert res["total_sz"] == 0.0
+    assert client.cancelled == [42]
+    assert not any(p[0] == "market" for p in client.placed)
+
+
+def test_alo_rejected_goes_market_when_enabled():
+    # post-only rejeté sur mid ET best bid → market si fallback ON
     client = FakeExecClient(alo_ok=False)
-    res = _run(client)
+    res = _run(client, market_fallback=True)
     assert res["mode"] == "taker"
     assert client.placed[-1][0] == "market"
-    # deux tentatives Alo (mid puis best bid) avant le market
     assert [p[0] for p in client.placed] == ["limit", "limit", "market"]
+
+
+def test_alo_rejected_skips_without_market_fallback():
+    client = FakeExecClient(alo_ok=False)
+    res = _run(client, market_fallback=False)
+    assert res["mode"] == "skip"
+    assert res["total_sz"] == 0.0
+    assert not any(p[0] == "market" for p in client.placed)
 
 
 def test_no_book_uses_ref_price_limit():
@@ -118,6 +135,72 @@ def test_no_book_uses_ref_price_limit():
     res = _run(client)
     assert res["mode"] == "maker"
     assert res["avg_px"] == pytest.approx(100.0)   # ref_price faute de book
+
+
+# ── smart_close (sorties maker reduce-only, P1 2026-08-07) ───────────────────
+
+def _run_close(client, **kw):
+    return smart_close(client, "TEST", False, 1.0, 100.0,   # ferme un LONG
+                       timeout_sec=10.0, poll_sec=1.0,
+                       sleep=lambda s: None,
+                       monotonic=_ticker(), **kw)
+
+
+def test_close_maker_fill_is_reduce_only():
+    client = FakeExecClient(open_orders_sequence=[[42], []], position_after_fill=0.0)
+    client.position_szi = 1.0                      # position ouverte au départ
+    res = _run_close(client)
+    assert res["mode"] == "maker"
+    assert res["avg_px"] == pytest.approx(100.0)   # mid
+    assert res["total_sz"] == pytest.approx(1.0)
+    order_type, _, _, tif, reduce_only = client.placed[0]
+    assert order_type == "limit" and tif == "Alo" and reduce_only is True
+
+
+def test_close_timeout_market_fallback_default_on():
+    """Contrairement à smart_entry, le défaut d'une SORTIE est le fallback
+    market : un skip laisserait de l'exposition non désirée."""
+    client = FakeExecClient(open_orders_sequence=[[42]] * 50)
+    client.position_szi = 1.0
+    client.position_after_fill = 1.0               # jamais rempli
+    res = _run_close(client)
+    assert res["mode"] == "taker"
+    assert client.cancelled == [42]
+    assert client.placed[-1][0] == "market"
+    assert client.placed[-1][4] is True            # market reduce-only aussi
+
+
+def test_close_alo_rejected_goes_market_reduce_only():
+    client = FakeExecClient(alo_ok=False)
+    client.position_szi = 1.0
+    res = _run_close(client)
+    assert res["mode"] == "taker"
+    assert all(ro is True for (_, _, _, _, ro) in client.placed)
+
+
+def test_close_no_fallback_keeps_position():
+    client = FakeExecClient(open_orders_sequence=[[42]] * 50)
+    client.position_szi = 1.0
+    client.position_after_fill = 1.0
+    res = _run_close(client, market_fallback=False)
+    assert res["mode"] == "skip" and res["total_sz"] == 0.0
+    assert not any(p[0] == "market" for p in client.placed)
+
+
+def test_close_partial_then_market_is_mixed():
+    """Fill partiel avant le timeout → cancel + market du reliquat = mixed."""
+    class PartialClient(FakeExecClient):
+        def cancel_order(self, coin, oid):
+            self.position_szi = 0.6                # 0.4 fermé pendant le poll
+            return super().cancel_order(coin, oid)
+    client = PartialClient(open_orders_sequence=[[42]] * 50)
+    client.position_szi = 1.0
+    client.position_after_fill = 1.0
+    res = _run_close(client)
+    assert res["mode"] == "mixed"
+    assert res["total_sz"] == pytest.approx(1.0)
+    assert client.placed[-1][0] == "market"
+    assert client.placed[-1][2] == pytest.approx(0.6)   # reliquat seulement
 
 
 # ── backtester entry_mode=maker ──────────────────────────────────────────────
