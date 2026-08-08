@@ -134,3 +134,49 @@ def test_guard_delay_covers_analysis_window(collector):
     """Le délai de garde doit être ≥ la fenêtre, sinon recomptage garanti."""
     from rsimr import liqfeed
     assert liqfeed.PROBE_MIN_GAP_SEC >= liqfeed.BURST_WINDOW_SEC
+
+
+# ── Filtre de sens sur le prix ──────────────────────────────────────────────
+
+def test_forced_side_from_price():
+    from rsimr import liqfeed
+    assert liqfeed.forced_side(-0.006) == "vente"   # prix en baisse
+    assert liqfeed.forced_side(+0.010) == "achat"   # prix en hausse
+    assert liqfeed.forced_side(0.0) == "vente"      # borne : ≤ 0
+
+
+def test_wrong_side_is_logged_without_spending_budget(collector, monkeypatch):
+    """Une rafale d'achat forcé est enregistrée mais ne consomme aucune sonde."""
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "BURST_SIDE", "vente")
+    calls = []
+    monkeypatch.setattr(liqfeed, "post_info",
+                        lambda *a, **k: calls.append(a) or [])
+    c.verify_burst("AAA", -0.03, 0.5, ["0x1", "0x2"], d_px=+0.012,
+                   max_ntl=2500.0)
+    assert calls == []                       # aucune requête réseau
+    row = c.con.execute(
+        "SELECT n_addr, side, d_px_pct FROM probe").fetchone()
+    assert row[0] == 0 and row[1] == "achat"  # journalisée quand même
+    assert len(c.probe_times) == 0            # budget intact
+
+
+def test_right_side_is_probed(collector, monkeypatch):
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "BURST_SIDE", "vente")
+    calls = []
+    monkeypatch.setattr(liqfeed, "post_info",
+                        lambda body, **k: calls.append(body["user"]) or [])
+    c.verify_burst("AAA", -0.03, 0.5, ["0x1"], d_px=-0.008, max_ntl=2500.0)
+    assert calls == ["0x1"]
+    assert c.con.execute("SELECT side FROM probe").fetchone()[0] == "vente"
+
+
+def test_both_sides_mode_probes_everything(collector, monkeypatch):
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "BURST_SIDE", "les_deux")
+    calls = []
+    monkeypatch.setattr(liqfeed, "post_info",
+                        lambda body, **k: calls.append(body["user"]) or [])
+    c.verify_burst("AAA", -0.03, 0.5, ["0x1"], d_px=+0.02, max_ntl=2500.0)
+    assert calls == ["0x1"]

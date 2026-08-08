@@ -90,6 +90,27 @@ PROBE_MIN_GAP_SEC = float(os.environ.get("LIQFEED_PROBE_MIN_GAP_SEC", "120"))
 # Hystérésis : après un déclenchement, le coin reste DÉSARMÉ tant que la chute
 # n'est pas retombée sous la moitié du seuil. Un événement = un déclenchement.
 BURST_REARM_FRAC = float(os.environ.get("LIQFEED_BURST_REARM_FRAC", "0.5"))
+
+# ── Sens du flux forcé, calibré le 08-08 ────────────────────────────────────
+# Le prix classe le sens de façon quasi parfaite (79/79 sur les événements
+# confirmés) : vente forcée méd −0.60 % sur 60 s, achat forcé méd +0.99 %.
+#
+# Piège corrigé au passage : 595 des 604 lignes de `liq` sont vues du côté de
+# la CONTREPARTIE, pas du liquidé. Si un long est liquidé (vente forcée), la
+# contrepartie ACHÈTE — donc `Close Long` chez elle signifie qu'un SHORT a été
+# liquidé. Lire naïvement « Long dans dir = long liquidé » inverse le sens et
+# détruit le signal (c'est ce qui m'a d'abord fait conclure que le prix ne
+# discriminait pas).
+#
+# La stratégie RSI-MR achète des creux : seule la VENTE FORCÉE la concerne.
+# On classe toutes les rafales, mais on ne dépense le budget de sondes que sur
+# le côté utile ; les autres sont journalisées avec 0 sonde.
+BURST_SIDE = os.environ.get("LIQFEED_BURST_SIDE", "vente")  # vente|achat|les_deux
+
+
+def forced_side(d_px: float) -> str:
+    """Sens du flux forcé d'après la variation de prix."""
+    return "vente" if d_px <= 0 else "achat"
 # Budget GLOBAL de requêtes de vérification. Indispensable : une vraie cascade
 # fait éclater les 45 coins EN MÊME TEMPS (c'est sa définition), soit ~270
 # requêtes d'un coup sur le rate-limiter partagé avec les autres bots. On
@@ -148,12 +169,13 @@ def db_connect() -> sqlite3.Connection:
             tid INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS probe (
             ts INTEGER, coin TEXT, n_addr INTEGER, n_liq INTEGER,
-            d_oi_pct REAL, sell_ratio REAL, d_px_pct REAL, max_ntl REAL);
+            d_oi_pct REAL, sell_ratio REAL, d_px_pct REAL, max_ntl REAL,
+            side TEXT);
         CREATE INDEX IF NOT EXISTS idx_liq_ts ON liq(ts);
         CREATE INDEX IF NOT EXISTS idx_sec_coin ON sec(coin, ts_sec);
     """)
     # colonnes ajoutées après coup (bases créées avant la calibration v2)
-    for col in ("d_px_pct REAL", "max_ntl REAL"):
+    for col in ("d_px_pct REAL", "max_ntl REAL", "side TEXT"):
         try:
             con.execute(f"ALTER TABLE probe ADD COLUMN {col}")
         except sqlite3.OperationalError:
@@ -399,8 +421,24 @@ class Collector:
                 uniq.append(a)
             if len(uniq) >= PROBE_MAX_ADDR:
                 break
+        side = forced_side(d_px)
         found = recent = probed = 0
         cutoff = int((time.time() - 4 * BURST_WINDOW_SEC) * 1000)
+        if BURST_SIDE not in ("les_deux", side):
+            # rafale du mauvais côté : journalisée pour les statistiques, mais
+            # aucune sonde dépensée (le budget va au côté qui nous concerne)
+            with self.lock:
+                self.con.execute(
+                    "INSERT INTO probe (ts, coin, n_addr, n_liq, d_oi_pct, "
+                    "sell_ratio, d_px_pct, max_ntl, side) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (int(time.time() * 1000), coin, 0, 0, d_pct, sell_ratio,
+                     d_px, max_ntl, side))
+                self.con.commit()
+            logger.info("rafale %s ignorée — %s forcé(e) (Δpx %+.2f%%), "
+                        "on ne sonde que « %s »", coin, side, 100 * d_px,
+                        BURST_SIDE)
+            return
         for a in uniq:
             if _stop.is_set():
                 break
@@ -420,14 +458,14 @@ class Collector:
         with self.lock:
             self.con.execute(
                 "INSERT INTO probe (ts, coin, n_addr, n_liq, d_oi_pct, "
-                "sell_ratio, d_px_pct, max_ntl) VALUES (?,?,?,?,?,?,?,?)",
+                "sell_ratio, d_px_pct, max_ntl, side) VALUES (?,?,?,?,?,?,?,?,?)",
                 (int(time.time() * 1000), coin, probed, recent, d_pct,
-                 sell_ratio, d_px, max_ntl))
+                 sell_ratio, d_px, max_ntl, side))
             self.con.commit()
-        logger.info("rafale %s ΔOI %.2f%% Δpx %.2f%% gros trade %.0f$ → "
-                    "%d liquidation(s) confirmée(s) sur %d adresses sondées "
-                    "(%d fills avec leur historique)", coin, 100 * d_pct,
-                    100 * d_px, max_ntl, recent, probed, found)
+        logger.info("rafale %s [%s forcé(e)] ΔOI %.2f%% Δpx %.2f%% gros trade "
+                    "%.0f$ → %d liquidation(s) confirmée(s) sur %d adresses "
+                    "sondées (%d fills avec leur historique)", coin, side,
+                    100 * d_pct, 100 * d_px, max_ntl, recent, probed, found)
 
     def backstop_loop(self):
         """Vérité terrain gratuite : fills du liquidator de secours HLP."""
