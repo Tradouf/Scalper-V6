@@ -48,3 +48,45 @@ def test_verify_burst_stops_when_budget_exhausted(collector, monkeypatch):
     assert c.probe_skipped == 1
     row = c.con.execute("SELECT coin, n_liq FROM probe").fetchone()
     assert row == ("AAA", 0)           # la rafale est tout de même journalisée
+
+
+# ── Détecteur calibré v2 ────────────────────────────────────────────────────
+
+def test_probe_records_addresses_actually_probed(collector, monkeypatch):
+    """n_addr doit refléter les sondes RÉELLES, sinon la précision est fausse."""
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "PROBE_BUDGET_PER_MIN", 2)
+    monkeypatch.setattr(liqfeed, "post_info", lambda *a, **k: [])
+    c.verify_burst("AAA", -0.02, 0.5, ["0x1", "0x2", "0x3", "0x4"])
+    n_addr = c.con.execute("SELECT n_addr FROM probe").fetchone()[0]
+    assert n_addr == 2          # budget épuisé après 2, pas 4
+
+
+def test_probe_keeps_burst_features(collector, monkeypatch):
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "post_info", lambda *a, **k: [])
+    c.verify_burst("AAA", -0.031, 0.42, ["0x1"], d_px=-0.012, max_ntl=2500.0)
+    row = c.con.execute(
+        "SELECT d_oi_pct, sell_ratio, d_px_pct, max_ntl FROM probe").fetchone()
+    assert row == pytest.approx((-0.031, 0.42, -0.012, 2500.0))
+
+
+def test_largest_counterparties_are_probed_first(collector, monkeypatch):
+    """Les fills de liquidation sont gros : sonder les grosses adresses d'abord."""
+    c, liqfeed = collector
+    monkeypatch.setattr(liqfeed, "PROBE_BUDGET_PER_MIN", 2)
+    seen = []
+    monkeypatch.setattr(liqfeed, "post_info",
+                        lambda body, **k: seen.append(body["user"]) or [])
+    # verify_burst reçoit déjà la liste triée par taille décroissante
+    c.verify_burst("AAA", -0.02, 0.5, ["0xBIG", "0xMID", "0xSMALL"])
+    assert seen == ["0xBIG", "0xMID"]
+
+
+def test_sell_ratio_no_longer_gates_detection(collector):
+    """Le ratio de vente ne sépare pas (0.37 vs 0.42) : il ne doit plus filtrer."""
+    from rsimr import liqfeed
+    import inspect
+    src = inspect.getsource(liqfeed.Collector.flush_loop)
+    assert "sell_ratio >= 0.6" not in src
+    assert "BURST_MIN_MAX_NTL" in src

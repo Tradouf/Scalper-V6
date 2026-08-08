@@ -157,21 +157,37 @@ def build_state() -> Dict[str, Any]:
     paper = _read_json(PAPER_STATE)
     hl = _hl_snapshot()
 
+    # Positions = UNION de ce que croit le bot et de ce qui est réellement
+    # ouvert sur l'exchange. Ne montrer que l'état du bot masquerait
+    # justement le cas qui compte : une position qu'il ignore.
+    bot_pos = live.get("positions") or {}
+    ex_by_coin = {x["coin"]: x for x in hl["positions"]}
     positions = []
-    for sym, p in (live.get("positions") or {}).items():
-        age_h = (now * 1000 - float(p.get("opened_ms", 0))) / 3_600_000
-        mark = next((x["entry"] for x in hl["positions"] if x["coin"] == sym), None)
-        live_pos = next((x for x in hl["positions"] if x["coin"] == sym), None)
-        positions.append({
-            "sym": sym, "entry": p.get("entry"), "notional": p.get("notional"),
-            "regime": p.get("regime"),
-            "regime_label": REGIME_LABEL.get(p.get("regime"), "?"),
-            "age_h": round(age_h, 2),
-            "remaining_h": round(max(0.0, H_BARS - age_h), 2),
-            "on_exchange": live_pos is not None,
-            "upnl": live_pos["upnl"] if live_pos else None,
-        })
-    positions.sort(key=lambda x: x["remaining_h"])
+    for sym in sorted(set(bot_pos) | set(ex_by_coin)):
+        p = bot_pos.get(sym)
+        ex = ex_by_coin.get(sym)
+        row: Dict[str, Any] = {
+            "sym": sym,
+            "known_by_bot": p is not None,
+            "on_exchange": ex is not None,
+            "upnl": ex["upnl"] if ex else None,
+            "size": ex["szi"] if ex else None,
+            "notional": (p or {}).get("notional") if p else (
+                ex["notional"] if ex else None),
+            "entry": (p or {}).get("entry") if p else (ex["entry"] if ex else None),
+            "regime": (p or {}).get("regime"),
+            "regime_label": REGIME_LABEL.get((p or {}).get("regime"), "—"),
+        }
+        if p:
+            age_h = (now * 1000 - float(p.get("opened_ms", 0))) / 3_600_000
+            row["age_h"] = round(age_h, 2)
+            row["remaining_h"] = round(max(0.0, H_BARS - age_h), 2)
+        else:
+            row["age_h"] = None
+            row["remaining_h"] = None
+        positions.append(row)
+    positions.sort(key=lambda x: (x["remaining_h"] is None,
+                                  x["remaining_h"] or 0))
 
     # divergence bot <-> exchange : le contrôle le plus important
     bot_syms = set((live.get("positions") or {}).keys())
@@ -289,12 +305,18 @@ async function tick(){
  document.getElementById('alerts').innerHTML=al;
 
  document.getElementById('pos').innerHTML =
-  '<tr><th>Symbole</th><th>Entrée</th><th>Notionnel</th><th>Régime</th><th>Sortie dans</th><th>PnL latent</th><th>Exchange</th></tr>'
-  + (s.positions.length?s.positions.map(p=>`<tr><td>${p.sym}</td><td>${f(p.entry,6)}</td>
-     <td>${f(p.notional)} $</td><td>${p.regime_label}</td><td>${f(p.remaining_h,1)} h</td>
-     <td class="${cls(p.upnl)}">${money(p.upnl)}</td>
-     <td>${p.on_exchange?'✓':'<span class="neg">absent</span>'}</td></tr>`).join('')
-    :'<tr><td colspan="7" class="mut">aucune position</td></tr>');
+  '<tr><th>Symbole</th><th>Taille</th><th>Entrée</th><th>Notionnel</th><th>Régime</th>'
+  +'<th>Sortie dans</th><th>PnL latent</th><th>État</th></tr>'
+  + (s.positions.length?s.positions.map(p=>{
+      let etat = p.known_by_bot && p.on_exchange ? '✓ suivie'
+        : (p.known_by_bot ? '<span class="neg">absente de l\\'exchange</span>'
+                          : '<span class="neg">inconnue du bot</span>');
+      return `<tr><td>${p.sym}</td><td>${p.size==null?'—':f(p.size,4)}</td>
+      <td>${f(p.entry,6)}</td><td>${p.notional==null?'—':f(p.notional)+' $'}</td>
+      <td>${p.regime_label}</td>
+      <td>${p.remaining_h==null?'—':f(p.remaining_h,1)+' h'}</td>
+      <td class="${cls(p.upnl)}">${money(p.upnl)}</td><td>${etat}</td></tr>`;}).join('')
+    :'<tr><td colspan="8" class="mut">aucune position ouverte</td></tr>');
 
  const sk=s.live.skipped||{};
  document.getElementById('skip').innerHTML =

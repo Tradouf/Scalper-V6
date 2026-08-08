@@ -63,8 +63,23 @@ INFO_URL = "https://api.hyperliquid.xyz/info"
 DB_PATH = Path(os.environ.get("LIQFEED_DB", REPO / "rsimr" / "liq.db"))
 STALE_SEC = float(os.environ.get("LIQFEED_STALE_SEC", "90"))
 FLUSH_SEC = 5.0
-# rafale = ΔOI négatif marqué sur la fenêtre + agression vendeuse
-BURST_DOI_PCT = float(os.environ.get("LIQFEED_BURST_DOI_PCT", "0.0015"))
+# ── Détection de rafale — CALIBRÉE sur vérité terrain le 08-08 ──────────────
+# v1 (devinée) : ΔOI ≤ −0.15 % ET ≥60 % d'agression vendeuse
+#   → 4 confirmations sur 513 rafales, soit ~0.8 % de précision. Inutilisable.
+# Mesuré sur 40 liquidations confirmées vs 2507 témoins (fenêtre 60 s) :
+#   - ΔOI relatif SÉPARE : méd −0.19 % contre 0.00 % (une liquidation ferme
+#     une position, donc l'open interest baisse — mécanique, pas statistique) ;
+#   - taille du plus gros trade SÉPARE : méd 2081 $ contre 400 $ ;
+#   - le RATIO DE VENTE NE SÉPARE PAS : 0.37 sur les liquidations contre 0.42
+#     sur les témoins. Le côté taker publié ne reflète pas le sens de la
+#     liquidation ⇒ l'exiger EXCLUAIT les vrais événements. Critère supprimé,
+#     mais toujours enregistré pour analyse.
+# v2 retenue : ΔOI ≤ −0.20 % ET plus gros trade ≥ 800 $
+#   → précision 48.8 %, rappel 50 %, lift 31× (20 vrais / 21 faux).
+# Réserve : 40 événements seulement, une fenêtre de 4.6 h. À recalibrer quand
+# la base aura quelques jours (script calib_liq2.py).
+BURST_DOI_PCT = float(os.environ.get("LIQFEED_BURST_DOI_PCT", "0.002"))
+BURST_MIN_MAX_NTL = float(os.environ.get("LIQFEED_BURST_MIN_MAX_NTL", "800"))
 BURST_WINDOW_SEC = int(os.environ.get("LIQFEED_BURST_WINDOW_SEC", "60"))
 PROBE_MAX_ADDR = int(os.environ.get("LIQFEED_PROBE_MAX_ADDR", "6"))
 PROBE_MIN_GAP_SEC = float(os.environ.get("LIQFEED_PROBE_MIN_GAP_SEC", "45"))
@@ -126,10 +141,16 @@ def db_connect() -> sqlite3.Connection:
             tid INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS probe (
             ts INTEGER, coin TEXT, n_addr INTEGER, n_liq INTEGER,
-            d_oi_pct REAL, sell_ratio REAL);
+            d_oi_pct REAL, sell_ratio REAL, d_px_pct REAL, max_ntl REAL);
         CREATE INDEX IF NOT EXISTS idx_liq_ts ON liq(ts);
         CREATE INDEX IF NOT EXISTS idx_sec_coin ON sec(coin, ts_sec);
     """)
+    # colonnes ajoutées après coup (bases créées avant la calibration v2)
+    for col in ("d_px_pct REAL", "max_ntl REAL"):
+        try:
+            con.execute(f"ALTER TABLE probe ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     con.commit()
     return con
 
@@ -181,8 +202,12 @@ class Collector:
             b["n"] += 1
             b["max"] = max(b["max"], ntl)
             self.n_trades += 1
+            # on retient la TAILLE avec l'adresse : les fills de liquidation
+            # sont gros (médiane 2081 $ contre 400 $), donc sonder les plus
+            # grosses contreparties trouve bien plus souvent le liquidé que
+            # sonder les plus récentes.
             for u in d.get("users", []):
-                self.recent_addr[coin].append((int(d["time"]), u))
+                self.recent_addr[coin].append((int(d["time"]), u, ntl))
 
     def on_ctx(self, d: dict):
         coin = d["coin"]
@@ -255,9 +280,9 @@ class Collector:
                     rows.append((ts_sec, coin, c["oi"], d_oi, c["mark"],
                                  c["funding"], c["premium"], b["buy"],
                                  b["sell"], b["n"], b["max"]))
-                    self.hist[coin].append((ts_sec, d_oi, c["oi"],
-                                            b["buy"], b["sell"]))
-                # détection de rafale par coin
+                    self.hist[coin].append((ts_sec, d_oi, c["oi"], b["buy"],
+                                            b["sell"], c["mark"], b["max"]))
+                # détection de rafale par coin (règle calibrée v2)
                 for coin, h in self.hist.items():
                     if len(h) < 10:
                         continue
@@ -270,20 +295,29 @@ class Collector:
                         continue
                     d_pct = d_sum / oi_now
                     sell_ratio = sell / tot
-                    if d_pct <= -BURST_DOI_PCT and sell_ratio >= 0.6:
+                    max_ntl = max(x[6] for x in h)
+                    px0 = next((x[5] for x in h if x[5] > 0), 0.0)
+                    px1 = next((x[5] for x in reversed(h) if x[5] > 0), 0.0)
+                    d_px = (px1 - px0) / px0 if px0 > 0 else 0.0
+                    if d_pct <= -BURST_DOI_PCT and max_ntl >= BURST_MIN_MAX_NTL:
                         if time.time() - self.last_probe.get(coin, 0) > PROBE_MIN_GAP_SEC:
                             self.last_probe[coin] = time.time()
-                            addrs = [u for _, u in list(self.recent_addr[coin])[-120:]]
-                            bursts.append((coin, d_pct, sell_ratio, addrs))
+                            # les plus GROSSES contreparties d'abord
+                            recent = list(self.recent_addr[coin])[-200:]
+                            recent.sort(key=lambda x: -x[2])
+                            addrs = [u for _, u, _ in recent]
+                            bursts.append((coin, d_pct, sell_ratio, d_px,
+                                           max_ntl, addrs))
             if rows:
                 with self.lock:
                     self.con.executemany(
                         "INSERT OR REPLACE INTO sec VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                         rows)
                     self.con.commit()
-            for coin, d_pct, sr, addrs in bursts:
-                threading.Thread(target=self.verify_burst, daemon=True,
-                                 args=(coin, d_pct, sr, addrs)).start()
+            for coin, d_pct, sr, d_px, max_ntl, addrs in bursts:
+                threading.Thread(
+                    target=self.verify_burst, daemon=True,
+                    args=(coin, d_pct, sr, addrs, d_px, max_ntl)).start()
 
     # ── Vérification : liquidations exactes via userFills (public) ───────────
 
@@ -337,15 +371,22 @@ class Collector:
             return True
 
     def verify_burst(self, coin: str, d_pct: float, sell_ratio: float,
-                     addrs: list[str]):
-        """Interroge quelques contreparties de la rafale : liquidation ou pas ?"""
+                     addrs: list[str], d_px: float = 0.0,
+                     max_ntl: float = 0.0):
+        """Interroge les plus grosses contreparties : liquidation ou pas ?
+
+        `addrs` arrive trié par taille décroissante (les fills de liquidation
+        sont gros). On enregistre le nombre d'adresses RÉELLEMENT sondées, pas
+        celui qu'on aurait voulu sonder — sinon la précision mesurée est
+        fausse dès que le budget coupe.
+        """
         uniq = []
-        for a in reversed(addrs):
+        for a in addrs:
             if a not in uniq:
                 uniq.append(a)
             if len(uniq) >= PROBE_MAX_ADDR:
                 break
-        found = recent = 0
+        found = recent = probed = 0
         cutoff = int((time.time() - 4 * BURST_WINDOW_SEC) * 1000)
         for a in uniq:
             if _stop.is_set():
@@ -353,6 +394,7 @@ class Collector:
             if not self._take_probe_token():
                 self.probe_skipped += 1
                 break
+            probed += 1
             try:
                 fills = post_info({"type": "userFills", "user": a})
             except Exception as e:
@@ -363,14 +405,16 @@ class Collector:
             found += tot
             recent += rec
         with self.lock:
-            self.con.execute("INSERT INTO probe VALUES (?,?,?,?,?,?)",
-                             (int(time.time() * 1000), coin, len(uniq), recent,
-                              d_pct, sell_ratio))
+            self.con.execute(
+                "INSERT INTO probe (ts, coin, n_addr, n_liq, d_oi_pct, "
+                "sell_ratio, d_px_pct, max_ntl) VALUES (?,?,?,?,?,?,?,?)",
+                (int(time.time() * 1000), coin, probed, recent, d_pct,
+                 sell_ratio, d_px, max_ntl))
             self.con.commit()
-        logger.info("rafale %s ΔOI %.2f%% vente %.0f%% → %d fills de "
-                    "liquidation pendant la rafale (%d au total avec "
-                    "l'historique des %d adresses)", coin, 100 * d_pct,
-                    100 * sell_ratio, recent, found, len(uniq))
+        logger.info("rafale %s ΔOI %.2f%% Δpx %.2f%% gros trade %.0f$ → "
+                    "%d liquidation(s) confirmée(s) sur %d adresses sondées "
+                    "(%d fills avec leur historique)", coin, 100 * d_pct,
+                    100 * d_px, max_ntl, recent, probed, found)
 
     def backstop_loop(self):
         """Vérité terrain gratuite : fills du liquidator de secours HLP."""

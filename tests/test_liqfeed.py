@@ -32,8 +32,10 @@ def test_trade_side_aggregation(collector):
     b = c.buckets[(5, "AAA")]
     assert b["buy"] == 20.0 and b["sell"] == 30.0
     assert b["n"] == 2 and b["max"] == 30.0
-    # les contreparties sont mémorisées pour la vérification a posteriori
-    assert {u for _, u in c.recent_addr["AAA"]} == {"0xa", "0xb", "0xc", "0xd"}
+    # contreparties mémorisées AVEC la taille du trade : c'est elle qui
+    # sert à sonder les plus grosses d'abord (les liquidations sont grosses)
+    assert {u for _, u, _ in c.recent_addr["AAA"]} == {"0xa", "0xb", "0xc", "0xd"}
+    assert {n for _, _, n in c.recent_addr["AAA"]} == {20.0, 30.0}
 
 
 def test_ctx_ignores_malformed(collector):
