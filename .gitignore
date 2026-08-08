@@ -11,6 +11,14 @@ minutelab/state/
 xsmom/state/
 grokwatch/state/
 llmbot/state/
+rsimr/state/
+# données/bases régénérables du labo RSI-MR
+rsimr/liq.db
+rsimr/liq.db-*
+rsimr/ohlcv_1h_200d/
+# états runtime et logs des expériences A/B
+experiments/*/*_state/
+experiments/*/logs/
 # caches inter-process racine (rate-limiter, OHLCV)
 state/
 *.bak
