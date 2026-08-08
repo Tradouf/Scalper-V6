@@ -48,7 +48,11 @@ class HyperliquidClient:
         wallet_key: str | None = None,
         config_path: str | None = None,
         use_testnet: bool | None = None,
+        account_address: str | None = None,
     ):
+        # account_address = COMPTE MAÎTRE quand `wallet_key` est une API wallet
+        # (agent). Sans lui, toutes les lectures (equity, positions) portent sur
+        # l'adresse dérivée de la clé, qui ne détient rien → equity fantôme à 0.
         from hyperliquid.info import Info
 
         self._testnet = use_testnet if use_testnet is not None else USE_TESTNET
@@ -66,7 +70,7 @@ class HyperliquidClient:
         self._wallet_address: str | None = None
 
         key = wallet_key
-        account_addr = None
+        account_addr = account_address
         if key is None:
             key, account_addr = self._load_wallet_config(config_path or HL_WALLET_CONFIG)
 

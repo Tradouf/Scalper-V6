@@ -117,7 +117,14 @@ STATE_FILE = Path(os.environ.get(
 
 
 def make_live_client():
-    """Client HL sur le wallet HL2. Refuse une clé partagée avec un bot actif."""
+    """Client HL sur le wallet HL2. Refuse une clé partagée avec un bot actif.
+
+    `HL2_PRIVATE_KEY` est une API wallet (agent) : elle SIGNE pour le compte
+    maître `HL2_ACCOUNT_ADDRESS`, mais ne détient rien elle-même. Sans passer
+    l'adresse du maître, toutes les lectures portent sur l'agent et l'equity
+    vaut 0 — le bot ne verrait aucun capital et ne trierait rien, en silence.
+    L'adresse maître est donc OBLIGATOIRE ici.
+    """
     key = (os.environ.get(ENV_PRIVATE_KEY) or "").strip()
     if not key:
         raise RuntimeError(
@@ -127,8 +134,13 @@ def make_live_client():
             raise RuntimeError(
                 f"{ENV_PRIVATE_KEY} identique à {other} — un bot ACTIF utilise "
                 "ce wallet, partage interdit")
+    master = (os.environ.get(ENV_ACCOUNT_ADDRESS) or "").strip()
+    if not master:
+        raise RuntimeError(
+            f"{ENV_ACCOUNT_ADDRESS} manquant — sans le compte maître, l'equity "
+            "lue serait celle de l'API wallet (0 $) et aucun ordre ne partirait")
     from hyperliquid_client import HyperliquidClient
-    return HyperliquidClient(wallet_key=key)
+    return HyperliquidClient(wallet_key=key, account_address=master)
 
 
 def filtered_regime(closes: List[float]) -> int:
@@ -186,6 +198,18 @@ class RSIMRLiveTrader:
         else:
             self.client = make_live_client()
         self.state = self._load_state()
+        if not self.dry_run:
+            # Garde « equity fantôme » : une equity nulle ne signifie pas
+            # « pas d'argent », elle signifie presque toujours qu'on lit la
+            # mauvaise adresse (API wallet au lieu du compte maître). Dans ce
+            # cas le bot ne trade rien tout en paraissant sain — échec bruyant
+            # exigé, jamais un silence.
+            equity = self._account_value()
+            if equity <= 0:
+                raise RuntimeError(
+                    f"equity live lue à {equity:.2f} $ — lecture sur la mauvaise "
+                    f"adresse ou wallet vide ; refus de démarrer")
+            logger.info("equity live confirmée : %.2f $", equity)
 
     # ── État ────────────────────────────────────────────────────────────────
 

@@ -243,7 +243,9 @@ def test_freeze_after_repeated_equity_read_failures(monkeypatch):
         def get_portfolio_value(self):
             raise RuntimeError("API muette")
 
-    t = L.RSIMRLiveTrader(client=Broken(), dry_run=False)
+    # démarrage sain, puis l'API devient muette en cours de route
+    t = L.RSIMRLiveTrader(client=FakeClient(equity=200.0), dry_run=False)
+    t.client = Broken()
     monkeypatch.setattr(L, "KILL_MAX_READ_FAILURES", 2)
     assert t.kill_switch_engaged(time.time()) is True
     assert t.frozen_reason is None
@@ -301,3 +303,45 @@ def test_state_survives_restart(monkeypatch):
     # un nouveau trader relit l'état : la position reste connue et sortira
     t2 = L.RSIMRLiveTrader(client=FakeClient(), dry_run=True, symbols=["AAA"])
     assert "AAA" in t2.state["positions"]
+
+
+# ── API wallet vs compte maître (piège « equity fantôme ») ──────────────────
+
+def test_live_requires_master_account_address(monkeypatch):
+    """Sans compte maître, l'equity lue serait celle de l'agent (0 $)."""
+    monkeypatch.setenv(L.ENV_PRIVATE_KEY, "0xkey")
+    monkeypatch.delenv(L.ENV_ACCOUNT_ADDRESS, raising=False)
+    with pytest.raises(RuntimeError, match="compte maître"):
+        L.make_live_client()
+
+
+def test_live_refuses_to_start_on_zero_equity():
+    """Equity nulle = presque toujours une lecture sur la mauvaise adresse."""
+    class Empty(FakeClient):
+        def get_portfolio_value(self):
+            return 0.0
+
+    with pytest.raises(RuntimeError, match="refus de démarrer"):
+        L.RSIMRLiveTrader(client=Empty(), dry_run=False)
+
+
+def test_live_starts_when_equity_is_readable():
+    t = L.RSIMRLiveTrader(client=FakeClient(equity=207.9), dry_run=False)
+    assert t.dry_run is False
+
+
+def test_client_passes_master_address(monkeypatch):
+    """Le compte maître doit atteindre HyperliquidClient, sinon lecture agent."""
+    seen = {}
+
+    class FakeHL:
+        def __init__(self, wallet_key=None, account_address=None, **kw):
+            seen["key"] = wallet_key
+            seen["account_address"] = account_address
+
+    import hyperliquid_client
+    monkeypatch.setattr(hyperliquid_client, "HyperliquidClient", FakeHL)
+    monkeypatch.setenv(L.ENV_PRIVATE_KEY, "0xkey")
+    monkeypatch.setenv(L.ENV_ACCOUNT_ADDRESS, "0xMASTER")
+    L.make_live_client()
+    assert seen == {"key": "0xkey", "account_address": "0xMASTER"}
