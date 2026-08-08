@@ -1,0 +1,1 @@
+"""LLMBot — bot Hyperliquid centré LLM, filtre quantitatif en amont."""
