@@ -146,9 +146,10 @@ def test_kill_switch_single_breach_resets(tmp_path):
 
 
 def test_kill_switch_read_failures_freeze_entries(tmp_path):
-    client = FakeLiveClient(positions=[])
-    client.portfolio = RuntimeError("429")
+    # démarrage sain (l'equity doit être lisible au boot), puis l'API tombe
+    client = FakeLiveClient(portfolio=2000.0, positions=[])
     tr = make_trader(tmp_path, dry_run=False, client=client)
+    client.portfolio = RuntimeError("429")
     assert tr.frozen_reason is None                        # boot OK (0 positions)
     assert tr.kill_switch_engaged(NOW) is False            # échec 1/3
     assert tr.kill_switch_engaged(NOW + 1) is False        # 2/3
@@ -240,3 +241,46 @@ def test_live_skipped_entry_not_in_state(tmp_path, monkeypatch):
     day = int(NOW // 86_400)
     assert tr.state["tranches"][day % N_TRANCHES] == {}
     assert tr.state["exec_stats"]["skip"] == 2 * N_LEG
+
+
+# ── API wallet vs compte maître (piège « equity fantôme ») ──────────────────
+
+def test_make_live_client_requires_master_account(monkeypatch):
+    """Sans compte maître, l'equity lue serait celle de l'agent : 0 $."""
+    monkeypatch.setenv("HL4_PRIVATE_KEY", "0xdeadbeef")
+    for other in ("HL_PRIVATE_KEY", "HL2_PRIVATE_KEY", "HL3_PRIVATE_KEY"):
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.delenv("HL4_ACCOUNT_ADDRESS", raising=False)
+    with pytest.raises(RuntimeError, match="compte maître"):
+        make_live_client()
+
+
+def test_make_live_client_passes_master_address(monkeypatch):
+    seen = {}
+
+    class FakeHL:
+        def __init__(self, wallet_key=None, account_address=None, **kw):
+            seen["key"] = wallet_key
+            seen["account_address"] = account_address
+
+    import hyperliquid_client
+    monkeypatch.setattr(hyperliquid_client, "HyperliquidClient", FakeHL)
+    monkeypatch.setenv("HL4_PRIVATE_KEY", "0xdeadbeef")
+    for other in ("HL_PRIVATE_KEY", "HL2_PRIVATE_KEY", "HL3_PRIVATE_KEY"):
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.setenv("HL4_ACCOUNT_ADDRESS", "0xMASTER")
+    make_live_client()
+    assert seen == {"key": "0xdeadbeef", "account_address": "0xMASTER"}
+
+
+def test_live_refuses_to_start_on_zero_equity(tmp_path):
+    """Equity nulle = presque toujours une lecture sur la mauvaise adresse."""
+    client = FakeLiveClient(portfolio=0.0, positions=[])
+    with pytest.raises(RuntimeError, match="refus de démarrer"):
+        make_trader(tmp_path, dry_run=False, client=client)
+
+
+def test_live_starts_when_equity_is_readable(tmp_path):
+    client = FakeLiveClient(portfolio=2000.0, positions=[])
+    tr = make_trader(tmp_path, dry_run=False, client=client)
+    assert tr.dry_run is False and tr.frozen_reason is None

@@ -100,7 +100,15 @@ STATE_FILE = Path(os.environ.get(
 
 
 def make_live_client():
-    """Client HL sur wallet dédié. Refuse un wallet déjà utilisé ailleurs."""
+    """Client HL sur wallet dédié. Refuse un wallet déjà utilisé ailleurs.
+
+    Les clés HL de ce projet sont des API wallets (agents) : elles SIGNENT
+    pour un compte maître mais ne détiennent rien. Sans passer l'adresse du
+    maître, toutes les LECTURES (equity, positions) portent sur l'agent et
+    renvoient 0 — le sizing tombe à zéro et le kill-switch devient aveugle,
+    en silence. Bug rencontré en vrai sur RSI-MR le 08-08 : l'adresse maître
+    est donc OBLIGATOIRE ici aussi.
+    """
     key = (os.environ.get(ENV_PRIVATE_KEY) or "").strip()
     if not key:
         raise RuntimeError(
@@ -112,8 +120,15 @@ def make_live_client():
             raise RuntimeError(
                 f"{ENV_PRIVATE_KEY} identique à {other} — wallet partagé interdit"
             )
+    master = (os.environ.get(ENV_ACCOUNT_ADDRESS) or "").strip()
+    if not master:
+        raise RuntimeError(
+            f"{ENV_ACCOUNT_ADDRESS} manquant — sans le compte maître, l'equity "
+            "lue serait celle de l'API wallet (0 $) : sizing nul et "
+            "kill-switch aveugle"
+        )
     from hyperliquid_client import HyperliquidClient
-    return HyperliquidClient(wallet_key=key)
+    return HyperliquidClient(wallet_key=key, account_address=master)
 
 
 class XSMomentumLiveTrader:
@@ -153,6 +168,16 @@ class XSMomentumLiveTrader:
         self.frozen_reason: Optional[str] = None   # gel réconciliation/lectures
 
         if not self.dry_run:
+            # Garde « equity fantôme » : une equity nulle ne veut pas dire
+            # « compte vide », elle signale presque toujours une lecture sur
+            # la mauvaise adresse. Échec bruyant plutôt qu'un bot qui tourne
+            # sans jamais rien ouvrir en paraissant sain.
+            equity = self._account_value()
+            if equity <= 0:
+                raise RuntimeError(
+                    f"equity live lue à {equity:.2f} $ — lecture sur la "
+                    f"mauvaise adresse ou wallet vide ; refus de démarrer")
+            logger.info("equity live confirmée : %.2f $", equity)
             self._reconcile_boot()
 
     # ── État (atomique) ─────────────────────────────────────────────────────
