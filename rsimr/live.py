@@ -198,6 +198,8 @@ class RSIMRLiveTrader:
         else:
             self.client = make_live_client()
         self.state = self._load_state()
+        # tracé dans l'état pour que le dashboard ne devine jamais le mode
+        self.state["dry_run"] = self.dry_run
         if not self.dry_run:
             # Garde « equity fantôme » : une equity nulle ne signifie pas
             # « pas d'argent », elle signifie presque toujours qu'on lit la
@@ -210,6 +212,10 @@ class RSIMRLiveTrader:
                     f"equity live lue à {equity:.2f} $ — lecture sur la mauvaise "
                     f"adresse ou wallet vide ; refus de démarrer")
             logger.info("equity live confirmée : %.2f $", equity)
+        # persisté tout de suite : sans cela le mode n'apparaîtrait qu'au
+        # premier sweep horaire, et le dashboard afficherait « dry-run » sur un
+        # bot armé — l'ambiguïté à ne jamais laisser exister.
+        self._save_state()
 
     # ── État ────────────────────────────────────────────────────────────────
 
