@@ -90,3 +90,47 @@ def test_sell_ratio_no_longer_gates_detection(collector):
     src = inspect.getsource(liqfeed.Collector.flush_loop)
     assert "sell_ratio >= 0.6" not in src
     assert "BURST_MIN_MAX_NTL" in src
+
+
+# ── Un événement = un déclenchement (hystérésis) ────────────────────────────
+
+def _drive(c, liqfeed, coin, seq, oi0=1_000_000.0):
+    """Injecte une suite de ΔOI (fractions de l'OI) et renvoie les rafales."""
+    fired = []
+    for d_frac in seq:
+        c.hist[coin].clear()
+        for i in range(12):
+            c.hist[coin].append((i, oi0 * d_frac / 12, oi0, 0.0, 100.0,
+                                 10.0, 5000.0))
+        h = c.hist[coin]
+        oi_now = h[-1][2]
+        d_pct = sum(x[1] for x in h) / oi_now
+        max_ntl = max(x[6] for x in h)
+        if d_pct > -liqfeed.BURST_DOI_PCT * liqfeed.BURST_REARM_FRAC:
+            c.armed[coin] = True
+        if d_pct <= -liqfeed.BURST_DOI_PCT and max_ntl >= liqfeed.BURST_MIN_MAX_NTL:
+            if c.armed[coin]:
+                c.armed[coin] = False
+                fired.append(d_pct)
+    return fired
+
+
+def test_same_drop_fires_only_once(collector, monkeypatch):
+    """Une chute qui persiste dans la fenêtre ne doit pas être recomptée."""
+    c, liqfeed = collector
+    # la même chute de −0.5 % vue 4 fois de suite (fenêtre glissante)
+    fired = _drive(c, liqfeed, "INJ", [-0.005] * 4)
+    assert len(fired) == 1
+
+
+def test_new_drop_after_recovery_fires_again(collector):
+    """Après retour à la normale, un nouvel événement doit redéclencher."""
+    c, liqfeed = collector
+    fired = _drive(c, liqfeed, "INJ", [-0.005, -0.005, 0.0, -0.005])
+    assert len(fired) == 2
+
+
+def test_guard_delay_covers_analysis_window(collector):
+    """Le délai de garde doit être ≥ la fenêtre, sinon recomptage garanti."""
+    from rsimr import liqfeed
+    assert liqfeed.PROBE_MIN_GAP_SEC >= liqfeed.BURST_WINDOW_SEC

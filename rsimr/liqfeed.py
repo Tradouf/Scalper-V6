@@ -82,7 +82,14 @@ BURST_DOI_PCT = float(os.environ.get("LIQFEED_BURST_DOI_PCT", "0.002"))
 BURST_MIN_MAX_NTL = float(os.environ.get("LIQFEED_BURST_MIN_MAX_NTL", "800"))
 BURST_WINDOW_SEC = int(os.environ.get("LIQFEED_BURST_WINDOW_SEC", "60"))
 PROBE_MAX_ADDR = int(os.environ.get("LIQFEED_PROBE_MAX_ADDR", "6"))
-PROBE_MIN_GAP_SEC = float(os.environ.get("LIQFEED_PROBE_MIN_GAP_SEC", "45"))
+# Délai de garde ≥ fenêtre d'analyse : à 45 s pour une fenêtre de 60 s, la même
+# chute d'OI restait dans la fenêtre et se redéclenchait indéfiniment (observé :
+# INJ compté 4 fois en 3 min avec des features identiques). Le délai seul ne
+# suffit pas — voir l'hystérésis ci-dessous.
+PROBE_MIN_GAP_SEC = float(os.environ.get("LIQFEED_PROBE_MIN_GAP_SEC", "120"))
+# Hystérésis : après un déclenchement, le coin reste DÉSARMÉ tant que la chute
+# n'est pas retombée sous la moitié du seuil. Un événement = un déclenchement.
+BURST_REARM_FRAC = float(os.environ.get("LIQFEED_BURST_REARM_FRAC", "0.5"))
 # Budget GLOBAL de requêtes de vérification. Indispensable : une vraie cascade
 # fait éclater les 45 coins EN MÊME TEMPS (c'est sa définition), soit ~270
 # requêtes d'un coup sur le rate-limiter partagé avec les autres bots. On
@@ -179,6 +186,7 @@ class Collector:
         self.recent_addr: dict[str, deque] = defaultdict(
             lambda: deque(maxlen=400))
         self.last_probe: dict[str, float] = {}
+        self.armed: dict[str, bool] = defaultdict(lambda: True)
         self.probe_times: deque = deque(maxlen=4 * PROBE_BUDGET_PER_MIN)
         self.probe_skipped = 0
         self.last_msg = time.time()
@@ -299,9 +307,14 @@ class Collector:
                     px0 = next((x[5] for x in h if x[5] > 0), 0.0)
                     px1 = next((x[5] for x in reversed(h) if x[5] > 0), 0.0)
                     d_px = (px1 - px0) / px0 if px0 > 0 else 0.0
+                    # hystérésis : réarmer dès que la chute s'est résorbée
+                    if d_pct > -BURST_DOI_PCT * BURST_REARM_FRAC:
+                        self.armed[coin] = True
                     if d_pct <= -BURST_DOI_PCT and max_ntl >= BURST_MIN_MAX_NTL:
-                        if time.time() - self.last_probe.get(coin, 0) > PROBE_MIN_GAP_SEC:
+                        if (self.armed[coin] and time.time()
+                                - self.last_probe.get(coin, 0) > PROBE_MIN_GAP_SEC):
                             self.last_probe[coin] = time.time()
+                            self.armed[coin] = False
                             # les plus GROSSES contreparties d'abord
                             recent = list(self.recent_addr[coin])[-200:]
                             recent.sort(key=lambda x: -x[2])
