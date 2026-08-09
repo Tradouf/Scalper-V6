@@ -27,12 +27,17 @@ import hmac
 import json
 import os
 import socket
+import sys
 import time
 import urllib.request
 from base64 import b64decode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from docpage import render_doc  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 STATE_DIR = REPO / "xsmom" / "state"
@@ -45,6 +50,7 @@ PORT = int(os.environ.get("XSMOM_DASHBOARD_PORT", "8086"))
 HOST = os.environ.get("XSMOM_DASHBOARD_HOST", "127.0.0.1")
 AUTH_USER = os.environ.get("XSMOM_DASHBOARD_USER", "xsmom")
 AUTH_PASSWORD = os.environ.get("XSMOM_DASHBOARD_PASSWORD", "")
+DOC_FILE = Path(os.environ.get("SDM_DOC_FILE", REPO / "ANALYSE_FONCTIONNELLE.md"))
 
 N_TRANCHES = 7
 VERDICT_TS = 1789430400.0          # 2026-09-15, critère fixé d'avance
@@ -209,6 +215,9 @@ td.num,th.num{text-align:right}
 .pos{color:var(--ok)}.neg{color:var(--bad)}.mut{color:var(--mut)}
 .sec{margin-top:22px}
 .scroll{overflow-x:auto}
+.doclink{margin:-2px 0 12px}
+.doclink a{color:#6ea8fe;text-decoration:none;font-size:13px}
+.doclink a:hover{text-decoration:underline}
 .bar{height:8px;background:#20242e;border-radius:4px;overflow:hidden;margin-top:6px}
 .bar>span{display:block;height:100%}
 .alert{background:rgba(217,164,65,.12);border:1px solid var(--warn);color:#f0d08a;
@@ -216,6 +225,7 @@ padding:10px 12px;border-radius:8px;margin-top:10px}
 </style>
 <div class="wrap">
   <h1>XSMom <span class="mut">— acheter les meilleurs, vendre les pires</span></h1>
+  <div class="doclink"><a href="/doc">Comment ce bot fonctionne — analyse fonctionnelle</a></div>
   <div class="sub" id="sub">chargement…</div>
   <div class="grid" id="tiles"></div>
   <div id="alerts"></div>
@@ -338,6 +348,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, INDEX_HTML.encode("utf-8"),
                        "text/html; charset=utf-8")
+        elif path == "/doc":
+            self._send(200, render_doc(DOC_FILE), "text/html; charset=utf-8")
         elif path == "/api/state":
             try:
                 self._send(200, json.dumps(build_state()).encode(),

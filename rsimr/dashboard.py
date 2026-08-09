@@ -27,12 +27,17 @@ import json
 import os
 import socket
 import sqlite3
+import sys
 import time
 import urllib.request
 from base64 import b64decode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from docpage import render_doc  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 STATE_DIR = REPO / "rsimr" / "state"
@@ -41,6 +46,7 @@ LIVE_STATE = Path(os.environ.get("RSIMR_LIVE_STATE_FILE",
 PAPER_STATE = Path(os.environ.get("RSIMR_STATE_FILE",
                                   STATE_DIR / "rsimr_state.json"))
 LIQ_DB = Path(os.environ.get("LIQFEED_DB", REPO / "rsimr" / "liq.db"))
+DOC_FILE = Path(os.environ.get("SDM_DOC_FILE", REPO / "ANALYSE_FONCTIONNELLE.md"))
 
 PORT = int(os.environ.get("RSIMR_DASHBOARD_PORT", "8085"))
 HOST = os.environ.get("RSIMR_DASHBOARD_HOST", "127.0.0.1")
@@ -256,9 +262,13 @@ th{color:var(--mut);font-weight:500;font-size:12px}
 .alert{background:rgba(224,85,78,.12);border:1px solid var(--bad);color:#ffb3ae;
 padding:10px 12px;border-radius:8px;margin-top:10px}
 .scroll{overflow-x:auto}
+.doclink{margin:-2px 0 12px}
+.doclink a{color:#6ea8fe;text-decoration:none;font-size:13px}
+.doclink a:hover{text-decoration:underline}
 </style>
 <div class="wrap">
   <h1>Ricochet <span class="mut">— rachat de survente RSI</span></h1>
+  <div class="doclink"><a href="/doc">Comment ce bot fonctionne — analyse fonctionnelle</a></div>
   <div class="sub" id="sub">chargement…</div>
   <div class="grid" id="tiles"></div>
   <div id="alerts"></div>
@@ -378,6 +388,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, INDEX_HTML.encode("utf-8"),
                        "text/html; charset=utf-8")
+        elif path == "/doc":
+            self._send(200, render_doc(DOC_FILE), "text/html; charset=utf-8")
         elif path == "/api/state":
             try:
                 self._send(200, json.dumps(build_state()).encode(),
