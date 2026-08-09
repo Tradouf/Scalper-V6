@@ -57,6 +57,8 @@ VERDICT_TS = 1789430400.0          # 2026-09-15, critère fixé d'avance
 TARGET_BPS_DAY = (5.0, 10.0)       # fourchette attendue par le backtest
 _MIDS: Dict[str, Any] = {"ts": 0.0, "data": {}}
 MIDS_TTL = 20.0
+_MKT: Dict[str, Any] = {"ts": 0.0, "data": {}}
+MKT_TTL = 60.0
 
 
 def _is_private_host(host: str) -> bool:
@@ -102,6 +104,62 @@ def all_mids() -> Dict[str, float]:
     _MIDS["data"] = data
     _MIDS["ts"] = now
     return data
+
+
+def market_context() -> Dict[str, Any]:
+    """État du marché en UN appel — pour DIAGNOSTIQUER, pas pour filtrer.
+
+    Mesuré sur 206 jours : l'état du marché ne prédit PAS le résultat de
+    XSMom (corrélations −0.11 à +0.08, écarts entre tiers de l'ordre de
+    100 bps pour un écart-type de 562 bps — du bruit). Aucune règle de
+    trading ne doit donc en découler.
+
+    Ce bloc sert à autre chose : si la stratégie déçoit, savoir ce que
+    faisait le marché permet de distinguer un « krach de momentum »
+    (rebond violent qui fait remonter les perdants, donc les shorts) d'un
+    problème propre au bot. Et la corrélation simultanée mesurée (−0.07)
+    est la vérification directe de la neutralité promise : si elle
+    s'éloigne durablement de zéro, l'hypothèse centrale est cassée.
+    """
+    now = time.time()
+    if now - _MKT["ts"] < MKT_TTL and _MKT["data"]:
+        return _MKT["data"]
+    out: Dict[str, Any] = {"available": False}
+    try:
+        req = urllib.request.Request(
+            "https://api.hyperliquid.xyz/info",
+            data=json.dumps({"type": "metaAndAssetCtxs"}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            meta, ctxs = json.load(r)
+        rows = []
+        for m, c in zip(meta.get("universe", []), ctxs):
+            try:
+                px = float(c.get("markPx") or 0)
+                prev = float(c.get("prevDayPx") or 0)
+                vol = float(c.get("dayNtlVlm") or 0)
+            except (TypeError, ValueError):
+                continue
+            if px > 0 and prev > 0 and vol > 0:
+                rows.append((m.get("name"), (px - prev) / prev, vol))
+        if rows:
+            tot = sum(v for _, _, v in rows)
+            # pondéré par le volume : proche d'un indice de capitalisation,
+            # et calculable en un seul appel
+            weighted = sum(r * v for _, r, v in rows) / tot
+            equal = sum(r for _, r, _ in rows) / len(rows)
+            up = sum(1 for _, r, _ in rows if r > 0)
+            movers = sorted(rows, key=lambda x: -abs(x[1]))[:5]
+            out = {"available": True, "n": len(rows),
+                   "ret24h_weighted": weighted, "ret24h_equal": equal,
+                   "breadth_up_pct": 100.0 * up / len(rows),
+                   "volume_24h": tot,
+                   "movers": [{"sym": s, "ret": r} for s, r, _ in movers]}
+    except Exception as e:
+        out = {"available": False, "error": str(e)}
+    _MKT["data"] = out
+    _MKT["ts"] = now
+    return out
 
 
 def build_state() -> Dict[str, Any]:
@@ -186,6 +244,7 @@ def build_state() -> Dict[str, Any]:
         "symbols": rows,
         "rebalances": rebs,
         "equity_curve": [[t, v] for t, v in hist][-60:],
+        "market": market_context(),
     }
 
 
@@ -232,6 +291,9 @@ padding:10px 12px;border-radius:8px;margin-top:10px}
 
   <div class="sec"><div class="k">Neutralité au marché</div>
     <div class="card" id="neutral"></div></div>
+
+  <div class="sec"><div class="k">Contexte de marché — pour diagnostiquer, pas pour filtrer</div>
+    <div class="card" id="mkt"></div></div>
 
   <div class="sec"><div class="k">Exposition nette par symbole (toutes tranches confondues)</div>
     <div class="scroll"><table id="syms"></table></div></div>
@@ -281,6 +343,20 @@ async function tick(){
    <div class="bar"><span style="width:${100*L/T}%;background:var(--ok)"></span></div>
    <div class="hint">Les deux côtés doivent rester proches : le gain vient de l'écart
    entre gagnants et perdants, pas du sens du marché.</div>`;
+
+ const m=s.market||{};
+ document.getElementById('mkt').innerHTML = m.available
+  ? `<div>Marché 24 h <b class="${cls(m.ret24h_weighted)}">${(100*m.ret24h_weighted).toFixed(2)} %</b>
+     <span class="mut">(pondéré volume, ${m.n} cryptos)</span>
+     &nbsp;·&nbsp; equipondéré <b class="${cls(m.ret24h_equal)}">${(100*m.ret24h_equal).toFixed(2)} %</b>
+     &nbsp;·&nbsp; <b>${m.breadth_up_pct.toFixed(0)} %</b> en hausse</div>
+     <div class="bar"><span style="width:${m.breadth_up_pct}%;background:var(--ok)"></span></div>
+     <div class="hint">Plus gros mouvements : ${(m.movers||[]).map(x=>
+       `${x.sym} <span class="${cls(x.ret)}">${(100*x.ret).toFixed(1)} %</span>`).join(' · ')}</div>
+     <div class="hint">Mesuré sur 206 j : l'état du marché ne prédit pas le résultat de XSMom
+     (corrélation −0.07 avec le marché simultané, ce qui confirme la neutralité).
+     Ce bloc sert à comprendre APRÈS COUP une période décevante, pas à décider.</div>`
+  : `<div class="mut">contexte de marché indisponible</div>`;
 
  document.getElementById('syms').innerHTML =
   '<tr><th>Symbole</th><th>Sens</th><th class="num">Exposition nette</th>'

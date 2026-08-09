@@ -317,14 +317,40 @@ C'est délibéré : voir la cible en même temps que le résultat empêche de la
 redéfinir après coup, ce qui est la façon la plus courante de se mentir à
 soi-même sur une stratégie.
 
-### 5.4 Les 7 tranches et les rééquilibrages
+### 5.4 Le contexte de marché — pour comprendre, pas pour décider
+
+Le mouvement de l'ensemble du marché sur 24 heures (pondéré par les volumes,
+ce qui approche un indice de capitalisation), la proportion de cryptos en
+hausse, et les plus gros mouvements du jour.
+
+**Ce bloc ne sert pas à filtrer les trades.** La question a été mesurée sur
+206 jours : l'état du marché ne prédit pas le résultat de XSMom. La
+corrélation avec le marché du moment est de −0,07, ce qui confirme au passage
+que la neutralité fonctionne, et aucun indicateur de phase ou de dispersion ne
+ressort du bruit.
+
+Son utilité est ailleurs, et elle est réelle : **si la stratégie déçoit, savoir
+ce que faisait le marché permet de distinguer deux causes très différentes**.
+Le momentum a un mode de défaillance connu — après une forte baisse, un rebond
+violent fait remonter le plus fort ce qui avait le plus chuté, c'est-à-dire
+exactement ce que la stratégie a vendu à découvert. Ce phénomène est rare : il
+n'y en a probablement aucun exemple dans les 206 jours mesurés, ce qui explique
+qu'on ne puisse pas le chiffrer. On ne peut donc pas s'en protéger à l'avance,
+mais on peut le **reconnaître** s'il survient — à condition de regarder le
+marché au bon moment.
+
+C'est aussi la vérification permanente de l'hypothèse centrale : si la
+corrélation avec le marché s'éloigne durablement de zéro, la stratégie n'est
+plus neutre et le problème est structurel.
+
+### 5.5 Les 7 tranches et les rééquilibrages
 
 Combien de positions dans chaque tranche, laquelle est renouvelée aujourd'hui,
 et une alerte si l'une est incomplète — signe de données manquantes ou de
 montants sous le minimum. Puis l'historique des derniers rééquilibrages avec
 leur résultat et les cryptos choisies.
 
-### 5.5 Un détail d'efficacité
+### 5.6 Un détail d'efficacité
 
 Tous les prix sont obtenus en **un seul appel** à la plateforme, mis en cache
 20 secondes. Rafraîchir la page ne consomme donc quasiment rien. Et si les prix

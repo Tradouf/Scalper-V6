@@ -121,3 +121,85 @@ def test_tranche_fill_reported():
 def test_missing_state_does_not_crash():
     s = D.build_state()
     assert s["symbols"] == [] and s["n_positions"] == 0
+
+
+# ── Contexte de marché (diagnostic, jamais un filtre de trading) ────────────
+
+def _fake_meta(rows):
+    """rows = [(nom, markPx, prevDayPx, volume)]"""
+    meta = {"universe": [{"name": n} for n, _, _, _ in rows]}
+    ctxs = [{"markPx": str(px), "prevDayPx": str(prev), "dayNtlVlm": str(v)}
+            for _, px, prev, v in rows]
+    return [meta, ctxs]
+
+
+@pytest.fixture()
+def no_mkt_cache():
+    D._MKT["ts"] = 0.0
+    D._MKT["data"] = {}
+    yield
+    D._MKT["ts"] = 0.0
+    D._MKT["data"] = {}
+
+
+def test_market_return_is_volume_weighted(monkeypatch, no_mkt_cache):
+    """Un gros volume doit peser plus qu'un petit — sinon l'indice est faux."""
+    rows = [("BIG", 110.0, 100.0, 900.0),    # +10 %, 90 % du volume
+            ("SMALL", 90.0, 100.0, 100.0)]   # −10 %, 10 % du volume
+    monkeypatch.setattr(D.urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(_fake_meta(rows)))
+    m = D.market_context()
+    assert m["available"] is True
+    assert m["ret24h_weighted"] == pytest.approx(0.08)   # .9*.1 + .1*(-.1)
+    assert m["ret24h_equal"] == pytest.approx(0.0)
+    assert m["breadth_up_pct"] == pytest.approx(50.0)
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def read(self):
+        return json.dumps(self._p).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_market_ignores_malformed_rows(monkeypatch, no_mkt_cache):
+    rows = [("OK", 110.0, 100.0, 50.0), ("NOPX", 0.0, 100.0, 50.0),
+            ("NOVOL", 110.0, 100.0, 0.0)]
+    monkeypatch.setattr(D.urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(_fake_meta(rows)))
+    m = D.market_context()
+    assert m["n"] == 1
+
+
+def test_market_failure_is_reported_not_faked(monkeypatch, no_mkt_cache):
+    def boom(*a, **k):
+        raise RuntimeError("API muette")
+    monkeypatch.setattr(D.urllib.request, "urlopen", boom)
+    m = D.market_context()
+    assert m["available"] is False and "API muette" in m.get("error", "")
+
+
+def test_market_is_cached(monkeypatch, no_mkt_cache):
+    calls = []
+    rows = [("A", 110.0, 100.0, 10.0)]
+
+    def once(*a, **k):
+        calls.append(1)
+        return _FakeResp(_fake_meta(rows))
+    monkeypatch.setattr(D.urllib.request, "urlopen", once)
+    D.market_context()
+    D.market_context()
+    assert len(calls) == 1          # un seul appel réseau grâce au cache
+
+
+def test_build_state_includes_market(monkeypatch, no_mkt_cache):
+    write_paper([{} for _ in range(7)])
+    monkeypatch.setattr(D, "market_context", lambda: {"available": False})
+    assert D.build_state()["market"] == {"available": False}
