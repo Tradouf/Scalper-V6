@@ -1,0 +1,19 @@
+GridAgent — DÉPLOIEMENT BLOQUÉ
+===============================
+
+Motif : verdict §9 REJETÉ sur les deux fenêtres obligatoires (§9.3).
+  profit factor 0,053 et 0,087   (seuil > 1,2)
+  pire perte de session 3,59 %   (plafond 1,65 %) — le flatten ne contient pas
+  gate placebo p = 0,634         (α = 0,025) — le placebo fait MIEUX que le réel
+Date : 2026-08-13
+Détail : grid/VERDICT.md
+Registre : hypotheses/REGISTRY.md (entrée n°2)
+
+La présence de ce fichier fait échouer toute instanciation de GridAgent en mode
+live (`GridAgent(..., live=True)` lève GridDeploymentBlocked). Le backtest, les
+tests et les rejeux restent autorisés — c'est le passage d'ordre qui est
+interdit.
+
+NE PAS SUPPRIMER pour « juste essayer ». Le supprimer sans un nouveau verdict §9
+favorable, enregistré au registre avec le seuil Bonferroni du moment, revient à
+contourner le seul dispositif du projet capable de dire non.

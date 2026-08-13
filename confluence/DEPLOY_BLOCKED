@@ -1,0 +1,18 @@
+ConfluenceAgent — DÉPLOIEMENT BLOQUÉ
+=====================================
+
+Motif : verdict §9 REJETÉ sur deux fenêtres (2023-2026 et 2020-2023).
+Gate placebo : p = 0,42 et p = 0,61 contre α = 0,05.
+Date : 2026-08-12
+Détail : confluence/VERDICT.md
+Registre : hypotheses/REGISTRY.md (entrée n°1)
+
+La présence de ce fichier fait échouer toute tentative d'instanciation du
+ConfluenceAgent en mode live (`ConfluenceAgent(..., live=True)`). Le backtest,
+les tests et les rejeux restent autorisés — c'est le passage d'ordre qui est
+interdit.
+
+NE PAS SUPPRIMER pour « juste essayer ». Le supprimer sans un nouveau verdict
+§9 favorable, enregistré au registre avec le seuil placebo corrigé du nombre de
+candidats testés à ce jour, revient à contourner le seul dispositif du projet
+capable de dire non.

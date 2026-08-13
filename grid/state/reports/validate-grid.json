@@ -1,0 +1,302 @@
+{
+  "candidate": "GridAgent",
+  "registry_entry": 2,
+  "config_frozen": "6286ed279db61c89e9506f81aae53100f1670d628e5bb0118b5463bef577d676",
+  "config_untouched": true,
+  "decision_metric": "net_mtm_pnl (§7)",
+  "ab_handoff": {
+    "per_window": [
+      {
+        "window": "recente",
+        "A_flatten_net_mtm": -9474.97,
+        "B_handoff_net_mtm": -9474.97,
+        "delta": 0.0,
+        "B_better_or_equal": true,
+        "A_sessions": 358,
+        "B_sessions": 358,
+        "B_handoffs": 0
+      },
+      {
+        "window": "bear_2020_2023",
+        "A_flatten_net_mtm": -4087.97,
+        "B_handoff_net_mtm": -4087.97,
+        "delta": 0.0,
+        "B_better_or_equal": true,
+        "A_sessions": 87,
+        "B_sessions": 87,
+        "B_handoffs": 0
+      }
+    ],
+    "adopt_handoff": true,
+    "decision": "breakout_handoff: true — B ≥ A sur CHACUNE des fenêtres"
+  },
+  "handoff_adopted": true,
+  "windows": [
+    {
+      "label": "recente",
+      "metrics": {
+        "sessions": 358,
+        "net_mtm_pnl": -9474.97,
+        "realized_grid_pnl": 1725.03,
+        "inventory_pnl": -10410.55,
+        "funding_pnl": -12.42,
+        "fees": 801.87,
+        "gross_pnl_abs": 12519.22,
+        "fee_ratio": 0.0641,
+        "profit_factor": 0.053,
+        "win_rate": 0.209,
+        "cycles": 2394,
+        "taker_fills": 349,
+        "worst_session_loss_pct": 0.031122,
+        "handoffs": 0,
+        "stop_reasons": {
+          "regime_shift": 131,
+          "breakout": 104,
+          "drawdown": 123
+        },
+        "days": 1100.0,
+        "handoff_pnl": 0.0,
+        "sessions_per_month": 9.76,
+        "bars_processed": 1583986
+      },
+      "vetoes": [
+        [
+          "volatilité trop volatil",
+          6641
+        ],
+        [
+          "volatilité trop calme",
+          3997
+        ],
+        [
+          "cooldown post-cassure",
+          2280
+        ],
+        [
+          "range trop étroit",
+          1058
+        ],
+        [
+          "funding +51.6% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +43.1% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +52.2% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +34.6% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +57.8% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +62.3% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +54.2% au-delà de ±30%",
+          8
+        ],
+        [
+          "funding +48.2% au-delà de ±30%",
+          7
+        ],
+        [
+          "funding +34.4% au-delà de ±30%",
+          7
+        ],
+        [
+          "funding +35.2% au-delà de ±30%",
+          5
+        ],
+        [
+          "funding +54.6% au-delà de ±30%",
+          5
+        ]
+      ]
+    },
+    {
+      "label": "bear_2020_2023",
+      "metrics": {
+        "sessions": 87,
+        "net_mtm_pnl": -4087.97,
+        "realized_grid_pnl": 1038.86,
+        "inventory_pnl": -4782.35,
+        "funding_pnl": 2.85,
+        "fees": 341.63,
+        "gross_pnl_abs": 6063.99,
+        "fee_ratio": 0.0563,
+        "profit_factor": 0.087,
+        "win_rate": 0.23,
+        "cycles": 685,
+        "taker_fills": 86,
+        "worst_session_loss_pct": 0.03588,
+        "handoffs": 0,
+        "stop_reasons": {
+          "breakout": 35,
+          "regime_shift": 39,
+          "drawdown": 13
+        },
+        "days": 1460.0,
+        "handoff_pnl": 0.0,
+        "sessions_per_month": 1.79,
+        "bars_processed": 2102400
+      },
+      "vetoes": [
+        [
+          "volatilité trop volatil",
+          11098
+        ],
+        [
+          "volatilité trop calme",
+          9024
+        ],
+        [
+          "funding +87.6% au-delà de ±30%",
+          5539
+        ],
+        [
+          "cooldown post-cassure",
+          631
+        ],
+        [
+          "range trop étroit",
+          182
+        ],
+        [
+          "funding +72.5% au-delà de ±30%",
+          65
+        ],
+        [
+          "funding +33.8% au-delà de ±30%",
+          64
+        ],
+        [
+          "funding -68.2% au-delà de ±30%",
+          59
+        ],
+        [
+          "funding -87.6% au-delà de ±30%",
+          50
+        ],
+        [
+          "funding +65.8% au-delà de ±30%",
+          48
+        ],
+        [
+          "funding +61.7% au-delà de ±30%",
+          48
+        ],
+        [
+          "funding +36.8% au-delà de ±30%",
+          46
+        ],
+        [
+          "funding +73.5% au-delà de ±30%",
+          35
+        ],
+        [
+          "funding +53.0% au-delà de ±30%",
+          35
+        ],
+        [
+          "funding +869.7% au-delà de ±30%",
+          33
+        ]
+      ]
+    }
+  ],
+  "acceptance": {
+    "checks": {
+      "profit_factor_oos": {
+        "value": 0.0,
+        "threshold": 1.2,
+        "passed": false
+      },
+      "worst_session_loss": {
+        "value": 0.03588,
+        "threshold": 0.0165,
+        "passed": false
+      },
+      "fee_ratio": {
+        "value": 0.0615,
+        "threshold": 0.2,
+        "passed": true
+      },
+      "min_sessions": {
+        "value": 445,
+        "threshold": 30,
+        "passed": true
+      }
+    },
+    "passed": false,
+    "stop_reasons": {
+      "regime_shift": 170,
+      "breakout": 139,
+      "drawdown": 136
+    }
+  },
+  "sensitivity": {
+    "base_net_mtm": -13562.94,
+    "variants": [
+      {
+        "param": "build.k_step",
+        "delta": -0.2,
+        "value": 0.27999999999999997,
+        "net_mtm_pnl": -13631.21,
+        "collapsed": false
+      },
+      {
+        "param": "build.k_step",
+        "delta": 0.2,
+        "value": 0.42,
+        "net_mtm_pnl": -13390.15,
+        "collapsed": false
+      },
+      {
+        "param": "build.grid_edge_multiple",
+        "delta": -0.2,
+        "value": 4.0,
+        "net_mtm_pnl": -13584.69,
+        "collapsed": false
+      },
+      {
+        "param": "build.grid_edge_multiple",
+        "delta": 0.2,
+        "value": 6.0,
+        "net_mtm_pnl": -13574.96,
+        "collapsed": false
+      },
+      {
+        "param": "exits.k_breakout_atr15m",
+        "delta": -0.2,
+        "value": 0.4,
+        "net_mtm_pnl": -14028.62,
+        "collapsed": false
+      },
+      {
+        "param": "exits.k_breakout_atr15m",
+        "delta": 0.2,
+        "value": 0.6,
+        "net_mtm_pnl": -13264.93,
+        "collapsed": false
+      }
+    ],
+    "fragile": false
+  },
+  "placebo": {
+    "real_count": 76,
+    "p_value": 0.6341463414634146,
+    "alpha": 0.025,
+    "passed": false
+  },
+  "overall_passed": false,
+  "funding_note": "NON VALIDÉ — estimation historique sur positions simulées ; à mesurer en paper trading avant tout mainnet"
+}

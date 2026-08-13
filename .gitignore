@@ -21,4 +21,35 @@ experiments/*/*_state/
 experiments/*/logs/
 # caches inter-process racine (rate-limiter, OHLCV)
 state/
+
+# ── Preuves du protocole §9, ré-incluses ────────────────────────────────────
+# `state/` ci-dessus exclut 898 Mo de cache d'historique — c'est voulu. Mais il
+# emportait aussi les configurations GELÉES et les verdicts, soit ~50 Ko qui
+# constituent l'assise vérifiable du registre des hypothèses : sans eux, le
+# `sha256` cité dans chaque entrée ne renvoie à rien et l'engagement « config
+# figée avant tirage » n'est plus contrôlable après coup.
+# Git ne peut pas ré-inclure un fichier si un dossier parent est exclu : il faut
+# donc rouvrir chaque niveau, puis ré-exclure le contenu, puis rouvrir les
+# sous-dossiers voulus.
+!confluence/state/
+confluence/state/*
+!confluence/state/frozen/
+!confluence/state/reports/
+confluence/state/reports/logs/
+!grid/state/
+grid/state/*
+!grid/state/frozen/
+!grid/state/reports/
 *.bak
+
+# ── Secrets : filet défensif ────────────────────────────────────────────────
+# `~/.aws` vit HORS de l'arbre du dépôt : ces motifs ne le protègent pas (ce
+# sont ses permissions 700/600 qui le font). Ils servent au cas où un fichier
+# d'identifiants serait copié ou généré DANS le repo — un `cp ~/.aws/credentials .`
+# malheureux ne doit pas devenir un commit.
+.aws/
+**/credentials
+*.pem
+*.key
+.env.*
+!.env.example

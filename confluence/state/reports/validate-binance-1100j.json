@@ -1,0 +1,586 @@
+{
+  "walkforward": [
+    {
+      "window": 0,
+      "is": [
+        "2023-08-07T14:20:12.353000+00:00",
+        "2024-08-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2024-08-07T14:20:12.353000+00:00",
+        "2024-11-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 1.5
+      },
+      "is_metrics": {
+        "trades": 41,
+        "days": 366.0,
+        "trades_per_day": 0.112,
+        "net_pnl": 1104.92,
+        "final_equity": 11104.92,
+        "profit_factor": 2.054,
+        "win_rate": 0.39,
+        "sharpe": 1.527,
+        "cagr": 0.1102,
+        "max_drawdown": 0.0363,
+        "mar": 3.036,
+        "fees_paid": 168.03,
+        "funding_paid": 47.77,
+        "gross_pnl_abs": 3196.54,
+        "fee_ratio": 0.0526,
+        "evaluations": 35136,
+        "signals": 75,
+        "abandoned_fills": 34
+      },
+      "oos_metrics": {
+        "trades": 14,
+        "days": 92.0,
+        "trades_per_day": 0.152,
+        "net_pnl": -527.18,
+        "final_equity": 9472.82,
+        "profit_factor": 0.101,
+        "win_rate": 0.071,
+        "sharpe": -6.331,
+        "cagr": -0.1934,
+        "max_drawdown": 0.0527,
+        "mar": -3.668,
+        "fees_paid": 42.41,
+        "funding_paid": -4.16,
+        "gross_pnl_abs": 610.83,
+        "fee_ratio": 0.0694,
+        "evaluations": 8832,
+        "signals": 20,
+        "abandoned_fills": 6
+      }
+    },
+    {
+      "window": 1,
+      "is": [
+        "2023-11-07T14:20:12.353000+00:00",
+        "2024-11-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2024-11-07T14:20:12.353000+00:00",
+        "2025-02-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 2.0
+      },
+      "is_metrics": {
+        "trades": 27,
+        "days": 366.0,
+        "trades_per_day": 0.074,
+        "net_pnl": 226.54,
+        "final_equity": 10226.54,
+        "profit_factor": 1.337,
+        "win_rate": 0.37,
+        "sharpe": 0.577,
+        "cagr": 0.0226,
+        "max_drawdown": 0.024,
+        "mar": 0.94,
+        "fees_paid": 74.13,
+        "funding_paid": 36.45,
+        "gross_pnl_abs": 1584.03,
+        "fee_ratio": 0.0468,
+        "evaluations": 35136,
+        "signals": 52,
+        "abandoned_fills": 25
+      },
+      "oos_metrics": {
+        "trades": 11,
+        "days": 92.0,
+        "trades_per_day": 0.12,
+        "net_pnl": -97.32,
+        "final_equity": 9902.68,
+        "profit_factor": 0.739,
+        "win_rate": 0.364,
+        "sharpe": -0.759,
+        "cagr": -0.0381,
+        "max_drawdown": 0.0327,
+        "mar": -1.164,
+        "fees_paid": 24.53,
+        "funding_paid": 12.67,
+        "gross_pnl_abs": 645.15,
+        "fee_ratio": 0.038,
+        "evaluations": 8832,
+        "signals": 32,
+        "abandoned_fills": 21
+      }
+    },
+    {
+      "window": 2,
+      "is": [
+        "2024-02-07T14:20:12.353000+00:00",
+        "2025-02-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2025-02-07T14:20:12.353000+00:00",
+        "2025-05-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 2.0
+      },
+      "is_metrics": {
+        "trades": 26,
+        "days": 366.0,
+        "trades_per_day": 0.071,
+        "net_pnl": 125.03,
+        "final_equity": 10125.03,
+        "profit_factor": 1.202,
+        "win_rate": 0.385,
+        "sharpe": 0.356,
+        "cagr": 0.0125,
+        "max_drawdown": 0.0462,
+        "mar": 0.27,
+        "fees_paid": 64.9,
+        "funding_paid": 35.24,
+        "gross_pnl_abs": 1370.62,
+        "fee_ratio": 0.0474,
+        "evaluations": 35136,
+        "signals": 61,
+        "abandoned_fills": 35
+      },
+      "oos_metrics": {
+        "trades": 1,
+        "days": 89.0,
+        "trades_per_day": 0.011,
+        "net_pnl": -51.73,
+        "final_equity": 9948.27,
+        "profit_factor": 0.0,
+        "win_rate": 0.0,
+        "sharpe": -2.025,
+        "cagr": -0.021,
+        "max_drawdown": 0.0071,
+        "mar": -2.971,
+        "fees_paid": 1.36,
+        "funding_paid": -0.08,
+        "gross_pnl_abs": 50.45,
+        "fee_ratio": 0.0269,
+        "evaluations": 8544,
+        "signals": 1,
+        "abandoned_fills": 0
+      }
+    },
+    {
+      "window": 3,
+      "is": [
+        "2024-05-07T14:20:12.353000+00:00",
+        "2025-05-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2025-05-07T14:20:12.353000+00:00",
+        "2025-08-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 1.2
+      },
+      "is_metrics": {
+        "trades": 42,
+        "days": 365.0,
+        "trades_per_day": 0.115,
+        "net_pnl": -211.96,
+        "final_equity": 9788.04,
+        "profit_factor": 0.864,
+        "win_rate": 0.214,
+        "sharpe": -0.282,
+        "cagr": -0.0212,
+        "max_drawdown": 0.087,
+        "mar": -0.244,
+        "fees_paid": 183.6,
+        "funding_paid": 24.75,
+        "gross_pnl_abs": 2826.26,
+        "fee_ratio": 0.065,
+        "evaluations": 35040,
+        "signals": 81,
+        "abandoned_fills": 39
+      },
+      "oos_metrics": {
+        "trades": 12,
+        "days": 92.0,
+        "trades_per_day": 0.13,
+        "net_pnl": 301.65,
+        "final_equity": 10301.65,
+        "profit_factor": 1.73,
+        "win_rate": 0.333,
+        "sharpe": 1.414,
+        "cagr": 0.1252,
+        "max_drawdown": 0.0358,
+        "mar": 3.494,
+        "fees_paid": 75.38,
+        "funding_paid": 13.6,
+        "gross_pnl_abs": 1111.5,
+        "fee_ratio": 0.0678,
+        "evaluations": 8832,
+        "signals": 29,
+        "abandoned_fills": 17
+      }
+    },
+    {
+      "window": 4,
+      "is": [
+        "2024-08-07T14:20:12.353000+00:00",
+        "2025-08-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2025-08-07T14:20:12.353000+00:00",
+        "2025-11-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 25.0,
+        "risk.k_stop": 1.2
+      },
+      "is_metrics": {
+        "trades": 46,
+        "days": 365.0,
+        "trades_per_day": 0.126,
+        "net_pnl": -311.54,
+        "final_equity": 9688.46,
+        "profit_factor": 0.798,
+        "win_rate": 0.261,
+        "sharpe": -0.504,
+        "cagr": -0.0312,
+        "max_drawdown": 0.0906,
+        "mar": -0.344,
+        "fees_paid": 210.99,
+        "funding_paid": 17.24,
+        "gross_pnl_abs": 2689.77,
+        "fee_ratio": 0.0784,
+        "evaluations": 35040,
+        "signals": 94,
+        "abandoned_fills": 48
+      },
+      "oos_metrics": {
+        "trades": 17,
+        "days": 92.0,
+        "trades_per_day": 0.185,
+        "net_pnl": 453.3,
+        "final_equity": 10453.3,
+        "profit_factor": 1.918,
+        "win_rate": 0.529,
+        "sharpe": 2.071,
+        "cagr": 0.1923,
+        "max_drawdown": 0.0274,
+        "mar": 7.025,
+        "fees_paid": 127.04,
+        "funding_paid": 17.16,
+        "gross_pnl_abs": 1456.5,
+        "fee_ratio": 0.0872,
+        "evaluations": 8832,
+        "signals": 39,
+        "abandoned_fills": 22
+      }
+    },
+    {
+      "window": 5,
+      "is": [
+        "2024-11-07T14:20:12.353000+00:00",
+        "2025-11-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2025-11-07T14:20:12.353000+00:00",
+        "2026-02-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 25.0,
+        "risk.k_stop": 1.2
+      },
+      "is_metrics": {
+        "trades": 36,
+        "days": 365.0,
+        "trades_per_day": 0.099,
+        "net_pnl": 688.82,
+        "final_equity": 10688.82,
+        "profit_factor": 1.656,
+        "win_rate": 0.389,
+        "sharpe": 1.095,
+        "cagr": 0.0689,
+        "max_drawdown": 0.0462,
+        "mar": 1.492,
+        "fees_paid": 238.07,
+        "funding_paid": 34.35,
+        "gross_pnl_abs": 2768.99,
+        "fee_ratio": 0.086,
+        "evaluations": 35040,
+        "signals": 88,
+        "abandoned_fills": 52
+      },
+      "oos_metrics": {
+        "trades": 27,
+        "days": 92.0,
+        "trades_per_day": 0.294,
+        "net_pnl": -288.36,
+        "final_equity": 9711.64,
+        "profit_factor": 0.639,
+        "win_rate": 0.296,
+        "sharpe": -1.634,
+        "cagr": -0.1096,
+        "max_drawdown": 0.0686,
+        "mar": -1.599,
+        "fees_paid": 115.51,
+        "funding_paid": -9.65,
+        "gross_pnl_abs": 1248.77,
+        "fee_ratio": 0.0925,
+        "evaluations": 8832,
+        "signals": 64,
+        "abandoned_fills": 37
+      }
+    },
+    {
+      "window": 6,
+      "is": [
+        "2025-02-07T14:20:12.353000+00:00",
+        "2026-02-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2026-02-07T14:20:12.353000+00:00",
+        "2026-05-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 2.0
+      },
+      "is_metrics": {
+        "trades": 35,
+        "days": 365.0,
+        "trades_per_day": 0.096,
+        "net_pnl": 669.38,
+        "final_equity": 10669.38,
+        "profit_factor": 1.743,
+        "win_rate": 0.457,
+        "sharpe": 1.365,
+        "cagr": 0.0669,
+        "max_drawdown": 0.0305,
+        "mar": 2.196,
+        "fees_paid": 111.05,
+        "funding_paid": 21.07,
+        "gross_pnl_abs": 2480.22,
+        "fee_ratio": 0.0448,
+        "evaluations": 35040,
+        "signals": 80,
+        "abandoned_fills": 45
+      },
+      "oos_metrics": {
+        "trades": 5,
+        "days": 89.0,
+        "trades_per_day": 0.056,
+        "net_pnl": 75.02,
+        "final_equity": 10075.02,
+        "profit_factor": 1.686,
+        "win_rate": 0.4,
+        "sharpe": 0.933,
+        "cagr": 0.0311,
+        "max_drawdown": 0.0115,
+        "mar": 2.705,
+        "fees_paid": 11.79,
+        "funding_paid": -0.71,
+        "gross_pnl_abs": 292.54,
+        "fee_ratio": 0.0403,
+        "evaluations": 8544,
+        "signals": 8,
+        "abandoned_fills": 3
+      }
+    },
+    {
+      "window": 7,
+      "is": [
+        "2025-05-07T14:20:12.353000+00:00",
+        "2026-05-07T14:20:12.353000+00:00"
+      ],
+      "oos": [
+        "2026-05-07T14:20:12.353000+00:00",
+        "2026-08-07T14:20:12.353000+00:00"
+      ],
+      "params": {
+        "regime_1h.adx_trend": 28.0,
+        "risk.k_stop": 2.0
+      },
+      "is_metrics": {
+        "trades": 45,
+        "days": 365.0,
+        "trades_per_day": 0.123,
+        "net_pnl": 782.71,
+        "final_equity": 10782.71,
+        "profit_factor": 1.686,
+        "win_rate": 0.467,
+        "sharpe": 1.46,
+        "cagr": 0.0783,
+        "max_drawdown": 0.0255,
+        "mar": 3.068,
+        "fees_paid": 137.01,
+        "funding_paid": 18.79,
+        "gross_pnl_abs": 3071.12,
+        "fee_ratio": 0.0446,
+        "evaluations": 35040,
+        "signals": 94,
+        "abandoned_fills": 49
+      },
+      "oos_metrics": {
+        "trades": 14,
+        "days": 92.0,
+        "trades_per_day": 0.152,
+        "net_pnl": 250.56,
+        "final_equity": 10250.56,
+        "profit_factor": 1.51,
+        "win_rate": 0.357,
+        "sharpe": 1.419,
+        "cagr": 0.1032,
+        "max_drawdown": 0.0266,
+        "mar": 3.872,
+        "fees_paid": 36.23,
+        "funding_paid": -5.6,
+        "gross_pnl_abs": 1221.0,
+        "fee_ratio": 0.0297,
+        "evaluations": 8832,
+        "signals": 22,
+        "abandoned_fills": 8
+      }
+    }
+  ],
+  "summary": {
+    "windows": 8,
+    "oos_days": 730.0,
+    "oos_trades": 101,
+    "oos_trades_per_day": 0.138,
+    "oos_net_pnl": 115.94,
+    "oos_profit_factor": 1.035,
+    "oos_fee_ratio": 0.0654,
+    "worst_oos_dd_vs_is": 1.485
+  },
+  "acceptance": {
+    "checks": {
+      "profit_factor_oos": {
+        "value": 1.035,
+        "threshold": 1.3,
+        "passed": false
+      },
+      "fee_ratio": {
+        "value": 0.0654,
+        "threshold": 0.15,
+        "passed": true
+      },
+      "min_trades": {
+        "value": 101,
+        "threshold": 100,
+        "passed": true
+      },
+      "trades_per_day": {
+        "value": 0.138,
+        "threshold": 3.0,
+        "passed": true
+      },
+      "oos_drawdown_vs_is": {
+        "value": 1.485,
+        "threshold": 2.0,
+        "passed": true
+      }
+    },
+    "passed": false,
+    "summary": {
+      "windows": 8,
+      "oos_days": 730.0,
+      "oos_trades": 101,
+      "oos_trades_per_day": 0.138,
+      "oos_net_pnl": 115.94,
+      "oos_profit_factor": 1.035,
+      "oos_fee_ratio": 0.0654,
+      "worst_oos_dd_vs_is": 1.485
+    }
+  },
+  "sensitivity": {
+    "base": {
+      "trades": 165,
+      "days": 1299.6,
+      "trades_per_day": 0.127,
+      "net_pnl": 574.72,
+      "final_equity": 10574.72,
+      "profit_factor": 1.108,
+      "win_rate": 0.285,
+      "sharpe": 0.289,
+      "cagr": 0.0158,
+      "max_drawdown": 0.1089,
+      "mar": 0.145,
+      "fees_paid": 642.85,
+      "funding_paid": 65.29,
+      "gross_pnl_abs": 10987.05,
+      "fee_ratio": 0.0585,
+      "evaluations": 124761,
+      "signals": 348,
+      "abandoned_fills": 183
+    },
+    "variants": [
+      {
+        "param": "regime_1h.adx_trend",
+        "delta": -0.2,
+        "value": 20.0,
+        "error": "combinaison invalide"
+      },
+      {
+        "param": "regime_1h.adx_trend",
+        "delta": 0.2,
+        "value": 30.0,
+        "profit_factor": 1.188,
+        "trades": 116,
+        "net_pnl": 694.35,
+        "collapsed": false
+      },
+      {
+        "param": "risk.k_stop",
+        "delta": -0.2,
+        "value": 1.2000000000000002,
+        "profit_factor": 1.117,
+        "trades": 189,
+        "net_pnl": 740.65,
+        "collapsed": false
+      },
+      {
+        "param": "risk.k_stop",
+        "delta": 0.2,
+        "value": 1.7999999999999998,
+        "profit_factor": 1.016,
+        "trades": 151,
+        "net_pnl": 77.32,
+        "collapsed": false
+      },
+      {
+        "param": "risk.edge_multiple",
+        "delta": -0.2,
+        "value": 4.0,
+        "profit_factor": 1.108,
+        "trades": 165,
+        "net_pnl": 574.72,
+        "collapsed": false
+      },
+      {
+        "param": "risk.edge_multiple",
+        "delta": 0.2,
+        "value": 6.0,
+        "profit_factor": 1.121,
+        "trades": 164,
+        "net_pnl": 637.57,
+        "collapsed": false
+      }
+    ],
+    "fragile": false
+  },
+  "placebo": {
+    "real_count": 4,
+    "p_value": 0.41935483870967744,
+    "alpha": 0.05,
+    "passed": false
+  },
+  "overall_passed": false,
+  "funding": {
+    "source": "hyperliquid",
+    "points": 27933,
+    "settlement_hours": 1.0,
+    "validated": false,
+    "note": "NON VALIDÉ — estimation historique appliquée à des positions simulées ; à mesurer en paper trading avant tout mainnet"
+  },
+  "price_source": "binance",
+  "config_frozen": "22be63e3501975e3e40d6da4320ec483e7d0636b7470ecfc43811d2cd604c743"
+}

@@ -1,0 +1,114 @@
+{
+  "sauvegarde_le": "2026-08-11T16:36:58.467362+00:00",
+  "contexte": "Session interrompue (déconnexion SSH). Les runs §9 tournent détachés (PPID=1, sans TTY).",
+  "config_figee_sha256": "22be63e3501975e3e40d6da4320ec483e7d0636b7470ecfc43811d2cd604c743",
+  "processus_actifs": [
+    "1648451",
+    "1648453",
+    "1648467",
+    "1648469",
+    "1659346",
+    "1659347",
+    "1659348"
+  ],
+  "runs": {
+    "principal_2023_2026": {
+      "log": "confluence/state/reports/logs/run_main.log",
+      "fenetres_total": 8,
+      "backtests_in_sample_prevus": 72,
+      "fenetres_oos_terminees": 8,
+      "dernieres_oos": [
+        {
+          "fenetre": 4,
+          "params": "{'regime_1h.adx_trend': 25.0, 'risk.k_stop': 1.2}",
+          "PF": "1.92",
+          "trades": 17
+        },
+        {
+          "fenetre": 5,
+          "params": "{'regime_1h.adx_trend': 25.0, 'risk.k_stop': 1.2}",
+          "PF": "0.64",
+          "trades": 27
+        },
+        {
+          "fenetre": 6,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 2.0}",
+          "PF": "1.69",
+          "trades": 5
+        },
+        {
+          "fenetre": 7,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 2.0}",
+          "PF": "1.51",
+          "trades": 14
+        }
+      ],
+      "phase": "walk-forward",
+      "termine": false,
+      "commande": "setsid .venv/bin/python -m confluence.run --source binance --days 1100 --jobs 3 --out confluence/state/reports/validate-binance-1100j.json validate --placebo-draws 30",
+      "rapport": "confluence/state/reports/validate-binance-1100j.json"
+    },
+    "bear_2020_2023": {
+      "log": "confluence/state/reports/logs/run_bear.log",
+      "fenetres_total": 11,
+      "backtests_in_sample_prevus": 99,
+      "fenetres_oos_terminees": 22,
+      "dernieres_oos": [
+        {
+          "fenetre": 7,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 1.2}",
+          "PF": "None",
+          "trades": 1
+        },
+        {
+          "fenetre": 8,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 2.0}",
+          "PF": "1.476",
+          "trades": 3
+        },
+        {
+          "fenetre": 9,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 1.2}",
+          "PF": "0.0",
+          "trades": 2
+        },
+        {
+          "fenetre": 10,
+          "params": "{'regime_1h.adx_trend': 28.0, 'risk.k_stop': 1.5}",
+          "PF": "None",
+          "trades": 0
+        }
+      ],
+      "phase": "placebo/sensibilité",
+      "termine": false,
+      "commande": "setsid .venv/bin/python -m confluence.run --source binance --funding-source binance --days 1460 --end-ms 1704067200000 --jobs 3 --out confluence/state/reports/validate-bear-2020-2023.json validate --placebo-draws 30",
+      "rapport": "confluence/state/reports/validate-bear-2020-2023.json"
+    }
+  },
+  "taches": {
+    "terminees": [
+      "§12 AdaptiveParameterManager complet (registry/conditioner/optimizer/posture/manager) + 51 tests",
+      "funding marqué NON VALIDÉ de bout en bout (FundingProvenance.validated=False)",
+      "funding facturé par règlement traversé (et non par heure) — corrige un ×8 sur source Binance",
+      "paginateur funding HL dédié + retry 429 + cache disque",
+      "preflight bloquant sur `validate` (refuse de conclure sur données incomplètes)",
+      "--days désigne enfin la fenêtre de DÉCISION et non la période chargée",
+      "collect exécuté : archive native 51j/15m, 204j/1h, 2183j/1d"
+    ],
+    "en_cours": [
+      "run principal 1100j",
+      "run bear-market 2020-2023"
+    ],
+    "reste_a_faire": [
+      "lire les 2 verdicts §9.4 quand les rapports JSON apparaissent",
+      "Reservoir : couverture établie (2025-07-31 → 2026-08-10, ~1 an) — décision à prendre, cf. note",
+      "si un run passe : créer les 3 ParameterSets via WalkForwardOptimizer puis re-valider conditionner actif"
+    ]
+  },
+  "reprise": {
+    "verifier_vivants": "ps -eo pid,ppid,tty,etime,args | grep [c]onfluence.run",
+    "suivre": "tail -f confluence/state/reports/logs/run_{main,bear}.log",
+    "verdicts": "ls -la confluence/state/reports/*.json",
+    "relancer_si_morts": "voir champ `commande` de chaque run ci-dessus (préfixer par setsid, rediriger la sortie)"
+  }
+}

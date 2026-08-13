@@ -1,0 +1,7 @@
+{
+  "frozen_at": "2026-08-11T12:07:54.394514+00:00",
+  "sha256": "22be63e3501975e3e40d6da4320ec483e7d0636b7470ecfc43811d2cd604c743",
+  "source": "config/confluence.yaml",
+  "snapshot": "confluence/state/frozen/confluence-2026-08-11-22be63e35019.yaml",
+  "note": "Configuration FIGÉE avant le run §9. Toute modification du YAML après cette date invalide le gate placebo (multiple-testing)."
+}

@@ -1,0 +1,14 @@
+{
+  "candidate": "GridAgent",
+  "registry_entry": 2,
+  "frozen_at": "2026-08-12T10:50:17.750353+00:00",
+  "sha256": "6286ed279db61c89e9506f81aae53100f1670d628e5bb0118b5463bef577d676",
+  "files": {
+    "config/confluence.yaml": "22be63e3501975e3e40d6da4320ec483e7d0636b7470ecfc43811d2cd604c743",
+    "config/grid.yaml": "92ccf88b832337eda9f1beb589970a0bf6751307adaa1a7e51c196261591853b"
+  },
+  "scope": "hash COMBINÉ de grid.yaml et confluence.yaml — l'activation §2 lit les seuils de régime du ConfluenceAgent, ils font donc partie de l'hypothèse gelée",
+  "alpha": 0.025,
+  "min_placebo_draws": 40,
+  "note": "Configuration FIGÉE avant tout tirage. Toute modification de l'un des deux fichiers invalide le gel et le gate placebo (multiple-testing)."
+}
