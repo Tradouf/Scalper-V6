@@ -290,6 +290,97 @@ def test_live_path_uses_smart_entry_and_close(monkeypatch):
     assert t.state["realized_usd"] > 0
 
 
+# ── Journal des trades (base des PnL 24 h / 7 j / 30 j) ─────────────────────
+
+def read_journal(t):
+    if not t.trades_file.exists():
+        return []
+    return [json.loads(x) for x in t.trades_file.read_text().splitlines() if x]
+
+
+def test_timed_exit_is_journalled(monkeypatch):
+    t = L.RSIMRLiveTrader(client=FakeClient(), dry_run=True, symbols=["AAA"])
+    monkeypatch.setattr(L, "filtered_regime", lambda closes: 1)
+    feed = Feed(series_crossing_up())
+    t._fetch = feed
+    t.sweep_if_due(now=NOW0)
+    entry_px = t.state["positions"]["AAA"]["entry"]
+    assert read_journal(t) == []                    # rien tant que rien n'est clos
+
+    up = [entry_px * (1 + 0.0002 * i) for i in range(259)]
+    up.append(entry_px * 1.02)
+    later = NOW0 + L.H_BARS * 3600 + 1
+    feed.closes, feed.now = up, later
+    t.sweep_if_due(now=later)
+
+    recs = read_journal(t)
+    assert len(recs) == 1
+    r = recs[0]
+    assert r["sym"] == "AAA" and r["reason"] == "timed_exit"
+    assert r["closed_at"] == int(later)
+    assert r["dry_run"] is True
+    assert r["exit_px"] == pytest.approx(entry_px * 1.02)
+    assert r["pnl_usd"] == pytest.approx(t.state["realized_usd"], abs=1e-6)
+    assert r["net_bps"] == pytest.approx(r["pnl_usd"] / r["notional"] * 1e4, abs=0.01)
+    assert 3.9 < r["held_h"] < 4.1
+    assert r["px_estimated"] is False
+
+
+def test_journal_survives_restart_and_appends(monkeypatch):
+    """Le journal est la mémoire longue : un redémarrage ne l'écrase pas."""
+    t = L.RSIMRLiveTrader(client=FakeClient(), dry_run=True, symbols=["AAA"])
+    t.trades_file.parent.mkdir(parents=True, exist_ok=True)
+    t.trades_file.write_text(json.dumps({"sym": "OLD", "pnl_usd": 1.0}) + "\n")
+    t.state["positions"]["AAA"] = {"dir": 1, "entry": 10.0, "sz": 2.0,
+                                   "notional": 20.0, "opened_ms": 0, "regime": 1}
+    t._emergency_flatten({"AAA": 11.0}, now=NOW0)
+    recs = read_journal(t)
+    assert [r["sym"] for r in recs] == ["OLD", "AAA"]
+
+
+def test_kill_switch_exit_is_counted_and_journalled():
+    """La sortie d'urgence échappait au compteur : c'est la sortie qu'on veut
+    le moins perdre de vue."""
+    t = L.RSIMRLiveTrader(client=FakeClient(), dry_run=True, symbols=["AAA"])
+    t.state["positions"]["AAA"] = {"dir": 1, "entry": 10.0, "sz": 2.0,
+                                   "notional": 20.0, "opened_ms": 0, "regime": 2}
+    t._emergency_flatten({"AAA": 9.0}, now=NOW0)
+    assert t.state["positions"] == {}
+    assert t.state["n_trades"] == 1
+    assert t.state["realized_usd"] < 0            # sortie 10 → 9, perte
+    r = read_journal(t)[0]
+    assert r["reason"] == "kill_switch" and r["exit_px"] == 9.0
+    assert r["pnl_usd"] == pytest.approx(t.state["realized_usd"], abs=1e-9)
+
+
+def test_kill_switch_live_uses_fill_price_when_available():
+    class Filling(FakeClient):
+        def market_close(self, sym):
+            self.calls.append(("market_close", sym))
+            return {"status": "ok", "filled": True, "avg_px": 9.5,
+                    "total_sz": 2.0}
+
+    t = L.RSIMRLiveTrader(client=Filling(), dry_run=False, symbols=["AAA"])
+    t.state["positions"]["AAA"] = {"dir": 1, "entry": 10.0, "sz": 2.0,
+                                   "notional": 20.0, "opened_ms": 0, "regime": 1}
+    t._emergency_flatten({"AAA": 12.0}, now=NOW0)   # référence volontairement fausse
+    r = read_journal(t)[0]
+    assert r["exit_px"] == 9.5 and r["px_estimated"] is False
+    # -5 % sur 20 $ moins les frais taker : le prix de la RÉFÉRENCE (+20 %)
+    # aurait donné un gain — c'est bien le fill qui fait foi.
+    assert r["pnl_usd"] == pytest.approx(20.0 * (-0.05 - 0.00075))
+
+
+def test_kill_switch_live_marks_estimated_price_when_fill_unknown():
+    t = L.RSIMRLiveTrader(client=FakeClient(), dry_run=False, symbols=["AAA"])
+    t.state["positions"]["AAA"] = {"dir": 1, "entry": 10.0, "sz": 2.0,
+                                   "notional": 20.0, "opened_ms": 0, "regime": 1}
+    t._emergency_flatten({"AAA": 9.0}, now=NOW0)    # market_close ne renvoie rien
+    r = read_journal(t)[0]
+    assert r["px_estimated"] is True and r["exit_px"] == 9.0
+    assert t.state["n_trades"] == 1                 # compté malgré l'estimation
+
+
 # ── Persistance ─────────────────────────────────────────────────────────────
 
 def test_state_survives_restart(monkeypatch):
@@ -345,3 +436,79 @@ def test_client_passes_master_address(monkeypatch):
     monkeypatch.setenv(L.ENV_ACCOUNT_ADDRESS, "0xMASTER")
     L.make_live_client()
     assert seen == {"key": "0xkey", "account_address": "0xMASTER"}
+
+
+# ── Bug LTC du 15-08 : arrondi flottant + fermeture partielle + sortie 5 h ──
+
+def test_floor_size_survives_float_representation():
+    """floor(0.57×100) vaut 56 en flottant : le cas exact du reliquat LTC."""
+    from hyperliquid_client import floor_size
+    assert floor_size(0.57, 2) == 0.57
+    assert floor_size(0.5699999999999999, 2) == 0.57
+    assert floor_size(0.5697, 2) == 0.56       # vraie fraction → tronquée
+    assert floor_size(0.00021, 5) == 0.00021
+
+
+def test_partial_close_keeps_residual_in_state(monkeypatch):
+    """Fermer 0.56 sur 0.57 ne doit PAS faire oublier le reliquat au bot."""
+    t = L.RSIMRLiveTrader(client=FakeClient(equity=200.0), dry_run=False,
+                          symbols=["LTC"])
+    monkeypatch.setattr(L, "filtered_regime", lambda closes: 1)
+    monkeypatch.setattr(L, "smart_entry", lambda *a, **k: {
+        "mode": "maker", "avg_px": 43.85, "total_sz": 0.57})
+    # la sortie ne remplit que 0.56 (le bug d'arrondi, vu de l'exécution)
+    monkeypatch.setattr(L, "smart_close", lambda *a, **k: {
+        "mode": "maker", "avg_px": 44.035, "total_sz": 0.56})
+    feed = Feed(series_crossing_up())
+    t._fetch = feed
+    t0 = NOW0
+    t.sweep_if_due(now=t0)
+    assert t.state["positions"]["LTC"]["sz"] == pytest.approx(0.57)
+
+    later = t0 + L.H_BARS * 3600 + 1
+    feed.now = later
+    t.sweep_if_due(now=later)
+    # le reliquat est CONSERVÉ, redimensionné, et le trade partiel journalisé
+    pos = t.state["positions"]["LTC"]
+    assert pos["sz"] == pytest.approx(0.01)
+    assert pos["notional"] == pytest.approx(0.57 * 43.85 * (0.01 / 0.57),
+                                            rel=1e-6)
+    assert t.state["n_trades"] == 1
+    lines = [json.loads(l) for l in
+             t.trades_file.read_text().splitlines()] if t.trades_file.exists() else []
+    partials = [l for l in lines if l.get("reason") == "partial_exit"]
+    assert partials and partials[0]["sz"] == pytest.approx(0.56)
+
+    # au sweep suivant, il retente la fermeture du reliquat. Série montante :
+    # le RSI reste haut, aucun nouveau signal ne vient rouvrir une position.
+    seen = []
+    monkeypatch.setattr(L, "smart_close", lambda client, sym, is_buy, sz,
+                        ref_price, **k: seen.append(sz) or {
+                            "mode": "maker", "avg_px": 44.0, "total_sz": sz})
+    after = later + 3600
+    feed.closes = [44.0 * (1 + 0.0002 * i) for i in range(260)]
+    feed.now = after
+    t.sweep_if_due(now=after)
+    assert seen and seen[0] == pytest.approx(0.01)
+    assert "LTC" not in t.state["positions"]
+
+
+def test_exit_uses_hour_index_not_elapsed_seconds(monkeypatch):
+    """Entrée à hh:03, sweep à (hh+4):02 — 42 s de moins que 4 h pleines :
+    la sortie doit quand même partir (bougie n° 4 clôturée)."""
+    t = L.RSIMRLiveTrader(client=FakeClient(), dry_run=True, symbols=["AAA"])
+    monkeypatch.setattr(L, "filtered_regime", lambda closes: 1)
+    hour0 = (int(NOW0) // 3600) * 3600
+    entry_now = hour0 + 3 * 60 + 28          # hh:03:28
+    feed = Feed(series_crossing_up(), now=entry_now)
+    t._fetch = feed
+    t.sweep_if_due(now=entry_now)
+    assert "AAA" in t.state["positions"]
+
+    exit_now = hour0 + 4 * 3600 + 2 * 60 + 46   # (hh+4):02:46 < 4 h chrono
+    up = [t.state["positions"]["AAA"]["entry"] * (1 + 0.0001 * i)
+          for i in range(260)]
+    feed.closes, feed.now = up, exit_now
+    t.sweep_if_due(now=exit_now)
+    assert t.state["positions"] == {}
+    assert t.state["n_trades"] == 1

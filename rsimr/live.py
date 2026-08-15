@@ -41,6 +41,14 @@ SÉCURITÉS
   - sortie temporelle stricte : toute position ouverte depuis > H_BARS heures
     est fermée, y compris après un redémarrage (l'état est persisté) ;
   - min notionnel HL respecté, sinon le signal est sauté et compté.
+
+JOURNAL DES TRADES
+------------------
+Chaque clôture est écrite dans `state/live_trades.jsonl` (une ligne JSON par
+trade, horodatée). L'état ne portait qu'un cumul `realized_usd` depuis
+toujours : impossible d'en tirer un résultat sur 24 h ou 7 jours. Le journal
+sert exactement à ça, et il porte le drapeau `dry_run` de chaque trade pour
+qu'un passage en dry-run ne vienne jamais polluer les chiffres du réel.
 """
 from __future__ import annotations
 
@@ -49,7 +57,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -114,6 +122,8 @@ STATE_FILE = Path(os.environ.get(
     "RSIMR_LIVE_STATE_FILE",
     str(Path(__file__).resolve().parent / "state" / "rsimr_live_state.json"),
 ))
+# Journal des clôtures, à côté de l'état (le paper a le sien, trades.jsonl).
+TRADES_NAME = "live_trades.jsonl"
 
 
 def make_live_client():
@@ -191,6 +201,9 @@ class RSIMRLiveTrader:
         self.frozen_reason: Optional[str] = None
         self._acct_read_failures = 0
         self._kill_breach_count = 0
+        # dérivé de STATE_FILE : un état isolé (tests, instance parallèle)
+        # emporte son journal avec lui, sans variable d'env supplémentaire.
+        self.trades_file = STATE_FILE.parent / TRADES_NAME
         if client is not None:
             self.client = client
         elif self.dry_run:
@@ -246,6 +259,55 @@ class RSIMRLiveTrader:
         tmp.write_text(json.dumps(self.state, indent=2))
         os.replace(tmp, STATE_FILE)
 
+    def _log_trade(self, rec: dict) -> None:
+        """Une ligne JSON par clôture. Jamais bloquant : un journal
+        inaccessible ne doit pas empêcher le bot de trader."""
+        try:
+            self.trades_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.trades_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception as e:
+            logger.warning("Écriture %s échouée: %r", TRADES_NAME, e)
+
+    def _record_close(self, sym: str, pos: dict, pnl: float, exit_px: float,
+                      reason: str, now: float,
+                      px_estimated: bool = False,
+                      keep_position: bool = False) -> None:
+        """Point de passage UNIQUE d'une clôture : retire la position, met à
+        jour la comptabilité, journalise. Centralisé pour que la sortie
+        d'urgence ne puisse plus échapper au compteur — c'était le cas, et
+        c'est précisément la sortie qu'on ne veut pas perdre de vue.
+
+        keep_position=True : clôture PARTIELLE — le PnL des lots fermés est
+        comptabilisé et journalisé, mais le reliquat (déjà redimensionné par
+        l'appelant) reste dans l'état pour être refermé au sweep suivant."""
+        if not keep_position:
+            self.state["positions"].pop(sym, None)
+        self.state["realized_usd"] += pnl
+        self.state["n_trades"] += 1
+        if self.dry_run:
+            self.state["dry_equity"] += pnl
+        notional = float(pos.get("notional") or 0.0)
+        opened_ms = int(pos.get("opened_ms") or 0)
+        self._log_trade({
+            "closed_at": int(now),
+            "sym": sym,
+            "dir": pos.get("dir"),
+            "entry_px": pos.get("entry"),
+            "exit_px": exit_px,
+            "sz": pos.get("sz"),
+            "notional": notional,
+            "pnl_usd": round(pnl, 6),
+            "net_bps": round(pnl / notional * 10_000, 2) if notional else None,
+            "regime": pos.get("regime"),
+            "opened_ms": opened_ms,
+            "held_h": round((now * 1000 - opened_ms) / 3_600_000, 2)
+                      if opened_ms else None,
+            "reason": reason,
+            "px_estimated": px_estimated,
+            "dry_run": self.dry_run,
+        })
+
     # ── Compte ──────────────────────────────────────────────────────────────
 
     def _account_value(self) -> float:
@@ -254,22 +316,35 @@ class RSIMRLiveTrader:
             return float(self.state["dry_equity"])
         return float(self.client.get_portfolio_value())
 
-    def _emergency_flatten(self, ref: Dict[str, float]) -> None:
+    def _emergency_flatten(self, ref: Dict[str, float],
+                           now: Optional[float] = None) -> None:
+        now = now or time.time()
         for sym in sorted(list(self.state["positions"])):
             pos = self.state["positions"][sym]
             if self.dry_run:
                 px = ref.get(sym, pos["entry"])
-                self.state["dry_equity"] += self._pnl(pos, px, FEE_SIDE)
-                self.state["positions"].pop(sym, None)
+                self._record_close(sym, pos, self._pnl(pos, px, FEE_SIDE), px,
+                                   "kill_switch", now)
                 continue
             try:
                 self.client.cancel_all_orders(sym)
             except Exception as e:
                 logger.warning("%s: cancel_all_orders: %r", sym, e)
             try:
-                self.client.market_close(sym)
-                self.state["positions"].pop(sym, None)
-                logger.info("%s: position fermée (kill-switch)", sym)
+                res = self.client.market_close(sym) or {}
+                # Une fermeture au marché est taker par construction. Si la
+                # réponse ne porte pas de prix, on retombe sur la référence en
+                # marquant le PnL comme estimé plutôt que de le perdre.
+                px = float(res.get("avg_px") or 0.0)
+                estimated = px <= 0
+                if estimated:
+                    px = ref.get(sym) or pos["entry"]
+                    logger.warning("%s: prix de sortie absent — PnL estimé", sym)
+                pnl = self._pnl(pos, px, 0.00075)
+                self._record_close(sym, pos, pnl, px, "kill_switch", now,
+                                   px_estimated=estimated)
+                logger.info("%s: position fermée (kill-switch) — PnL %+.3f$",
+                            sym, pnl)
             except Exception as e:
                 logger.critical("%s: FERMETURE D'URGENCE ÉCHOUÉE: %r", sym, e)
 
@@ -310,7 +385,7 @@ class RSIMRLiveTrader:
                 return True
             logger.critical("KILL-SWITCH: %.2f ≤ pic %.2f — fermeture + pause %dh",
                             equity, peak, KILL_PAUSE_SEC // 3600)
-            self._emergency_flatten(ref or {})
+            self._emergency_flatten(ref or {}, now)
             self.state["paused_until"] = now + KILL_PAUSE_SEC
             self._save_state()
             return True
@@ -324,20 +399,29 @@ class RSIMRLiveTrader:
         pnl_pct = pos["dir"] * (fill_px - pos["entry"]) / pos["entry"] - fee_pct
         return pos["notional"] * pnl_pct
 
-    def _exec_close(self, sym: str, pos: dict, ref_px: float) -> Optional[float]:
-        """Ferme ; renvoie le PnL réalisé, ou None si non exécuté."""
+    def _exec_close(self, sym: str, pos: dict,
+                    ref_px: float) -> Optional[Tuple[float, float, float]]:
+        """Ferme ; renvoie (PnL des lots fermés, prix de sortie, taille
+        réellement fermée), ou None si rien n'a été exécuté. Le PnL est
+        calculé sur la taille FERMÉE, pas sur la taille demandée — sur une
+        fermeture partielle, les deux diffèrent (bug LTC du 15-08 : ordre
+        envoyé à 0.56 pour une position de 0.57, reliquat 0.01 orphelin sur
+        l'exchange). C'est l'appelant qui décide du sort du reliquat."""
         if self.dry_run:
             self.state["exec_stats"]["maker"] += 1
-            return self._pnl(pos, ref_px, FEE_SIDE)
+            return self._pnl(pos, ref_px, FEE_SIDE), ref_px, pos["sz"]
         res = smart_close(self.client, sym, is_buy=(pos["dir"] == -1),
                           sz=pos["sz"], ref_price=ref_px)
         mode = res.get("mode", "skip")
         self.state["exec_stats"][mode] = self.state["exec_stats"].get(mode, 0) + 1
-        if mode == "skip" or res.get("total_sz", 0) <= 0:
+        filled = min(float(res.get("total_sz") or 0.0), pos["sz"])
+        if mode == "skip" or filled <= 0:
             logger.warning("%s: sortie non exécutée — position conservée", sym)
             return None
         fee = FEE_SIDE if mode == "maker" else 0.00075
-        return self._pnl(pos, res["avg_px"], fee)
+        frac = filled / pos["sz"]
+        part = dict(pos, sz=filled, notional=pos["notional"] * frac)
+        return self._pnl(part, res["avg_px"], fee), float(res["avg_px"]), filled
 
     def _exec_open(self, sym: str, notional: float, ref_px: float,
                    regime: int, now_ms: int) -> Optional[dict]:
@@ -392,25 +476,42 @@ class RSIMRLiveTrader:
             self._save_state()
             return False
 
-        # 1. sorties dues (H_BARS heures écoulées) — avant les entrées
+        # 1. sorties dues — avant les entrées. Comparaison en INDEX D'HEURE,
+        # pas en secondes écoulées : les sweeps dérivent de quelques dizaines
+        # de secondes (entrée 02:03:28, sweep 06:02:46 → 3 h 59 min 18 s) et
+        # un chrono strict de 4 h ratait la sortie d'une heure entière
+        # (observé sur LTC le 15-08 : tenue 5 h au lieu de 4). L'index d'heure
+        # reproduit la règle du backtest : sortir au close de la 4e bougie.
         for sym in sorted(list(self.state["positions"])):
             pos = self.state["positions"][sym]
-            if now_ms - int(pos["opened_ms"]) < H_BARS * HOUR_MS:
+            if now_ms // HOUR_MS - int(pos["opened_ms"]) // HOUR_MS < H_BARS:
                 continue
             px = ref.get(sym)
             if px is None:
                 logger.warning("%s: pas de prix — sortie reportée", sym)
                 continue
-            pnl = self._exec_close(sym, pos, px)
-            if pnl is None:
+            closed = self._exec_close(sym, pos, px)
+            if closed is None:
                 continue
-            self.state["positions"].pop(sym, None)
-            self.state["realized_usd"] += pnl
-            self.state["n_trades"] += 1
-            if self.dry_run:
-                self.state["dry_equity"] += pnl
-            logger.info("SORTIE %s après %dh — PnL %+.3f$ (régime %s)",
-                        sym, H_BARS, pnl, pos.get("regime"))
+            pnl, exit_px, filled = closed
+            residual = pos["sz"] - filled
+            fully = residual <= 1e-9 * max(1.0, pos["sz"])
+            if fully:
+                self._record_close(sym, pos, pnl, exit_px, "timed_exit", now)
+            else:
+                # journaliser la part fermée avec SA taille, garder le reliquat
+                frac = filled / pos["sz"]
+                part = dict(pos, sz=filled, notional=pos["notional"] * frac)
+                pos["sz"] = residual
+                pos["notional"] = pos["notional"] * (1.0 - frac)
+                self._record_close(sym, part, pnl, exit_px, "partial_exit",
+                                   now, keep_position=True)
+                logger.warning("%s: fermeture PARTIELLE %.6f — reliquat %.6f "
+                               "conservé, nouvelle tentative au prochain sweep",
+                               sym, filled, residual)
+            logger.info("SORTIE %s après %dh — PnL %+.3f$ (régime %s)%s",
+                        sym, H_BARS, pnl, pos.get("regime"),
+                        "" if fully else " [PARTIELLE]")
 
         # 2. entrées : RSI passe de ≤30 à >30 sur la dernière bougie clôturée
         try:

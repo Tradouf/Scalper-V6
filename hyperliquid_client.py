@@ -40,6 +40,23 @@ class HyperliquidClientError(Exception):
     pass
 
 
+
+def floor_size(sz: float, sz_decimals: int) -> float:
+    """Tronque une taille au pas de l'exchange, en neutralisant d'abord le
+    bruit de représentation flottante.
+
+    `math.floor(0.57 * 100)` vaut 56, pas 57 : le flottant 0.57 est stocké
+    0.56999999999999995. Conséquence réelle (bug LTC du 15-08) : une position
+    de 0.57 relue depuis l'état JSON se fermait à 0.56 — un lot restait
+    orphelin sur l'exchange à chaque fois que la taille tombait sur une
+    valeur non représentable. On arrondit à 9 décimales AVANT le floor :
+    cela absorbe le bruit (~1e-16) sans jamais arrondir vers le haut une
+    fraction réelle de lot (les tailles utiles ont ≤ 5 décimales).
+    """
+    scaled = round(float(sz) * 10 ** sz_decimals, 9)
+    return math.floor(scaled) / 10 ** sz_decimals
+
+
 class HyperliquidClient:
     """Client Hyperliquid wrappant le SDK pour le grid bot HYDRAQUEEN."""
 
@@ -524,7 +541,7 @@ class HyperliquidClient:
 
         sz_decimals = self.get_sz_decimals(coin)
         sz_before = float(sz)
-        sz = math.floor(float(sz) * 10**sz_decimals) / 10**sz_decimals
+        sz = floor_size(sz, sz_decimals)
         if sz <= 0:
             raise HyperliquidClientError(f"Taille invalide après arrondi: {sz}")
 
@@ -574,7 +591,7 @@ class HyperliquidClient:
         for o in orders:
             coin = o["coin"]
             sz_decimals = self.get_sz_decimals(coin)
-            sz = math.floor(float(o["sz"]) * 10**sz_decimals) / 10**sz_decimals
+            sz = floor_size(o["sz"], sz_decimals)
             if sz <= 0:
                 skipped += 1
                 continue
@@ -709,7 +726,7 @@ class HyperliquidClient:
 
         try:
             sz_decimals = self.get_sz_decimals(coin)
-            sz = math.floor(float(sz) * 10**sz_decimals) / 10**sz_decimals
+            sz = floor_size(sz, sz_decimals)
             if sz <= 0:
                 return None
 
@@ -878,7 +895,7 @@ class HyperliquidClient:
         self._require_exchange()
 
         sz_decimals = self.get_sz_decimals(coin)
-        sz = math.floor(float(sz) * 10**sz_decimals) / 10**sz_decimals
+        sz = floor_size(sz, sz_decimals)
         if sz <= 0:
             raise HyperliquidClientError(f"Taille TPSL invalide: {sz}")
 
