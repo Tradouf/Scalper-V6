@@ -1,0 +1,216 @@
+{
+  "candidate": "MomentumAgent",
+  "registry_entry": 3,
+  "config_frozen": "5c582f614a0792fef8e4b12c4b6fdc182ed1b67900f50da7c9f24b6bb9b0c0e8",
+  "config_untouched": true,
+  "decision_metric": "net_mtm_pnl (§7)",
+  "windows": [
+    {
+      "label": "recente",
+      "metrics": {
+        "pnl_long": -278.6578,
+        "pnl_short": -3537.2017,
+        "funding_long": 140.7938,
+        "funding_short": -233.4868,
+        "funding_pnl": -92.693,
+        "fees_maker": 78.3345,
+        "fees_taker": 2.8567,
+        "fees": 81.1912,
+        "net_mtm_pnl": -3804.3577,
+        "fee_ratio": 0.00608,
+        "taker_share": 0.0352,
+        "edge_location": "dominé par la jambe COURTE",
+        "rebalances": 141,
+        "total_churn": 376,
+        "days": 1104.0,
+        "final_equity": 6195.64,
+        "max_drawdown_pct": 0.40499,
+        "profit_factor": 0.884,
+        "halted": true,
+        "halted_reason": "drawdown > 40%"
+      },
+      "branches": {
+        "rebalance_executed": 141,
+        "rebalance_skipped_nochange": 162,
+        "leg_opened": 191,
+        "leg_closed": 185,
+        "leg_held": 655,
+        "hysteresis_saved": 386,
+        "universe_too_narrow": 0,
+        "delisted_replaced": 0,
+        "leverage_capped": 0,
+        "drawdown_tripped": 1,
+        "taker_fallback": 6
+      },
+      "never_taken": [
+        "delisted_replaced",
+        "leverage_capped",
+        "universe_too_narrow"
+      ]
+    },
+    {
+      "label": "bear_2021_2023",
+      "metrics": {
+        "pnl_long": 257.1154,
+        "pnl_short": -3405.5971,
+        "funding_long": 200.6231,
+        "funding_short": -186.9077,
+        "funding_pnl": 13.7153,
+        "fees_maker": 7.1451,
+        "fees_taker": 3.7034,
+        "fees": 10.8485,
+        "net_mtm_pnl": -3173.0454,
+        "fee_ratio": 0.00252,
+        "taker_share": 0.3414,
+        "edge_location": "dominé par la jambe COURTE",
+        "rebalances": 10,
+        "total_churn": 30,
+        "days": 1099.0,
+        "final_equity": 6826.95,
+        "max_drawdown_pct": 0.40691,
+        "profit_factor": 0.628,
+        "halted": true,
+        "halted_reason": "drawdown > 40%"
+      },
+      "branches": {
+        "rebalance_executed": 10,
+        "rebalance_skipped_nochange": 15,
+        "leg_opened": 18,
+        "leg_closed": 12,
+        "leg_held": 42,
+        "hysteresis_saved": 34,
+        "universe_too_narrow": 0,
+        "delisted_replaced": 0,
+        "leverage_capped": 0,
+        "drawdown_tripped": 1,
+        "taker_fallback": 6
+      },
+      "never_taken": [
+        "delisted_replaced",
+        "leverage_capped",
+        "universe_too_narrow"
+      ]
+    }
+  ],
+  "placebo": {
+    "real_net": -6977.4,
+    "null_median": -1243.99,
+    "null_max": 8334.48,
+    "null_min": -7552.97,
+    "n_draws": 60,
+    "p_value": 0.9836065573770492,
+    "alpha": 0.0167,
+    "passed": false,
+    "note": "permutation persistante des séries de scores (§9.2 amendé) — univers, structure, coûts et persistance du classement préservés"
+  },
+  "sensitivity": {
+    "base_net_mtm": -6977.4,
+    "variants": [
+      {
+        "param": "signal.lookback_d",
+        "delta": -0.2,
+        "value": 17,
+        "net_mtm_pnl": -7177.37
+      },
+      {
+        "param": "signal.lookback_d",
+        "delta": 0.2,
+        "value": 25,
+        "net_mtm_pnl": -7388.34
+      },
+      {
+        "param": "signal.skip_d",
+        "delta": -0.2,
+        "value": 2,
+        "net_mtm_pnl": -6977.4
+      },
+      {
+        "param": "signal.skip_d",
+        "delta": 0.2,
+        "value": 2,
+        "net_mtm_pnl": -6977.4
+      },
+      {
+        "param": "portfolio.n_legs",
+        "delta": -0.2,
+        "value": 2,
+        "net_mtm_pnl": -6890.76
+      },
+      {
+        "param": "portfolio.n_legs",
+        "delta": 0.2,
+        "value": 4,
+        "net_mtm_pnl": -6085.83
+      },
+      {
+        "param": "rebalance.every_d",
+        "delta": -0.2,
+        "value": 2,
+        "net_mtm_pnl": -6977.4
+      },
+      {
+        "param": "rebalance.every_d",
+        "delta": 0.2,
+        "value": 2,
+        "net_mtm_pnl": -6977.4
+      }
+    ],
+    "isolated_peaks": [],
+    "fragile": false
+  },
+  "acceptance": {
+    "checks": {
+      "placebo": {
+        "value": 0.9836,
+        "threshold": 0.0167,
+        "principal": true,
+        "passed": false
+      },
+      "profit_factor": {
+        "value": 0.0,
+        "threshold": 1.2,
+        "passed": false
+      },
+      "max_drawdown": {
+        "value": 0.4069,
+        "threshold": 0.45,
+        "passed": true
+      },
+      "fee_ratio": {
+        "value": null,
+        "threshold": 0.2,
+        "passed": false
+      },
+      "min_rebalances": {
+        "value": 151,
+        "threshold": 100,
+        "passed": true
+      }
+    },
+    "passed": false,
+    "edge_location": {
+      "recente": "dominé par la jambe COURTE",
+      "bear_2021_2023": "dominé par la jambe COURTE"
+    },
+    "funding_by_leg": {
+      "recente": {
+        "long": 140.7938,
+        "short": -233.4868
+      },
+      "bear_2021_2023": {
+        "long": 200.6231,
+        "short": -186.9077
+      }
+    }
+  },
+  "branch_alerts": [
+    "[recente] branche jamais empruntée : delisted_replaced",
+    "[recente] branche jamais empruntée : leverage_capped",
+    "[recente] branche jamais empruntée : universe_too_narrow",
+    "[bear_2021_2023] branche jamais empruntée : delisted_replaced",
+    "[bear_2021_2023] branche jamais empruntée : leverage_capped",
+    "[bear_2021_2023] branche jamais empruntée : universe_too_narrow"
+  ],
+  "overall_passed": false,
+  "funding_note": "proxy de LIEU (Binance, pas Hyperliquid) — NON VALIDÉ jusqu'à mesure en paper trading"
+}

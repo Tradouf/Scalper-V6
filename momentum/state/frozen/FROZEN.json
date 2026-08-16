@@ -1,0 +1,15 @@
+{
+  "candidate": "MomentumAgent",
+  "registry_entry": 3,
+  "frozen_at": "2026-08-14T11:41:54.242964+00:00",
+  "sha256": "5c582f614a0792fef8e4b12c4b6fdc182ed1b67900f50da7c9f24b6bb9b0c0e8",
+  "spec_sha256": "6c9c87622f7b59b4979c29ef80e24ad0ff8e7589ae5670e060ef9e83ea9be13d",
+  "files": {
+    "config/momentum.yaml": "5c582f614a0792fef8e4b12c4b6fdc182ed1b67900f50da7c9f24b6bb9b0c0e8",
+    "SPEC_MomentumAgent.md": "6c9c87622f7b59b4979c29ef80e24ad0ff8e7589ae5670e060ef9e83ea9be13d"
+  },
+  "scope": "hash du SEUL momentum.yaml — §9.3 : aucune dépendance à confluence.yaml ni grid.yaml. La spec est hashée séparément comme provenance, dans sa version AMENDÉE (§9.1, §9.2, décisions actées) : le document gelé décrit exactement ce qui tournera.",
+  "alpha": 0.0167,
+  "min_placebo_draws": 60,
+  "note": "FIGÉ avant tout tirage. Toute modification invalide le gate placebo."
+}
