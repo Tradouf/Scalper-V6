@@ -40,7 +40,21 @@ confluence/state/reports/logs/
 grid/state/*
 !grid/state/frozen/
 !grid/state/reports/
+!momentum/state/
+momentum/state/*
+!momentum/state/frozen/
+!momentum/state/reports/
+# `momentum/state/history/` (154 Mo de bougies Binance) reste exclu par la
+# ré-exclusion ci-dessus : seuls `frozen/` et `reports/` sont rouverts.
 *.bak
+
+# ── Outillage local de l'assistant ──────────────────────────────────────────
+# `.claude/` à la racine du dépôt ne contient PAS de transcripts : ceux-ci
+# vivent dans `~/.claude/projects/…`, hors de l'arbre. Ce dossier-ci sert aux
+# réglages et handoffs locaux, propres à cette machine et sans valeur pour un
+# autre clone — d'où l'exclusion, pour la lisibilité du `git status` plutôt que
+# pour le secret.
+.claude/
 
 # ── Secrets : filet défensif ────────────────────────────────────────────────
 # `~/.aws` vit HORS de l'arbre du dépôt : ces motifs ne le protègent pas (ce
