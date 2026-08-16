@@ -1,0 +1,21 @@
+MomentumAgent — DÉPLOIEMENT BLOQUÉ
+===================================
+
+Motif : verdict §9 REJETÉ sur les deux fenêtres (§9.3).
+  gate placebo p = 0,9836   (α = 0,0167) — 59 permutations sur 60 font MIEUX
+                                            que le vrai classement
+  profit factor 0,0          (seuil > 1,2)
+  disjoncteur §5 déclenché sur les DEUX fenêtres (−40 %)
+Date : 2026-08-16
+Détail : momentum/VERDICT.md
+Registre : hypotheses/REGISTRY.md (entrée n°3)
+
+Le signal n'est pas neutre : il est ACTIVEMENT pénalisant sur ces données.
+La jambe courte perd douze fois plus que la longue ne gagne.
+
+La présence de ce fichier fait échouer toute instanciation de MomentumAgent en
+mode live (MomentumDeploymentBlocked). Backtest, tests et rejeux restent
+autorisés — c'est le passage d'ordre qui est interdit.
+
+NE PAS SUPPRIMER sans un nouveau verdict §9 favorable, enregistré au registre
+avec le seuil Bonferroni du moment (α = 0,05/4 = 0,0125, soit 80 tirages).

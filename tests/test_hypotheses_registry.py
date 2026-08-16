@@ -190,3 +190,21 @@ def test_entree_2_porte_son_verdict():
     assert "REJETÉ" in section
     assert "0,634" in section, "la p-value placebo doit figurer"
     assert "Runs effectués" in section, "le nombre de runs doit être consigné"
+
+
+def test_momentum_est_bloque_au_deploiement():
+    from momentum import config as momentum_config
+    from momentum.agent import MomentumAgent, MomentumDeploymentBlocked
+
+    cfg = momentum_config.load()
+    MomentumAgent(cfg, 10_000.0)                       # étude : autorisé
+    with pytest.raises(MomentumDeploymentBlocked):
+        MomentumAgent(cfg, 10_000.0, live=True)        # ordre : interdit
+
+
+def test_entree_3_porte_son_verdict():
+    text = REGISTRY.read_text(encoding="utf-8")
+    section = text.split("## Entrée n°3")[1]
+    assert "REJETÉ" in section
+    assert "0,9836" in section
+    assert "Runs effectués" in section

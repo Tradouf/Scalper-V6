@@ -1,0 +1,82 @@
+# MomentumAgent — configuration (SPEC MomentumAgent §11, amendée 2026-08-14).
+#
+# Candidat n°3 du registre des hypothèses (`hypotheses/REGISTRY.md`).
+# Seuil placebo : α = 0,0167 (Bonferroni, n = 3), **60 tirages minimum**.
+#
+# **Fichier autonome.** Le §9.3 l'exige : cette hypothèse ne lit NI
+# `confluence.yaml` NI `grid.yaml`. Les deux candidats précédents ont été rejetés
+# et leur étage de détection de régime est explicitement hors dépendances —
+# faire dépendre le hash gelé de leurs fichiers rattacherait le candidat n°3 à
+# des paramètres qui n'ont aucune influence sur lui.
+#
+# Rappel du §0, à garder en tête en lisant ces valeurs : cette stratégie perd
+# violemment par moments (drawdowns de 30 à 50 % documentés, momentum crashes
+# lors des retournements post-bear). Ce risque est ACCEPTÉ, pas mitigé. Toute
+# tentative de le filtrer serait une hypothèse supplémentaire — pas celle-ci.
+
+momentum:
+  universe:
+    basket_size: 10
+    liquidity_lookback_d: 30
+    max_gap_bars: 12              # bougies 1h sur la fenêtre de signal
+    exclusions: [stables, rebasing]
+
+  signal:
+    lookback_d: 21
+    skip_d: 2                     # évite la mean-reversion court terme, effet opposé
+
+  portfolio:
+    n_legs: 3
+    gross_exposure_frac: 1.0      # le tirage se fait à gross 100 %, levier net ~0
+    max_weight_per_asset: 0.20
+    hysteresis_rank: 2            # anti-churn : la leçon frais du projet, appliquée
+
+  rebalance:
+    every_d: 2
+    hour_utc: 8
+    exec_timeout_min: 30
+    requote_s: 60                 # [hors-spec] pas de repricing du maker patient
+
+  risk:
+    max_drawdown_pct: 0.40        # disjoncteur de SURVIE, pas outil de pilotage
+    max_leverage: 1.5
+
+  fees:
+    maker_bps: 1.5                # vérifié compte réel Hyperliquid 2026-08-14, tier 0
+    taker_bps: 4.5
+
+  # ── Amendement §9.1 ────────────────────────────────────────────────────────
+  # Perps USD-M partout. Au 2020-01 il n'existait que 3 perps : un panier de 10
+  # était impossible avant mars 2020. Et un univers bâti sur les volumes SPOT
+  # aurait inclus des actifs sans perp à la date t, rendant la jambe short
+  # inexécutable historiquement — le biais même que le §1 cherche à tuer.
+  data:
+    market: binance_perp_usdm
+    signal_timeframe: 1d
+    exec_timeframe: 1h
+    funding_source: binance_perp
+
+  backtest:
+    initial_equity: 10000.0
+    windows:
+      # Fenêtre bear décalée à 2021 : au 2021-01 il y a 58 perps listés, contre
+      # 3 au 2020-01. Elle conserve le sommet 2021, l'effondrement 2022 et le
+      # momentum crash de la reprise 2023 — ce que le §0 annonce.
+      - {label: recente, days: 1100, end_ms: null}
+      - {label: bear_2021_2023, days: 1095, end_ms: 1704067200000}
+    placebo:
+      n_draws: 60                 # ≥ 1/α avec α = 0,0167
+      alpha: 0.0167
+      # Amendement §9.2 : permutation PERSISTANTE (une σ par tirage, appliquée à
+      # toute la période). Permuter par date détruirait la persistance du
+      # classement, l'hystérésis ne retiendrait rien, et le placebo paierait un
+      # multiple des frais du réel — biais disqualifiant sur le critère principal.
+      method: persistent_score_permutation
+    sensitivity:
+      params: [signal.lookback_d, signal.skip_d, portfolio.n_legs, rebalance.every_d]
+      deltas: [-0.2, 0.2]
+    acceptance:
+      min_profit_factor: 1.2
+      max_drawdown_pct: 0.45      # §9.4 : vérifie que le réalisé ne dépasse pas le §0
+      max_fee_ratio: 0.20
+      min_rebalances: 100

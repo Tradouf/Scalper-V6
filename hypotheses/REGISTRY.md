@@ -140,4 +140,93 @@ taker circonscrit au flatten.
 
 ---
 
+## Entrée n°3 — MomentumAgent (momentum cross-sectionnel sur panier de perps)
+
+| | |
+|---|---|
+| **Enregistré le** | 2026-08-14, **avant tout tirage** |
+| **Hypothèse** | *Recopiée telle quelle du §0* : « Sur un panier de perps liquides, le classement des rendements passés prédit-il les rendements relatifs futurs, suffisamment pour que la stratégie long-fort/short-faible batte, nette de tous les coûts, un placebo où ce lien est détruit ? » — et **non** « le momentum gagne ». |
+| **Justification économique** | *Forte, et documentée hors de ce projet.* La contrepartie présumée est la **sous-réaction** : les porteurs ajustent leurs positions plus lentement que l'information n'arrive, et suivre le mouvement relatif encaisse la traînée de cet ajustement. Qui paie — ceux qui ajustent en retard, structurellement. Pourquoi ils continueraient — la lenteur d'ajustement tient à des contraintes (attention, mandats, liquidité) qui ne disparaissent pas. **Réserve explicite** : c'est l'anomalie la mieux documentée de la littérature, donc aussi la plus arbitrée ; elle s'est affaiblie sur plusieurs marchés. Le tirage doit établir si elle existe **encore, ici, nette des frais réels**. |
+| **Ce que l'hypothèse ne promet pas (§0)** | Drawdowns de 30 à 50 % documentés ; *momentum crashes* lors des retournements post-bear, où les perdants shortés rebondissent plus fort que les gagnants longés. Ce risque est **accepté, pas mitigé** — le filtrer serait une autre hypothèse. |
+| **Config gelée** | `sha256 = 5c582f614a0792fef8e4b12c4b6fdc182ed1b67900f50da7c9f24b6bb9b0c0e8` (`config/momentum.yaml` **seul** — §9.3 : aucune dépendance à `confluence.yaml` ni `grid.yaml`). Spec amendée hashée séparément : `6c9c87622f7b…`. Copies : `momentum/state/frozen/`. |
+| **Candidats à ce jour** | n = 3 |
+| **Seuil placebo appliqué** | **α = 0,0167** (Bonferroni 0,05/3), **60 tirages minimum** |
+| **Fenêtres prévues** | récente (max disponible) **et** **2021-01 → 2023-12** |
+| **Métrique de décision** | `net_mtm_pnl` uniquement, décomposé long / short / funding (§7) |
+| **Runs effectués** | 1 protocole complet le 2026-08-16 : 2 backtests de référence + 8 backtests de sensibilité + 60 tirages placebo (× 2 fenêtres) = **130 runs**, sur la config gelée `5c582f614a07…` (`config_untouched: true`) |
+| **Résultat** | net **−3 804 $** (récente) et **−3 173 $** (bear) · disjoncteur −40 % déclenché sur les DEUX fenêtres · **placebo p = 0,9836** (réel −6 977, médiane nulle −1 244, max nul +8 334) |
+| **VERDICT** | ❌ **REJETÉ** (2026-08-16) |
+| **Détail** | `momentum/VERDICT.md` · blocage exécutable `momentum/DEPLOY_BLOCKED` |
+
+**Décisions actées avant gel** (les quatre questions ouvertes de la spec) :
+
+1. **Long-short neutre dollar**, pas long-only — seule structure où le placebo
+   teste le momentum PUR. En long-only le PnL est dominé par le beta crypto, et
+   un placebo aléatoire gagnerait aussi en marché haussier : le gate perdrait
+   son pouvoir discriminant.
+2. **1 j pour le signal, 1 h pour l'exécution** — un rendement 21 jours n'a que
+   faire du bruit horaire.
+3. **Funding natif par actif** (`fapi/v1/fundingRate`) — la question du proxy
+   devient sans objet dès lors qu'on prend les perps. Il reste un proxy de LIEU
+   (Binance, pas Hyperliquid), donc **NON VALIDÉ** jusqu'au paper trading.
+4. `max_gap_bars` = 12 bougies 1 h ; heure de coupe du signal = clôture UTC.
+
+**Deux amendements à la spec, faits AVANT le gel** — pour que le document gelé
+décrive exactement ce qui tournera :
+
+* **§9.1** — perps USD-M partout, et fenêtre bear décalée de 2020 à **2021**.
+  Mesuré le 2026-08-14 : il n'existait que **3 perps** au 2020-01 (BTC, ETH,
+  BCH), 58 au 2021-01. Un panier de 10 était impossible, et « les 10 plus
+  liquides » aurait désigné la totalité de l'univers — la sélection
+  cross-sectionnelle, qui EST la stratégie, aurait disparu. Un univers bâti sur
+  les volumes spot aurait par ailleurs inclus des actifs sans perp à la date t,
+  rendant la jambe short inexécutable et le backtest optimiste sur la moitié du
+  portefeuille.
+* **§9.2** — placebo par **permutation persistante** des séries de scores (une σ
+  tirée une fois, appliquée à toute la période), au lieu d'une permutation par
+  date. Permuter à chaque date détruit la persistance du classement : l'hystérésis
+  du §4 ne retient plus rien, le placebo tourne à chaque rebalancement et paie un
+  multiple des frais du réel. On aurait comparé une stratégie calme à une
+  stratégie qui churne — un biais en faveur du réel, **sur le critère principal**.
+
+**Ce qui distingue ce candidat des deux précédents** : il ne dépend d'**aucune
+détection de régime**. Les rejets n°1 et n°2 incriminent tous deux cet étage —
+le n°2 explicitement (« le filtre de régime EST la stratégie », §0 GridAgent).
+L'hypothèse n°3 est délibérément construite pour ne pas en hériter.
+
+**Engagement de méthode tenu** : le §9 a rejeté, aucun paramètre n'a été
+retouché, aucun second tirage n'a été effectué.
+
+**Ce que le rejet apprend — le signal est pire que le hasard.** Sur 60
+permutations persistantes, **59 font mieux que le vrai classement**. Des rangs
+tirés au hasard perdent 5,6 fois moins que le momentum réel. Ce n'est donc pas
+une absence d'edge mais un **anti-signal** : sur ces deux fenêtres, parier sur la
+persistance du classement a été systématiquement pénalisant.
+
+**La décomposition §7 dit où.** Jambe courte −3 537 et −3 406 ; jambe longue
+−279 et +257. Shorter les moins performants a coûté douze fois plus que longer
+les meilleurs n'a rapporté. C'est le *momentum crash* annoncé au §0 — mais pas
+comme épisode : comme régime dominant des deux fenêtres. Sans la séparation par
+jambe, on aurait conclu « le momentum perd » au lieu de savoir quelle moitié
+perd, et pourquoi.
+
+Le §0 est validé en même temps que la stratégie est rejetée : il annonçait 30 à
+50 % de drawdown, le réalisé est 40,5 % et 40,7 %. Le cadrage était honnête ; le
+pari ne paie pas.
+
+**Trois défauts du run, sans effet sur le verdict** (détail dans
+`momentum/VERDICT.md`) : le ratio de frais n'a pas pu être évalué
+(`gross_pnl_abs` non exporté — corrigé depuis, non rejoué) ; la sensibilité ne
+teste réellement que 2 paramètres sur 4, `skip_d` et `every_d` valant 2 et
+±20 % arrondissant au même entier ; et les deux fenêtres sont tronquées par le
+disjoncteur. Aucun des trois ne touche le placebo, qui est indépendant et sans
+appel.
+
+**Réutilisable malgré le rejet** : l'univers sans biais du survivant et son test
+piège (actif à volume ×1000 listé après la date d'évaluation), le placebo à
+permutation persistante, la comptabilité par jambe, et le disjoncteur à
+redémarrage humain — qui a fonctionné deux fois sur deux.
+
+---
+
 <!-- Nouvelles entrées ci-dessous. NE RIEN RÉÉCRIRE AU-DESSUS. -->
