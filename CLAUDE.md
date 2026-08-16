@@ -6,7 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SalleDesMarches** is a Python algorithmic trading bot for high-frequency scalping on the [Hyperliquid](https://hyperliquid.xyz) derivatives exchange. It uses a multi-agent system where each agent calls a locally-hosted LLM (via LocalAI) to make trading decisions. The current production version is V6 (`main_v6.py`).
 
+
+## Règles de communication
+
+- Quand un run ou un chargement est en cours et qu'on te demande où tu en es, réponds en une phrase (« ça tourne, rien de nouveau, rapport à la fin ») — pas de rapport d'étape, pas de tableau.
+- Les rapports complets sont réservés aux jalons : verdict, incident, question à trancher.
+- Ne jamais imprimer le contenu de .env ni aucune clé privée en clair dans la sortie (filtrer les grep sur ces fichiers).
+
 ## Setup & Run Commands
+
 
 ```bash
 # Install dependencies in virtualenv
